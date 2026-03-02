@@ -1,25 +1,29 @@
 # Neurix CRM — Docker Compose
 # Runs: FastAPI Backend + Webhook Worker + Next.js Frontend
-# Redis runs separately on Dokploy
+# Redis + Supabase run separately on Dokploy
 # Env vars are injected by Dokploy (no env_file needed)
+# dokploy-network declared as external so Traefik can route automatically
 
 services:
   frontend:
     build: ./frontend-next
     container_name: neurix-crm-frontend
-    ports:
-      - "3001:3000"
+    expose:
+      - "3000"
     environment:
       - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://backend:8000}
     depends_on:
       - backend
     restart: unless-stopped
+    networks:
+      - default
+      - dokploy-network
 
   backend:
     build: ./backend
     container_name: neurix-crm-backend
-    ports:
-      - "8000:8000"
+    expose:
+      - "8000"
     environment:
       - APP_NAME=${APP_NAME:-Neurix CRM}
       - APP_VERSION=${APP_VERSION:-1.0.0}
@@ -49,6 +53,9 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+    networks:
+      - default
+      - dokploy-network
 
   worker:
     build: ./backend
@@ -68,3 +75,12 @@ services:
       - UAZAPI_INSTANCE_TOKEN=${UAZAPI_INSTANCE_TOKEN}
       - UAZAPI_WEBHOOK_SECRET=${UAZAPI_WEBHOOK_SECRET}
     restart: unless-stopped
+    networks:
+      - default
+      - dokploy-network
+
+networks:
+  default:
+    driver: bridge
+  dokploy-network:
+    external: true
