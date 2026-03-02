@@ -15,7 +15,7 @@ COPY . .
 
 ENV NEXT_TELEMETRY_DISABLED=1
 # Bake the public API URL at build time (NEXT_PUBLIC_ vars must be known at compile time)
-ARG NEXT_PUBLIC_API_URL=https://crm.wbtech.dev/api
+ARG NEXT_PUBLIC_API_URL=https://crm.wbtech.dev
 ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
 RUN npm run build
 
