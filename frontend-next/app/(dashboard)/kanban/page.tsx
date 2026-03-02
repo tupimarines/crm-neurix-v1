@@ -1,147 +1,530 @@
+"use client";
+
+import { useState, useRef, useEffect, useId } from "react";
+import {
+    DndContext,
+    closestCenter,
+    PointerSensor,
+    useSensor,
+    useSensors,
+    DragOverlay,
+    DragStartEvent,
+    DragEndEvent,
+    DragOverEvent,
+} from "@dnd-kit/core";
+import {
+    SortableContext,
+    useSortable,
+    verticalListSortingStrategy,
+    arrayMove,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+
+// Types
+interface KanbanCard {
+    id: string;
+    name: string;
+    contact: string;
+    value: string;
+    priority: string;
+    priorityColor: string;
+    desc: string;
+    stageId: string;
+}
+
+interface KanbanStage {
+    id: string;
+    title: string;
+    total: string;
+}
+
+// Sortable Card Component
+function SortableCard({ card, onOpenChat, onOpenMenu }: { card: KanbanCard; onOpenChat: (id: string) => void; onOpenMenu: (id: string) => void }) {
+    const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: card.id });
+    const style = {
+        transform: CSS.Transform.toString(transform),
+        transition,
+        opacity: isDragging ? 0.4 : 1,
+    };
+
+    return (
+        <div ref={setNodeRef} style={style} {...attributes} {...listeners}
+            className="bg-surface-light dark:bg-surface-dark p-4 rounded-lg shadow-sm border border-border-light dark:border-border-dark hover:shadow-md hover:border-primary/30 transition-all cursor-grab active:cursor-grabbing touch-none"
+        >
+            <div className="flex justify-between items-start mb-2">
+                <div className="flex-1 min-w-0">
+                    <h3 className="text-sm font-bold truncate">{card.name}</h3>
+                    <p className="text-xs text-text-secondary-light dark:text-text-secondary-dark mt-0.5">Contato: {card.contact}</p>
+                </div>
+                <div className="flex items-center gap-1 ml-2">
+                    {card.priority && (
+                        <span className={`bg-${card.priorityColor}-50 dark:bg-${card.priorityColor}-900/30 text-${card.priorityColor}-600 dark:text-${card.priorityColor}-300 text-[10px] font-bold px-2 py-0.5 rounded-md uppercase tracking-wider shrink-0`}>
+                            {card.priority}
+                        </span>
+                    )}
+                </div>
+            </div>
+            {card.desc && (
+                <p className="text-xs text-text-secondary-light dark:text-text-secondary-dark mb-2 line-clamp-2">{card.desc}</p>
+            )}
+            <div className="flex items-center justify-between mt-3 pt-2 border-t border-border-light/30 dark:border-border-dark">
+                <span className="text-sm font-bold text-green-600 dark:text-green-400">{card.value}</span>
+                <div className="flex items-center gap-1">
+                    <button onClick={(e) => { e.stopPropagation(); onOpenChat(card.id); }} className="text-text-secondary-light hover:text-green-500 transition-colors p-1 rounded" title="Abrir Chat">
+                        <span className="material-symbols-outlined text-lg">chat</span>
+                    </button>
+                    <button onClick={(e) => { e.stopPropagation(); onOpenMenu(card.id); }} className="text-text-secondary-light hover:text-primary transition-colors p-1 rounded" title="Opções">
+                        <span className="material-symbols-outlined text-lg">more_vert</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+// Card overlay for dragging
+function CardOverlay({ card }: { card: KanbanCard }) {
+    return (
+        <div className="bg-surface-light dark:bg-surface-dark p-4 rounded-lg shadow-2xl border-2 border-primary/40 w-[300px] rotate-2">
+            <h3 className="text-sm font-bold">{card.name}</h3>
+            <p className="text-xs text-text-secondary-light mt-1">Contato: {card.contact}</p>
+            <span className="text-sm font-bold text-green-600 mt-2 block">{card.value}</span>
+        </div>
+    );
+}
+
 export default function KanbanPage() {
-    const columns = [
-        {
-            title: "Contato Inicial",
-            total: "R$ 3.450,00",
-            cards: [
-                { name: "Empório Natural", contact: "Ana Silva", value: "R$ 1.200,00", priority: "Alta", priorityColor: "red", desc: "Interesse em geleias de morango e frutas vermelhas." },
-                { name: "Mercado Verde", contact: "Carlos", value: "R$ 850,00", priority: "Média", priorityColor: "blue", desc: "" },
-                { name: "Padaria Central", contact: "Roberta", value: "R$ 1.400,00", priority: "", priorityColor: "", desc: "" },
-            ],
-        },
-        {
-            title: "Escolhendo Sabores",
-            total: "R$ 5.100,00",
-            cards: [
-                { name: "Rede Sabor", contact: "Marcos", value: "R$ 2.500,00", priority: "Baixa", priorityColor: "yellow", desc: "Solicitou amostras de pimenta e damasco." },
-                { name: "Café Colonial", contact: "Juliana", value: "R$ 2.600,00", priority: "Alta", priorityColor: "red", desc: "" },
-            ],
-        },
-        {
-            title: "Aguardando Pagamento",
-            total: "R$ 4.200,00",
-            cards: [
-                { name: "Boutique Gourmet", contact: "Fernanda", value: "R$ 4.200,00", priority: "Alta", priorityColor: "red", desc: "Pedido #4092 - PIX pendente." },
-            ],
-        },
-        {
-            title: "Enviado",
-            total: "R$ 1.100,00",
-            cards: [
-                { name: "Loja Orgânica", contact: "Pedro", value: "R$ 1.100,00", priority: "OK", priorityColor: "green", desc: "" },
-            ],
-        },
-    ];
+    const dndId = useId();
+
+    // State
+    const [stages, setStages] = useState<KanbanStage[]>([
+        { id: "s1", title: "Contato Inicial", total: "R$ 3.450,00" },
+        { id: "s2", title: "Escolhendo Sabores", total: "R$ 5.100,00" },
+        { id: "s3", title: "Aguardando Pagamento", total: "R$ 4.200,00" },
+        { id: "s4", title: "Enviado", total: "R$ 1.100,00" },
+    ]);
+
+    const [cards, setCards] = useState<KanbanCard[]>([
+        { id: "c1", stageId: "s1", name: "Empório Natural", contact: "Ana Silva", value: "R$ 1.200,00", priority: "Alta", priorityColor: "red", desc: "Interesse em geleias de morango e frutas vermelhas." },
+        { id: "c2", stageId: "s1", name: "Mercado Verde", contact: "Carlos", value: "R$ 850,00", priority: "Média", priorityColor: "blue", desc: "" },
+        { id: "c3", stageId: "s1", name: "Padaria Central", contact: "Roberta", value: "R$ 1.400,00", priority: "", priorityColor: "", desc: "" },
+        { id: "c4", stageId: "s2", name: "Rede Sabor", contact: "Marcos", value: "R$ 2.500,00", priority: "Baixa", priorityColor: "yellow", desc: "Solicitou amostras de pimenta e damasco." },
+        { id: "c5", stageId: "s2", name: "Café Colonial", contact: "Juliana", value: "R$ 2.600,00", priority: "Alta", priorityColor: "red", desc: "" },
+        { id: "c6", stageId: "s3", name: "Boutique Gourmet", contact: "Fernanda", value: "R$ 4.200,00", priority: "Alta", priorityColor: "red", desc: "Pedido #4092 - PIX pendente." },
+        { id: "c7", stageId: "s4", name: "Loja Orgânica", contact: "Pedro", value: "R$ 1.100,00", priority: "OK", priorityColor: "green", desc: "" },
+    ]);
+
+    const [viewMode, setViewMode] = useState<"kanban" | "list">("kanban");
+    const [activeCard, setActiveCard] = useState<KanbanCard | null>(null);
+    const [showNewStage, setShowNewStage] = useState(false);
+    const [newStageName, setNewStageName] = useState("");
+    const [showNewCard, setShowNewCard] = useState<string | null>(null);
+    const [newCard, setNewCard] = useState({ name: "", contact: "", value: "", priority: "Média" });
+    const [showFilter, setShowFilter] = useState(false);
+    const [filterPriority, setFilterPriority] = useState("");
+    const [filterSort, setFilterSort] = useState("");
+    const [showSearch, setShowSearch] = useState(false);
+    const [searchQuery, setSearchQuery] = useState("");
+    const [showReport, setShowReport] = useState(false);
+    const [showAddMenu, setShowAddMenu] = useState(false);
+    const [editCardMenu, setEditCardMenu] = useState<string | null>(null);
+    const [editStage, setEditStage] = useState<string | null>(null);
+    const [editStageName, setEditStageName] = useState("");
+    const menuRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        function handleClick(e: MouseEvent) {
+            if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+                setEditCardMenu(null);
+                setShowAddMenu(false);
+            }
+        }
+        document.addEventListener("mousedown", handleClick);
+        return () => document.removeEventListener("mousedown", handleClick);
+    }, []);
+
+    const sensors = useSensors(
+        useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
+    );
+
+    // Filter & search
+    const filteredCards = cards.filter((c) => {
+        if (filterPriority && c.priority !== filterPriority) return false;
+        if (searchQuery) {
+            const q = searchQuery.toLowerCase();
+            return c.name.toLowerCase().includes(q) || c.contact.toLowerCase().includes(q) || c.desc.toLowerCase().includes(q);
+        }
+        return true;
+    }).sort((a, b) => {
+        if (filterSort === "oldest") return a.id.localeCompare(b.id);
+        if (filterSort === "newest") return b.id.localeCompare(a.id);
+        return 0;
+    });
+
+    // DnD handlers
+    function handleDragStart(event: DragStartEvent) {
+        const card = cards.find((c) => c.id === event.active.id);
+        if (card) setActiveCard(card);
+    }
+
+    function handleDragOver(event: DragOverEvent) {
+        const { active, over } = event;
+        if (!over) return;
+        const activeCardId = active.id as string;
+        const overId = over.id as string;
+        const activeCardObj = cards.find((c) => c.id === activeCardId);
+        if (!activeCardObj) return;
+
+        // Dropping over a stage directly
+        const targetStage = stages.find((s) => s.id === overId);
+        if (targetStage && activeCardObj.stageId !== overId) {
+            setCards((prev) => prev.map((c) => c.id === activeCardId ? { ...c, stageId: overId } : c));
+            return;
+        }
+
+        // Dropping over another card
+        const overCard = cards.find((c) => c.id === overId);
+        if (overCard && activeCardObj.stageId !== overCard.stageId) {
+            setCards((prev) => prev.map((c) => c.id === activeCardId ? { ...c, stageId: overCard.stageId } : c));
+        }
+    }
+
+    function handleDragEnd(event: DragEndEvent) {
+        setActiveCard(null);
+        const { active, over } = event;
+        if (!over || active.id === over.id) return;
+
+        const activeCardObj = cards.find((c) => c.id === active.id);
+        const overCardObj = cards.find((c) => c.id === over.id);
+        if (activeCardObj && overCardObj && activeCardObj.stageId === overCardObj.stageId) {
+            const stageCards = cards.filter((c) => c.stageId === activeCardObj.stageId);
+            const oldIdx = stageCards.findIndex((c) => c.id === active.id);
+            const newIdx = stageCards.findIndex((c) => c.id === over.id);
+            const reordered = arrayMove(stageCards, oldIdx, newIdx);
+            setCards((prev) => {
+                const others = prev.filter((c) => c.stageId !== activeCardObj.stageId);
+                return [...others, ...reordered];
+            });
+        }
+    }
+
+    // Actions
+    function addStage() {
+        if (!newStageName.trim()) return;
+        const id = `s${Date.now()}`;
+        setStages([...stages, { id, title: newStageName.trim(), total: "R$ 0,00" }]);
+        setNewStageName("");
+        setShowNewStage(false);
+    }
+
+    function addCard(stageId: string) {
+        if (!newCard.name.trim()) return;
+        const id = `c${Date.now()}`;
+        const priorityColorMap: Record<string, string> = { Alta: "red", Média: "blue", Baixa: "yellow", OK: "green" };
+        setCards([...cards, {
+            id, stageId, name: newCard.name, contact: newCard.contact,
+            value: newCard.value || "R$ 0,00", priority: newCard.priority,
+            priorityColor: priorityColorMap[newCard.priority] || "blue", desc: "",
+        }]);
+        setNewCard({ name: "", contact: "", value: "", priority: "Média" });
+        setShowNewCard(null);
+    }
+
+    function renameStage(stageId: string) {
+        if (!editStageName.trim()) return;
+        setStages(stages.map((s) => s.id === stageId ? { ...s, title: editStageName.trim() } : s));
+        setEditStage(null);
+        setEditStageName("");
+    }
 
     return (
         <div className="flex flex-col h-full">
             {/* Header */}
-            <header className="bg-surface-light dark:bg-surface-dark border-b border-border-light dark:border-border-dark h-16 flex items-center justify-between px-6 flex-shrink-0 z-10">
-                <div className="flex items-center gap-4">
-                    <button className="inline-flex items-center px-3 py-1.5 border border-border-light dark:border-border-dark shadow-sm text-sm font-medium rounded-lg text-text-main-light dark:text-text-main-dark bg-surface-light dark:bg-surface-dark hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors">
-                        <span className="material-symbols-outlined text-base mr-1.5 text-text-secondary-light">filter_list</span>
-                        Filtro
-                    </button>
-                    <button className="inline-flex items-center px-3 py-1.5 border border-border-light dark:border-border-dark shadow-sm text-sm font-medium rounded-lg text-text-main-light dark:text-text-main-dark bg-surface-light dark:bg-surface-dark hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors">
-                        Buscar
-                    </button>
+            <header className="bg-surface-light dark:bg-surface-dark border-b border-border-light dark:border-border-dark h-14 flex items-center justify-between px-6 flex-shrink-0 z-10">
+                <div className="flex items-center gap-3">
+                    {/* Filter */}
+                    <div className="relative">
+                        <button onClick={() => setShowFilter(!showFilter)} className="inline-flex items-center px-3 py-1.5 border border-border-light dark:border-border-dark text-sm font-medium rounded-lg bg-surface-light dark:bg-surface-dark hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors">
+                            <span className="material-symbols-outlined text-base mr-1.5 text-text-secondary-light">filter_list</span>
+                            Filtro
+                        </button>
+                        {showFilter && (
+                            <div className="absolute top-full left-0 mt-1 w-56 bg-surface-light dark:bg-surface-dark rounded-xl shadow-2xl border border-border-light dark:border-border-dark z-50 p-3 space-y-3">
+                                <div>
+                                    <p className="text-[10px] font-semibold text-text-secondary-light uppercase tracking-wider mb-1">Prioridade</p>
+                                    {["", "Alta", "Média", "Baixa"].map((p) => (
+                                        <button key={p || "all"} onClick={() => setFilterPriority(p)}
+                                            className={`block w-full text-left px-2 py-1.5 text-sm rounded-lg ${filterPriority === p ? "bg-primary/10 text-primary font-medium" : "hover:bg-slate-50 dark:hover:bg-slate-800"}`}>
+                                            {p || "Todas"}
+                                        </button>
+                                    ))}
+                                </div>
+                                <div className="border-t border-border-light dark:border-border-dark pt-2">
+                                    <p className="text-[10px] font-semibold text-text-secondary-light uppercase tracking-wider mb-1">Ordenar</p>
+                                    {[{ v: "", l: "Padrão" }, { v: "newest", l: "Mais recente" }, { v: "oldest", l: "Mais antigo" }].map(({ v, l }) => (
+                                        <button key={v} onClick={() => setFilterSort(v)}
+                                            className={`block w-full text-left px-2 py-1.5 text-sm rounded-lg ${filterSort === v ? "bg-primary/10 text-primary font-medium" : "hover:bg-slate-50 dark:hover:bg-slate-800"}`}>
+                                            {l}
+                                        </button>
+                                    ))}
+                                </div>
+                                <button onClick={() => { setFilterPriority(""); setFilterSort(""); setShowFilter(false); }} className="text-xs text-primary hover:underline w-full text-center pt-1">Limpar filtros</button>
+                            </div>
+                        )}
+                    </div>
+                    {/* Search */}
+                    {showSearch ? (
+                        <div className="relative">
+                            <input autoFocus value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)}
+                                className="pl-8 pr-8 py-1.5 border border-border-light dark:border-border-dark rounded-lg text-sm bg-surface-light dark:bg-surface-dark w-64 focus:ring-primary focus:border-primary"
+                                placeholder="Buscar clientes, produtos, negócios..." />
+                            <span className="material-symbols-outlined absolute left-2 top-2 text-text-secondary-light text-base">search</span>
+                            <button onClick={() => { setShowSearch(false); setSearchQuery(""); }} className="absolute right-2 top-2 text-text-secondary-light hover:text-text-main-light">
+                                <span className="material-symbols-outlined text-base">close</span>
+                            </button>
+                        </div>
+                    ) : (
+                        <button onClick={() => setShowSearch(true)} className="inline-flex items-center px-3 py-1.5 border border-border-light dark:border-border-dark text-sm font-medium rounded-lg bg-surface-light dark:bg-surface-dark hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors">
+                            Buscar
+                        </button>
+                    )}
                 </div>
-                <div className="flex items-center gap-4">
+                <div className="flex items-center gap-3">
+                    {/* View toggle */}
                     <div className="flex bg-slate-100 dark:bg-slate-800 rounded-lg p-0.5 border border-border-light dark:border-border-dark">
-                        <button className="p-1.5 rounded-md bg-white dark:bg-slate-600 shadow-sm text-primary dark:text-white">
+                        <button onClick={() => setViewMode("kanban")} className={`p-1.5 rounded-md transition-colors ${viewMode === "kanban" ? "bg-white dark:bg-slate-600 shadow-sm text-primary" : "text-text-secondary-light"}`}>
                             <span className="material-symbols-outlined text-xl">view_kanban</span>
                         </button>
-                        <button className="p-1.5 rounded-md text-text-secondary-light dark:text-text-secondary-dark hover:text-text-main-light">
+                        <button onClick={() => setViewMode("list")} className={`p-1.5 rounded-md transition-colors ${viewMode === "list" ? "bg-white dark:bg-slate-600 shadow-sm text-primary" : "text-text-secondary-light"}`}>
                             <span className="material-symbols-outlined text-xl">format_list_bulleted</span>
                         </button>
                     </div>
-                    <button className="flex items-center text-sm font-medium text-text-secondary-light dark:text-text-secondary-dark hover:text-primary transition-colors">
-                        <span className="material-symbols-outlined mr-1.5 text-lg">trending_up</span>
+                    {/* Report */}
+                    <button onClick={() => setShowReport(true)} className="flex items-center text-sm font-medium text-text-secondary-light hover:text-primary transition-colors">
+                        <span className="material-symbols-outlined mr-1 text-lg">trending_up</span>
                         Relatório
                     </button>
-                    <button className="inline-flex items-center px-4 py-2 text-sm font-medium rounded-lg shadow-sm text-white bg-primary hover:bg-primary-hover transition-colors">
-                        <span className="material-symbols-outlined mr-1.5 text-lg">add</span>
-                        Adicionar
-                    </button>
+                    {/* Add menu */}
+                    <div className="relative" ref={showAddMenu ? menuRef : null}>
+                        <button onClick={() => setShowAddMenu(!showAddMenu)} className="inline-flex items-center px-4 py-2 text-sm font-medium rounded-lg text-white bg-primary hover:bg-primary-hover transition-colors shadow-sm">
+                            <span className="material-symbols-outlined mr-1 text-lg">add</span>
+                            Adicionar
+                        </button>
+                        {showAddMenu && (
+                            <div className="absolute right-0 top-full mt-1 w-48 bg-surface-light dark:bg-surface-dark rounded-xl shadow-2xl border border-border-light dark:border-border-dark z-50 py-1">
+                                <button onClick={() => { setShowNewCard(stages[0]?.id || ""); setShowAddMenu(false); }}
+                                    className="w-full px-4 py-2.5 text-sm hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-2 text-text-main-light dark:text-text-main-dark">
+                                    <span className="material-symbols-outlined text-base">person_add</span> Novo Negócio
+                                </button>
+                                <button onClick={() => { setShowNewStage(true); setShowAddMenu(false); }}
+                                    className="w-full px-4 py-2.5 text-sm hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-2 text-text-main-light dark:text-text-main-dark">
+                                    <span className="material-symbols-outlined text-base">view_column</span> Nova Etapa
+                                </button>
+                            </div>
+                        )}
+                    </div>
                 </div>
             </header>
 
-            {/* Kanban Board */}
-            <div className="flex-1 overflow-x-auto overflow-y-hidden p-6">
-                <div className="flex h-full gap-6 min-w-max pb-4">
-                    {columns.map((col) => (
-                        <div
-                            key={col.title}
-                            className="w-80 flex flex-col flex-shrink-0 bg-slate-50/50 dark:bg-slate-800/30 rounded-xl border border-border-light/60 dark:border-border-dark/60"
-                        >
-                            {/* Column Header */}
-                            <div className="p-3 flex items-center justify-between border-b border-border-light/50 dark:border-border-dark/50">
-                                <div className="flex items-center gap-2">
-                                    <span className="text-sm font-semibold">{col.title}</span>
-                                    <span className="bg-primary-light dark:bg-primary/20 text-primary text-xs font-medium px-2 py-0.5 rounded-full">
-                                        {col.cards.length}
-                                    </span>
+            {/* Main content */}
+            {viewMode === "kanban" ? (
+                <DndContext id={dndId} sensors={sensors} collisionDetection={closestCenter} onDragStart={handleDragStart} onDragOver={handleDragOver} onDragEnd={handleDragEnd}>
+                    <div className="flex-1 overflow-x-auto overflow-y-hidden p-6">
+                        <div className="flex h-full gap-5 min-w-max pb-4">
+                            {stages.map((stage) => {
+                                const stageCards = filteredCards.filter((c) => c.stageId === stage.id);
+                                return (
+                                    <div key={stage.id} className="w-[310px] flex flex-col flex-shrink-0 bg-slate-50/50 dark:bg-slate-800/30 rounded-xl border border-border-light/60 dark:border-border-dark/60">
+                                        {/* Stage header */}
+                                        <div className="p-3 flex items-center justify-between border-b border-border-light/50 dark:border-border-dark/50">
+                                            <div className="flex items-center gap-2 flex-1 min-w-0">
+                                                {editStage === stage.id ? (
+                                                    <form onSubmit={(e) => { e.preventDefault(); renameStage(stage.id); }} className="flex items-center gap-1 flex-1">
+                                                        <input autoFocus value={editStageName} onChange={(e) => setEditStageName(e.target.value)}
+                                                            className="text-sm font-semibold border border-primary rounded-lg px-2 py-1 bg-white dark:bg-surface-dark flex-1 focus:outline-none focus:ring-1 focus:ring-primary"
+                                                            onBlur={() => renameStage(stage.id)} />
+                                                    </form>
+                                                ) : (
+                                                    <button onClick={() => { setEditStage(stage.id); setEditStageName(stage.title); }} className="text-sm font-semibold truncate hover:text-primary transition-colors">
+                                                        {stage.title}
+                                                    </button>
+                                                )}
+                                                <span className="bg-primary-light dark:bg-primary/20 text-primary text-xs font-medium px-2 py-0.5 rounded-full shrink-0">
+                                                    {stageCards.length}
+                                                </span>
+                                            </div>
+                                            <div className="flex items-center text-xs text-text-secondary-light shrink-0 ml-2">
+                                                {stage.total}
+                                                <button onClick={() => { setShowNewStage(true); }} className="ml-1 p-0.5 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-full text-primary" title="Nova etapa">
+                                                    <span className="material-symbols-outlined text-lg">add</span>
+                                                </button>
+                                            </div>
+                                        </div>
+                                        {/* Cards */}
+                                        <SortableContext items={stageCards.map((c) => c.id)} strategy={verticalListSortingStrategy} id={stage.id}>
+                                            <div className="flex-1 p-3 overflow-y-auto space-y-2.5 custom-scrollbar min-h-[100px]" data-stage-id={stage.id}>
+                                                {stageCards.map((card) => (
+                                                    <div key={card.id} className="relative">
+                                                        <SortableCard card={card} onOpenChat={() => { }} onOpenMenu={(id) => setEditCardMenu(editCardMenu === id ? null : id)} />
+                                                        {editCardMenu === card.id && (
+                                                            <div ref={menuRef} className="absolute right-0 top-full mt-1 w-48 bg-surface-light dark:bg-surface-dark rounded-xl shadow-2xl border border-border-light dark:border-border-dark z-50 py-1">
+                                                                <button className="w-full px-4 py-2 text-sm hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-2">
+                                                                    <span className="material-symbols-outlined text-base">edit</span> Editar Card
+                                                                </button>
+                                                                <button className="w-full px-4 py-2 text-sm hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-2">
+                                                                    <span className="material-symbols-outlined text-base">handshake</span> Negócios
+                                                                </button>
+                                                                <button className="w-full px-4 py-2 text-sm hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-2">
+                                                                    <span className="material-symbols-outlined text-base">inventory_2</span> Produtos
+                                                                </button>
+                                                                <button className="w-full px-4 py-2 text-sm hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-2">
+                                                                    <span className="material-symbols-outlined text-base">flag</span> Prioridade
+                                                                </button>
+                                                                <div className="h-px bg-border-light dark:bg-border-dark mx-2 my-1" />
+                                                                <button className="w-full px-4 py-2 text-sm hover:bg-red-50 dark:hover:bg-red-900/20 text-red-600 flex items-center gap-2">
+                                                                    <span className="material-symbols-outlined text-base">delete</span> Excluir
+                                                                </button>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                ))}
+                                                {/* Add card */}
+                                                {showNewCard === stage.id ? (
+                                                    <div className="bg-surface-light dark:bg-surface-dark p-3 rounded-lg border border-primary/40 shadow-sm space-y-2">
+                                                        <input value={newCard.name} onChange={(e) => setNewCard({ ...newCard, name: e.target.value })} placeholder="Nome do negócio" className="w-full px-3 py-1.5 border border-border-light dark:border-border-dark rounded-lg text-sm bg-white dark:bg-slate-800 focus:ring-1 focus:ring-primary focus:border-transparent" />
+                                                        <input value={newCard.contact} onChange={(e) => setNewCard({ ...newCard, contact: e.target.value })} placeholder="Nome do contato" className="w-full px-3 py-1.5 border border-border-light dark:border-border-dark rounded-lg text-sm bg-white dark:bg-slate-800 focus:ring-1 focus:ring-primary focus:border-transparent" />
+                                                        <div className="flex gap-2">
+                                                            <input value={newCard.value} onChange={(e) => setNewCard({ ...newCard, value: e.target.value })} placeholder="R$ 0,00" className="flex-1 px-3 py-1.5 border border-border-light dark:border-border-dark rounded-lg text-sm bg-white dark:bg-slate-800 focus:ring-1 focus:ring-primary focus:border-transparent" />
+                                                            <select value={newCard.priority} onChange={(e) => setNewCard({ ...newCard, priority: e.target.value })} className="px-2 py-1.5 border border-border-light dark:border-border-dark rounded-lg text-sm bg-white dark:bg-slate-800">
+                                                                <option>Alta</option><option>Média</option><option>Baixa</option>
+                                                            </select>
+                                                        </div>
+                                                        <div className="flex gap-2">
+                                                            <button onClick={() => addCard(stage.id)} className="flex-1 py-1.5 bg-primary text-white rounded-lg text-xs font-medium hover:bg-primary-hover">Salvar</button>
+                                                            <button onClick={() => setShowNewCard(null)} className="flex-1 py-1.5 border border-border-light dark:border-border-dark rounded-lg text-xs font-medium hover:bg-slate-50">Cancelar</button>
+                                                        </div>
+                                                    </div>
+                                                ) : (
+                                                    <button onClick={() => setShowNewCard(stage.id)} className="w-full py-2.5 border-2 border-dashed border-border-light dark:border-border-dark rounded-lg text-text-secondary-light hover:text-primary hover:border-primary/50 hover:bg-primary/5 transition-all flex items-center justify-center gap-2 group">
+                                                        <span className="material-symbols-outlined text-lg group-hover:scale-110 transition-transform">add_circle_outline</span>
+                                                        <span className="text-xs font-semibold uppercase tracking-wide">Adicionar</span>
+                                                    </button>
+                                                )}
+                                            </div>
+                                        </SortableContext>
+                                    </div>
+                                );
+                            })}
+
+                            {/* New stage inline */}
+                            {showNewStage && (
+                                <div className="w-[310px] flex flex-col flex-shrink-0 bg-surface-light dark:bg-surface-dark rounded-xl border-2 border-dashed border-primary/40 p-4 space-y-3">
+                                    <input autoFocus value={newStageName} onChange={(e) => setNewStageName(e.target.value)}
+                                        placeholder="Nome da etapa" className="px-3 py-2 border border-border-light dark:border-border-dark rounded-lg text-sm bg-white dark:bg-slate-800 focus:ring-1 focus:ring-primary focus:border-transparent" />
+                                    <div className="flex gap-2">
+                                        <button onClick={addStage} className="flex-1 py-2 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-hover">Criar</button>
+                                        <button onClick={() => { setShowNewStage(false); setNewStageName(""); }} className="flex-1 py-2 border border-border-light dark:border-border-dark rounded-lg text-sm font-medium hover:bg-slate-50">Cancelar</button>
+                                    </div>
                                 </div>
-                                <div className="flex items-center text-xs text-text-secondary-light dark:text-text-secondary-dark">
-                                    {col.total}
-                                    <button className="ml-2 p-1 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-full transition-colors text-primary">
-                                        <span className="material-symbols-outlined text-lg">add</span>
-                                    </button>
+                            )}
+                        </div>
+                    </div>
+                    <DragOverlay>{activeCard ? <CardOverlay card={activeCard} /> : null}</DragOverlay>
+                </DndContext>
+            ) : (
+                /* List View */
+                <div className="flex-1 overflow-y-auto p-6">
+                    <div className="bg-surface-light dark:bg-surface-dark rounded-xl border border-border-light dark:border-border-dark overflow-hidden">
+                        <table className="w-full text-left text-sm">
+                            <thead className="bg-slate-50 dark:bg-slate-800/50 text-xs uppercase font-semibold text-text-secondary-light">
+                                <tr>
+                                    <th className="px-6 py-3">Negócio</th>
+                                    <th className="px-6 py-3">Contato</th>
+                                    <th className="px-6 py-3">Etapa</th>
+                                    <th className="px-6 py-3">Prioridade</th>
+                                    <th className="px-6 py-3">Valor</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-border-light dark:divide-border-dark">
+                                {filteredCards.map((card) => {
+                                    const stage = stages.find((s) => s.id === card.stageId);
+                                    return (
+                                        <tr key={card.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors">
+                                            <td className="px-6 py-3 font-medium">{card.name}</td>
+                                            <td className="px-6 py-3 text-text-secondary-light">{card.contact}</td>
+                                            <td className="px-6 py-3"><span className="bg-primary-light dark:bg-primary/20 text-primary text-xs font-medium px-2 py-0.5 rounded-full">{stage?.title}</span></td>
+                                            <td className="px-6 py-3">{card.priority && <span className={`bg-${card.priorityColor}-50 dark:bg-${card.priorityColor}-900/30 text-${card.priorityColor}-600 text-xs font-bold px-2 py-0.5 rounded-md`}>{card.priority}</span>}</td>
+                                            <td className="px-6 py-3 font-bold text-green-600">{card.value}</td>
+                                        </tr>
+                                    );
+                                })}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            )}
+
+            {/* Report Modal */}
+            {showReport && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+                    <div className="absolute inset-0 bg-slate-900/30 backdrop-blur-sm" onClick={() => setShowReport(false)} />
+                    <div className="relative bg-surface-light dark:bg-surface-dark rounded-2xl shadow-2xl border border-border-light dark:border-border-dark w-full max-w-xl max-h-[85vh] overflow-y-auto">
+                        <div className="p-6 border-b border-border-light dark:border-border-dark flex justify-between">
+                            <h3 className="text-lg font-bold font-display">Relatório Mensal</h3>
+                            <button onClick={() => setShowReport(false)}><span className="material-symbols-outlined text-text-secondary-light hover:text-text-main-light">close</span></button>
+                        </div>
+                        <div className="p-6 space-y-6">
+                            <div className="grid grid-cols-2 gap-4">
+                                <div className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-xl">
+                                    <p className="text-xs text-text-secondary-light font-medium uppercase">Total de Conversas</p>
+                                    <p className="text-2xl font-bold mt-1">127</p>
+                                </div>
+                                <div className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-xl">
+                                    <p className="text-xs text-text-secondary-light font-medium uppercase">Negócios Ativos</p>
+                                    <p className="text-2xl font-bold mt-1">{cards.length}</p>
+                                </div>
+                                <div className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-xl">
+                                    <p className="text-xs text-text-secondary-light font-medium uppercase">Valor Total Pipeline</p>
+                                    <p className="text-2xl font-bold mt-1 text-green-600">R$ 13.850</p>
+                                </div>
+                                <div className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-xl">
+                                    <p className="text-xs text-text-secondary-light font-medium uppercase">Taxa de Conversão</p>
+                                    <p className="text-2xl font-bold mt-1 text-primary">24.8%</p>
                                 </div>
                             </div>
-
-                            {/* Cards */}
-                            <div className="flex-1 p-3 overflow-y-auto space-y-3 custom-scrollbar">
-                                {col.cards.map((card, i) => (
-                                    <div
-                                        key={i}
-                                        className="bg-surface-light dark:bg-surface-dark p-4 rounded-lg shadow-sm border border-border-light dark:border-border-dark hover:shadow-md hover:border-primary/30 transition-all cursor-grab active:cursor-grabbing"
-                                    >
-                                        <div className="flex justify-between items-start mb-3">
-                                            <div>
-                                                <h3 className="text-sm font-bold">{card.name}</h3>
-                                                <p className="text-xs text-text-secondary-light dark:text-text-secondary-dark mt-1">
-                                                    Contato: {card.contact}
-                                                </p>
+                            <div>
+                                <h4 className="text-sm font-bold mb-3">Negócios por Etapa</h4>
+                                {stages.map((s) => {
+                                    const count = cards.filter((c) => c.stageId === s.id).length;
+                                    return (
+                                        <div key={s.id} className="flex items-center justify-between py-2 border-b border-border-light/50 dark:border-border-dark last:border-0">
+                                            <span className="text-sm">{s.title}</span>
+                                            <div className="flex items-center gap-3">
+                                                <span className="text-xs text-text-secondary-light">{count} negócios</span>
+                                                <span className="text-sm font-bold">{s.total}</span>
                                             </div>
-                                            {card.priority && (
-                                                <span
-                                                    className={`bg-${card.priorityColor}-50 dark:bg-${card.priorityColor}-900/30 text-${card.priorityColor}-600 dark:text-${card.priorityColor}-300 text-[10px] font-bold px-2 py-1 rounded-md uppercase tracking-wider`}
-                                                >
-                                                    {card.priority}
-                                                </span>
-                                            )}
                                         </div>
-                                        {card.desc && (
-                                            <p className="text-xs text-text-secondary-light dark:text-text-secondary-dark mb-3 line-clamp-2">
-                                                {card.desc}
-                                            </p>
-                                        )}
-                                        <div className="flex items-center justify-between mt-4 pt-3 border-t border-border-light/30 dark:border-border-dark">
-                                            <span className="text-sm font-bold text-green-600 dark:text-green-400">
-                                                {card.value}
-                                            </span>
-                                            <button className="text-text-secondary-light hover:text-green-500 transition-colors" title="WhatsApp">
-                                                <span className="material-symbols-outlined text-lg">chat</span>
-                                            </button>
+                                    );
+                                })}
+                            </div>
+                            <div>
+                                <h4 className="text-sm font-bold mb-3">Produtos Mais Vendidos</h4>
+                                <div className="space-y-2">
+                                    {["Geleia de Morango", "Mix Frutas Vermelhas", "Geleia de Damasco"].map((p, i) => (
+                                        <div key={p} className="flex items-center justify-between py-1.5">
+                                            <span className="text-sm">{i + 1}. {p}</span>
+                                            <span className="text-xs font-medium text-text-secondary-light">{[42, 28, 15][i]} vendas</span>
                                         </div>
-                                    </div>
-                                ))}
-
-                                {/* Add card button */}
-                                <button className="w-full py-3 border-2 border-dashed border-border-light dark:border-border-dark rounded-lg text-text-secondary-light hover:text-primary hover:border-primary/50 hover:bg-primary/5 transition-all flex items-center justify-center gap-2 group">
-                                    <span className="material-symbols-outlined text-xl group-hover:scale-110 transition-transform">
-                                        add_circle_outline
-                                    </span>
-                                    <span className="text-xs font-semibold uppercase tracking-wide">
-                                        Adicionar
-                                    </span>
-                                </button>
+                                    ))}
+                                </div>
                             </div>
                         </div>
-                    ))}
+                        <div className="p-4 border-t border-border-light dark:border-border-dark text-center">
+                            <p className="text-xs text-text-secondary-light">© 2026 — Neurix IA</p>
+                        </div>
+                    </div>
                 </div>
-            </div>
+            )}
         </div>
     );
 }

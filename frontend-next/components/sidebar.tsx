@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { useState, useRef, useEffect } from "react";
 
 const navItems = [
     { href: "/dashboard", icon: "dashboard", label: "Painel" },
@@ -15,11 +16,33 @@ const systemItems = [
 
 export default function Sidebar() {
     const pathname = usePathname();
+    const router = useRouter();
+    const [showProfile, setShowProfile] = useState(false);
+    const profileRef = useRef<HTMLDivElement>(null);
+
+    // Close popup when clicking outside
+    useEffect(() => {
+        function handleClickOutside(event: MouseEvent) {
+            if (profileRef.current && !profileRef.current.contains(event.target as Node)) {
+                setShowProfile(false);
+            }
+        }
+        document.addEventListener("mousedown", handleClickOutside);
+        return () => document.removeEventListener("mousedown", handleClickOutside);
+    }, []);
+
+    const handleLogout = () => {
+        localStorage.removeItem("token");
+        router.push("/login");
+    };
 
     return (
         <aside className="w-[280px] bg-surface-light dark:bg-surface-dark border-r border-border-light dark:border-border-dark flex-shrink-0 hidden md:flex flex-col transition-colors duration-200">
-            {/* Logo */}
-            <div className="h-16 flex items-center px-6 border-b border-border-light dark:border-border-dark">
+            {/* Logo — clickable → /dashboard */}
+            <Link
+                href="/dashboard"
+                className="h-16 flex items-center px-6 border-b border-border-light dark:border-border-dark hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors"
+            >
                 <div className="flex items-center gap-2">
                     <span className="material-symbols-outlined text-primary text-3xl">
                         hexagon
@@ -28,7 +51,7 @@ export default function Sidebar() {
                         Neurix<span className="text-primary">CRM</span>
                     </span>
                 </div>
-            </div>
+            </Link>
 
             {/* Navigation */}
             <nav className="flex-1 overflow-y-auto py-6 px-3 space-y-1">
@@ -83,20 +106,69 @@ export default function Sidebar() {
             </nav>
 
             {/* User Profile */}
-            <div className="p-4 border-t border-border-light dark:border-border-dark">
-                <div className="flex items-center gap-3">
-                    <div className="h-9 w-9 rounded-full bg-gradient-to-tr from-primary to-purple-400 flex items-center justify-center text-white font-bold text-sm">
-                        AF
+            <div className="p-4 border-t border-border-light dark:border-border-dark relative" ref={profileRef}>
+                {/* Profile popup */}
+                {showProfile && (
+                    <div className="absolute bottom-full left-3 right-3 mb-2 bg-surface-light dark:bg-surface-dark rounded-xl shadow-2xl border border-border-light dark:border-border-dark p-4 z-50 animate-in fade-in slide-in-from-bottom-2 duration-200">
+                        <div className="flex items-center gap-3 mb-4 pb-4 border-b border-border-light dark:border-border-dark">
+                            <div className="h-12 w-12 rounded-full bg-gradient-to-tr from-primary to-purple-400 flex items-center justify-center text-white font-bold text-lg">
+                                AF
+                            </div>
+                            <div>
+                                <p className="font-semibold text-sm text-text-main-light dark:text-text-main-dark">
+                                    Admin Fábrica
+                                </p>
+                                <p className="text-xs text-text-secondary-light dark:text-text-secondary-dark">
+                                    Gerente
+                                </p>
+                            </div>
+                        </div>
+                        <div className="space-y-3 text-sm">
+                            <div className="flex items-center gap-3 text-text-secondary-light dark:text-text-secondary-dark">
+                                <span className="material-symbols-outlined text-lg">mail</span>
+                                <span>admin@neurix.com</span>
+                            </div>
+                            <div className="flex items-center gap-3 text-text-secondary-light dark:text-text-secondary-dark">
+                                <span className="material-symbols-outlined text-lg">phone</span>
+                                <span>(11) 99999-0000</span>
+                            </div>
+                            <div className="flex items-center gap-3 text-text-secondary-light dark:text-text-secondary-dark">
+                                <span className="material-symbols-outlined text-lg">badge</span>
+                                <span>Administrador</span>
+                            </div>
+                        </div>
+                        <button
+                            onClick={() => setShowProfile(false)}
+                            className="mt-4 w-full text-xs text-primary hover:underline text-center"
+                        >
+                            Editar Perfil
+                        </button>
                     </div>
-                    <div className="flex-1 min-w-0">
+                )}
+
+                <div className="flex items-center gap-3">
+                    <button
+                        onClick={() => setShowProfile(!showProfile)}
+                        className="h-9 w-9 rounded-full bg-gradient-to-tr from-primary to-purple-400 flex items-center justify-center text-white font-bold text-sm hover:scale-105 transition-transform cursor-pointer"
+                    >
+                        AF
+                    </button>
+                    <button
+                        onClick={() => setShowProfile(!showProfile)}
+                        className="flex-1 min-w-0 text-left cursor-pointer"
+                    >
                         <p className="text-sm font-medium text-text-main-light dark:text-text-main-dark truncate">
                             Admin Fábrica
                         </p>
                         <p className="text-xs text-text-secondary-light dark:text-text-secondary-dark truncate">
                             admin@neurix.com
                         </p>
-                    </div>
-                    <button className="text-text-secondary-light dark:text-text-secondary-dark hover:text-red-500 transition-colors">
+                    </button>
+                    <button
+                        onClick={handleLogout}
+                        title="Sair"
+                        className="text-text-secondary-light dark:text-text-secondary-dark hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 p-1.5 rounded-lg transition-all"
+                    >
                         <span className="material-symbols-outlined text-lg">logout</span>
                     </button>
                 </div>
