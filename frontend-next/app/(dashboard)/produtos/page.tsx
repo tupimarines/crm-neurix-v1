@@ -107,7 +107,7 @@ export default function ProdutosPage() {
             if (selectedFile) {
                 const formData = new FormData();
                 formData.append("file", selectedFile);
-                const upRes = await fetch(`${API}/api/upload/product-image/`, {
+                const upRes = await fetch(`${API}/api/upload/product-image`, {
                     method: "POST",
                     headers: authHeaders(),
                     body: formData,
