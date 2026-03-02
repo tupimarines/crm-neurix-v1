@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
-from app.routers import auth, leads, products, orders, dashboard, settings as settings_router, webhooks, keyword_rules
+from app.routers import auth, leads, products, orders, dashboard, settings as settings_router, webhooks, keyword_rules, upload
 
 
 @asynccontextmanager
@@ -50,6 +50,7 @@ def create_app() -> FastAPI:
     app.include_router(settings_router.router, prefix="/api/settings", tags=["Configurações"])
     app.include_router(webhooks.router, prefix="/api/webhooks", tags=["Webhooks"])
     app.include_router(keyword_rules.router, prefix="/api/keyword-rules", tags=["Regras de Keywords"])
+    app.include_router(upload.router, prefix="/api/upload", tags=["Upload"])
 
     # ── Health Check ──
     @app.get("/api/health", tags=["Sistema"])
