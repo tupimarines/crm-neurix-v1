@@ -65,7 +65,7 @@ export default function ProdutosPage() {
         setLoading(true);
         setError(null);
         try {
-            const res = await fetch(`${API}/api/products`, {
+            const res = await fetch(`${API}/api/products/`, {
                 headers: authHeaders(),
             });
             if (!res.ok) {
@@ -107,7 +107,7 @@ export default function ProdutosPage() {
             if (selectedFile) {
                 const formData = new FormData();
                 formData.append("file", selectedFile);
-                const upRes = await fetch(`${API}/api/upload/product-image`, {
+                const upRes = await fetch(`${API}/api/upload/product-image/`, {
                     method: "POST",
                     headers: authHeaders(),
                     body: formData,
@@ -128,7 +128,7 @@ export default function ProdutosPage() {
                 image_url,
             };
 
-            const res = await fetch(`${API}/api/products`, {
+            const res = await fetch(`${API}/api/products/`, {
                 method: "POST",
                 headers: { ...authHeaders(), "Content-Type": "application/json" },
                 body: JSON.stringify(body),
@@ -154,7 +154,7 @@ export default function ProdutosPage() {
     // ── Delete product ────────────────────────────────────────────
     async function handleDelete(id: string) {
         if (!confirm("Deletar produto?")) return;
-        await fetch(`${API}/api/products/${id}`, {
+        await fetch(`${API}/api/products/${id}/`, {
             method: "DELETE",
             headers: authHeaders(),
         });

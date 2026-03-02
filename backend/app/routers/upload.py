@@ -7,11 +7,11 @@ from supabase import Client as SupabaseClient
 import uuid
 import mimetypes
 
-from app.dependencies import get_supabase, get_current_user
+from app.dependencies import get_supabase_admin, get_current_user
 
 router = APIRouter()
 
-ALLOWED_MIME_TYPES = {"image/jpeg", "image/png", "image/webp"}
+ALLOWED_MIME_TYPES = {"image/jpeg", "image/jpg", "image/png", "image/webp"}
 MAX_SIZE_BYTES = 5 * 1024 * 1024  # 5MB
 
 
@@ -19,7 +19,7 @@ MAX_SIZE_BYTES = 5 * 1024 * 1024  # 5MB
 async def upload_product_image(
     file: UploadFile = File(...),
     user=Depends(get_current_user),
-    supabase: SupabaseClient = Depends(get_supabase),
+    supabase: SupabaseClient = Depends(get_supabase_admin),
 ):
     """Upload a product image to Supabase Storage and return the public URL."""
 

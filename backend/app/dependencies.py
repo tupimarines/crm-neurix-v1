@@ -18,7 +18,7 @@ _supabase_client: SupabaseClient | None = None
 
 
 def get_supabase(settings: Settings = Depends(get_settings)) -> SupabaseClient:
-    """Returns a Supabase client instance."""
+    """Returns a Supabase client instance (anon key — respects RLS)."""
     global _supabase_client
     if _supabase_client is None:
         if not settings.SUPABASE_URL or not settings.SUPABASE_ANON_KEY:
@@ -28,6 +28,23 @@ def get_supabase(settings: Settings = Depends(get_settings)) -> SupabaseClient:
             )
         _supabase_client = create_client(settings.SUPABASE_URL, settings.SUPABASE_ANON_KEY)
     return _supabase_client
+
+
+_supabase_admin_client: SupabaseClient | None = None
+
+
+def get_supabase_admin(settings: Settings = Depends(get_settings)) -> SupabaseClient:
+    """Returns a Supabase admin client (service role key — bypasses RLS, valid for storage)."""
+    global _supabase_admin_client
+    if _supabase_admin_client is None:
+        key = settings.SUPABASE_SERVICE_ROLE_KEY or settings.SUPABASE_ANON_KEY
+        if not settings.SUPABASE_URL or not key:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Supabase not configured.",
+            )
+        _supabase_admin_client = create_client(settings.SUPABASE_URL, key)
+    return _supabase_admin_client
 
 
 # ── Redis Client ──

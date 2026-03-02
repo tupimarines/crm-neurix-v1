@@ -30,7 +30,6 @@ def create_app() -> FastAPI:
         version=cfg.APP_VERSION,
         description="Backend API para o Neurix Smart CRM — Gestão de Leads, Produtos, Pedidos e Integrações.",
         lifespan=lifespan,
-        redirect_slashes=False,
     )
 
     # ── CORS ──
