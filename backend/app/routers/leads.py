@@ -1,0 +1,301 @@
+"""
+Leads Router — CRUD + Kanban Stage Management + Chat Mirror
+Provides the data for the Funil de Vendas Kanban board and WhatsApp chat integration.
+"""
+
+from fastapi import APIRouter, Depends, HTTPException, status, Query
+from supabase import Client as SupabaseClient
+from typing import Optional
+
+from app.dependencies import get_supabase, get_current_user
+from app.models.lead import (
+    LeadCreate, LeadUpdate, LeadMoveStage, LeadResponse,
+    KanbanBoard, KanbanColumn, LeadStage,
+)
+from app.models.chat_message import SendMessagePayload
+from app.services.uazapi_service import get_uazapi_service
+
+router = APIRouter()
+
+STAGE_LABELS = {
+    LeadStage.CONTATO_INICIAL: "Contato Inicial",
+    LeadStage.ESCOLHENDO_SABORES: "Escolhendo Sabores",
+    LeadStage.AGUARDANDO_PAGAMENTO: "Aguardando Pagamento",
+    LeadStage.ENVIADO: "Enviado",
+}
+
+
+@router.get("/kanban", response_model=KanbanBoard)
+async def get_kanban_board(
+    user=Depends(get_current_user),
+    supabase: SupabaseClient = Depends(get_supabase),
+):
+    """Get all leads organized as a Kanban board with columns."""
+    response = supabase.table("leads") \
+        .select("*") \
+        .order("created_at", desc=False) \
+        .execute()
+
+    leads_by_stage: dict[LeadStage, list] = {stage: [] for stage in LeadStage}
+
+    for row in response.data:
+        stage = LeadStage(row.get("stage", LeadStage.CONTATO_INICIAL))
+        leads_by_stage[stage].append(LeadResponse(**row))
+
+    columns = []
+    for stage in LeadStage:
+        stage_leads = leads_by_stage[stage]
+        columns.append(KanbanColumn(
+            stage=stage,
+            label=STAGE_LABELS[stage],
+            count=len(stage_leads),
+            total_value=sum(l.value for l in stage_leads),
+            leads=stage_leads,
+        ))
+
+    return KanbanBoard(columns=columns)
+
+
+@router.get("/", response_model=list[LeadResponse])
+async def list_leads(
+    stage: Optional[LeadStage] = None,
+    search: Optional[str] = Query(None, min_length=1),
+    user=Depends(get_current_user),
+    supabase: SupabaseClient = Depends(get_supabase),
+):
+    """List leads with optional stage and search filters."""
+    query = supabase.table("leads").select("*").order("created_at", desc=True)
+
+    if stage:
+        query = query.eq("stage", stage.value)
+    if search:
+        query = query.or_(f"company_name.ilike.%{search}%,contact_name.ilike.%{search}%")
+
+    response = query.execute()
+    return [LeadResponse(**row) for row in response.data]
+
+
+@router.post("/", response_model=LeadResponse, status_code=status.HTTP_201_CREATED)
+async def create_lead(
+    payload: LeadCreate,
+    user=Depends(get_current_user),
+    supabase: SupabaseClient = Depends(get_supabase),
+):
+    """Create a new lead/card."""
+    data = payload.model_dump()
+    data["tenant_id"] = user.id
+
+    response = supabase.table("leads").insert(data).execute()
+
+    if not response.data:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Erro ao criar lead.")
+
+    return LeadResponse(**response.data[0])
+
+
+@router.patch("/{lead_id}", response_model=LeadResponse)
+async def update_lead(
+    lead_id: str,
+    payload: LeadUpdate,
+    user=Depends(get_current_user),
+    supabase: SupabaseClient = Depends(get_supabase),
+):
+    """Update a lead's data."""
+    update_data = payload.model_dump(exclude_unset=True)
+    if not update_data:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Nenhum campo para atualizar.")
+
+    response = supabase.table("leads") \
+        .update(update_data) \
+        .eq("id", lead_id) \
+        .execute()
+
+    if not response.data:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead não encontrado.")
+
+    return LeadResponse(**response.data[0])
+
+
+@router.patch("/{lead_id}/stage", response_model=LeadResponse)
+async def move_lead_stage(
+    lead_id: str,
+    payload: LeadMoveStage,
+    user=Depends(get_current_user),
+    supabase: SupabaseClient = Depends(get_supabase),
+):
+    """Move a lead to a different Kanban column/stage."""
+    response = supabase.table("leads") \
+        .update({"stage": payload.stage.value}) \
+        .eq("id", lead_id) \
+        .execute()
+
+    if not response.data:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead não encontrado.")
+
+    return LeadResponse(**response.data[0])
+
+
+@router.delete("/{lead_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_lead(
+    lead_id: str,
+    user=Depends(get_current_user),
+    supabase: SupabaseClient = Depends(get_supabase),
+):
+    """Delete a lead."""
+    supabase.table("leads").delete().eq("id", lead_id).execute()
+
+
+@router.get("/{lead_id}/messages")
+async def get_lead_messages(
+    lead_id: str,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    user=Depends(get_current_user),
+    supabase: SupabaseClient = Depends(get_supabase),
+):
+    """
+    Get the full chat message history for a lead (WhatsApp chat mirror).
+    Returns messages sorted chronologically for display in the chat panel.
+    """
+    # First get the lead to find its whatsapp_chat_id
+    lead_response = supabase.table("leads") \
+        .select("id, company_name, contact_name, whatsapp_chat_id") \
+        .eq("id", lead_id) \
+        .single() \
+        .execute()
+
+    if not lead_response.data:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead não encontrado.")
+
+    lead = lead_response.data
+    whatsapp_chat_id = lead.get("whatsapp_chat_id")
+
+    if not whatsapp_chat_id:
+        return {
+            "lead_id": lead_id,
+            "lead_name": f"{lead['contact_name']} - {lead['company_name']}",
+            "whatsapp_chat_id": None,
+            "messages": [],
+            "total_messages": 0,
+        }
+
+    # Get messages for this chat, ordered chronologically
+    messages_response = supabase.table("chat_messages") \
+        .select("*", count="exact") \
+        .eq("whatsapp_chat_id", whatsapp_chat_id) \
+        .order("created_at", desc=False) \
+        .range(offset, offset + limit - 1) \
+        .execute()
+
+    return {
+        "lead_id": lead_id,
+        "lead_name": f"{lead['contact_name']} - {lead['company_name']}",
+        "whatsapp_chat_id": whatsapp_chat_id,
+        "messages": messages_response.data or [],
+        "total_messages": messages_response.count or 0,
+    }
+
+
+@router.post("/{lead_id}/messages/send")
+async def send_message_to_lead(
+    lead_id: str,
+    payload: SendMessagePayload,
+    user=Depends(get_current_user),
+    supabase: SupabaseClient = Depends(get_supabase),
+):
+    """
+    Send a WhatsApp message to a lead via Uazapi API.
+    Supports text, image, video, document, and audio messages.
+    The sent message is also saved in chat_messages for the chat mirror.
+    """
+    # Validate payload
+    try:
+        payload.validate_payload()
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+    # Get the lead's WhatsApp chat ID
+    lead_response = supabase.table("leads") \
+        .select("id, company_name, contact_name, whatsapp_chat_id, tenant_id") \
+        .eq("id", lead_id) \
+        .single() \
+        .execute()
+
+    if not lead_response.data:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead não encontrado.")
+
+    lead = lead_response.data
+    whatsapp_chat_id = lead.get("whatsapp_chat_id")
+
+    if not whatsapp_chat_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Este lead não possui WhatsApp vinculado (whatsapp_chat_id).",
+        )
+
+    # Extract the phone number from the JID
+    phone_number = whatsapp_chat_id.replace("@s.whatsapp.net", "").replace("@g.us", "")
+
+    # Send the message via Uazapi
+    uazapi = get_uazapi_service()
+    uazapi_response = None
+
+    try:
+        if payload.file_url and payload.media_type:
+            # Send media (optionally with caption/text)
+            uazapi_response = await uazapi.send_media(
+                number=phone_number,
+                media_type=payload.media_type,
+                file_url=payload.file_url,
+                caption=payload.text or "",
+                doc_name=payload.file_name,
+            )
+        else:
+            # Send text only
+            uazapi_response = await uazapi.send_text(
+                number=phone_number,
+                text=payload.text,
+            )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Falha ao enviar mensagem via Uazapi: {str(e)}",
+        )
+
+    # Determine content type and text for saving
+    content_type = payload.media_type or "text"
+    content_text = payload.text or f"[{content_type.upper()}]"
+    caption = payload.text if payload.file_url else None
+
+    # Save the outgoing message to chat_messages
+    message_record = {
+        "whatsapp_chat_id": whatsapp_chat_id,
+        "whatsapp_message_id": uazapi_response.get("messageid", "") if uazapi_response else "",
+        "lead_id": lead_id,
+        "tenant_id": lead.get("tenant_id"),
+        "direction": "outgoing",
+        "content_type": content_type,
+        "content": content_text,
+        "media_url": payload.file_url,
+        "media_mimetype": None,
+        "media_filename": payload.file_name,
+        "caption": caption,
+        "sender_name": "CRM Neurix",
+        "sender_phone": "",
+    }
+    # Remove None values
+    message_record = {k: v for k, v in message_record.items() if v is not None}
+
+    try:
+        saved = supabase.table("chat_messages").insert(message_record).execute()
+    except Exception as e:
+        # Message was sent but failed to save — log but don't error
+        print(f"⚠️ Message sent but failed to save: {e}")
+        saved = None
+
+    return {
+        "status": "sent",
+        "message": "Mensagem enviada com sucesso.",
+        "uazapi_response": uazapi_response,
+        "saved_message": saved.data[0] if saved and saved.data else message_record,
+    }

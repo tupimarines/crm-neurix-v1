@@ -1,0 +1,32 @@
+# Neurix CRM
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Environment variables — NEVER commit real secrets
+.env
+# But do track the example file
+!.env.example
+
+.venv/
+venv/
+env/
+node_modules/
+.DS_Store
+Thumbs.db
+*.log
+redis_data/
+
+# IDE
+.vscode/
+.idea/
+
+# BMAD agent framework (local tooling only)
+_bmad/
+_bmad-output/
+_agents/
+_agent/
+.agents/
+.agent/
+

@@ -1,0 +1,134 @@
+"""
+Auth Router — Login, 2FA, Refresh Token, Logout
+Uses Supabase Auth under the hood.
+"""
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from supabase import Client as SupabaseClient
+
+from app.dependencies import get_supabase, get_current_user
+from app.models.user import LoginRequest, OTPVerifyRequest, TokenResponse, RefreshRequest, UserProfile
+
+router = APIRouter()
+
+
+@router.post("/login", response_model=TokenResponse)
+async def login(payload: LoginRequest, supabase: SupabaseClient = Depends(get_supabase)):
+    """
+    Authenticate with email + password.
+    Returns JWT access_token and refresh_token.
+    If 2FA is enabled, the first step returns a partial session
+    and the client must call /verify-otp.
+    """
+    try:
+        response = supabase.auth.sign_in_with_password({
+            "email": payload.email,
+            "password": payload.password,
+        })
+
+        if not response.session:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Email ou senha inválidos.",
+            )
+
+        return TokenResponse(
+            access_token=response.session.access_token,
+            refresh_token=response.session.refresh_token,
+            expires_in=response.session.expires_in,
+            user={
+                "id": response.user.id,
+                "email": response.user.email,
+                "role": response.user.role,
+            },
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Falha no login: {str(e)}",
+        )
+
+
+@router.post("/verify-otp")
+async def verify_otp(payload: OTPVerifyRequest, supabase: SupabaseClient = Depends(get_supabase)):
+    """Verify the 2FA OTP code sent via email."""
+    try:
+        response = supabase.auth.verify_otp({
+            "email": payload.email,
+            "token": payload.token,
+            "type": "email",
+        })
+
+        if not response.session:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Código OTP inválido ou expirado.",
+            )
+
+        return TokenResponse(
+            access_token=response.session.access_token,
+            refresh_token=response.session.refresh_token,
+            expires_in=response.session.expires_in,
+            user={
+                "id": response.user.id,
+                "email": response.user.email,
+            },
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Erro na verificação OTP: {str(e)}",
+        )
+
+
+@router.post("/refresh", response_model=TokenResponse)
+async def refresh_token(payload: RefreshRequest, supabase: SupabaseClient = Depends(get_supabase)):
+    """Refresh the JWT token using the refresh_token (for 14-day session persistence)."""
+    try:
+        response = supabase.auth.refresh_session(payload.refresh_token)
+
+        if not response.session:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Refresh token inválido.",
+            )
+
+        return TokenResponse(
+            access_token=response.session.access_token,
+            refresh_token=response.session.refresh_token,
+            expires_in=response.session.expires_in,
+            user={
+                "id": response.user.id,
+                "email": response.user.email,
+            },
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Erro ao renovar sessão: {str(e)}",
+        )
+
+
+@router.post("/logout")
+async def logout(supabase: SupabaseClient = Depends(get_supabase), user=Depends(get_current_user)):
+    """Sign out the current user."""
+    try:
+        supabase.auth.sign_out()
+        return {"message": "Logout realizado com sucesso."}
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erro no logout: {str(e)}",
+        )
+
+
+@router.get("/me", response_model=UserProfile)
+async def get_me(user=Depends(get_current_user)):
+    """Get the current authenticated user's profile."""
+    return UserProfile(
+        id=user.id,
+        email=user.email,
+        full_name=user.user_metadata.get("full_name") if user.user_metadata else None,
+        role=user.role,
+        avatar_url=user.user_metadata.get("avatar_url") if user.user_metadata else None,
+    )

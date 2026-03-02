@@ -1,0 +1,292 @@
+<!-- Neurix CRM Configurações -->
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+    <meta charset="utf-8" />
+    <meta content="width=device-width, initial-scale=1.0" name="viewport" />
+    <title>Neurix CRM - Configurações</title>
+    <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;700;800&display=swap"
+        rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap"
+        rel="stylesheet" />
+    <script>
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#8c2bee", "background-light": "#f7f6f8", "background-dark": "#191022",
+                        "surface": "#ffffff", "surface-dark": "#2d2438",
+                    },
+                    fontFamily: { "display": ["Plus Jakarta Sans", "sans-serif"] },
+                },
+            },
+        }
+    </script>
+    <style>
+        body {
+            font-family: 'Plus Jakarta Sans', sans-serif;
+        }
+
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+
+        .material-symbols-outlined.filled {
+            font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+    </style>
+</head>
+
+<body
+    class="bg-background-light text-slate-900 dark:bg-background-dark dark:text-slate-100 antialiased overflow-hidden">
+    <div class="flex h-screen w-full">
+        <!-- Sidebar -->
+        <div
+            class="flex h-full w-[280px] shrink-0 flex-col justify-between bg-surface dark:bg-surface-dark border-r border-slate-200 dark:border-slate-800 p-4 transition-colors">
+            <div class="flex flex-col gap-8">
+                <div class="flex items-center gap-3 px-2">
+                    <div class="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
+                        <span class="material-symbols-outlined text-primary">token</span>
+                    </div>
+                    <div class="flex flex-col">
+                        <h1 class="text-slate-900 dark:text-white text-base font-bold leading-tight">Neurix CRM</h1>
+                        <p class="text-slate-500 dark:text-slate-400 text-xs font-medium">Jam Factory Edition</p>
+                    </div>
+                </div>
+                <nav class="flex flex-col gap-2">
+                    <a class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-slate-600 dark:text-slate-300 hover:bg-primary/5 hover:text-primary transition-all group"
+                        href="dashboard.html">
+                        <span
+                            class="material-symbols-outlined text-slate-400 group-hover:text-primary transition-colors">dashboard</span>
+                        <span class="text-sm font-medium">Painel</span>
+                    </a>
+                    <a class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-slate-600 dark:text-slate-300 hover:bg-primary/5 hover:text-primary transition-all group"
+                        href="kanban.html">
+                        <span
+                            class="material-symbols-outlined text-slate-400 group-hover:text-primary transition-colors">trending_up</span>
+                        <span class="text-sm font-medium">Vendas</span>
+                    </a>
+                    <a class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-slate-600 dark:text-slate-300 hover:bg-primary/5 hover:text-primary transition-all group"
+                        href="products.html">
+                        <span
+                            class="material-symbols-outlined text-slate-400 group-hover:text-primary transition-colors">inventory_2</span>
+                        <span class="text-sm font-medium">Produtos</span>
+                    </a>
+                    <div class="h-px w-full bg-slate-100 dark:bg-slate-700 my-1"></div>
+                    <a class="flex items-center gap-3 px-3 py-2.5 rounded-lg bg-primary/10 text-primary"
+                        href="settings.html">
+                        <span class="material-symbols-outlined filled">settings</span>
+                        <span class="text-sm font-bold">Configurações</span>
+                    </a>
+                </nav>
+            </div>
+            <a class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-slate-600 dark:text-slate-300 hover:bg-red-50 hover:text-red-600 transition-all group mt-auto"
+                href="#" data-action="logout">
+                <span
+                    class="material-symbols-outlined text-slate-400 group-hover:text-red-600 transition-colors">logout</span>
+                <span class="text-sm font-medium">Sair</span>
+            </a>
+        </div>
+
+        <!-- Main Content -->
+        <main class="flex-1 overflow-y-auto bg-background-light dark:bg-background-dark p-8">
+            <div class="max-w-[960px] mx-auto flex flex-col gap-8 pb-12">
+                <div class="flex flex-col gap-2">
+                    <h1 class="text-slate-900 dark:text-white text-3xl font-extrabold tracking-tight">Configurações</h1>
+                    <p class="text-slate-500 dark:text-slate-400 text-base">Gerencie seus módulos, integrações e
+                        preferências do sistema.</p>
+                </div>
+
+                <!-- Module Management -->
+                <div class="flex flex-col gap-4">
+                    <div class="flex items-center justify-between">
+                        <h2 class="text-slate-800 dark:text-slate-200 text-lg font-bold">Gerenciar Módulos</h2>
+                        <button class="text-primary text-sm font-medium hover:underline">Restaurar padrões</button>
+                    </div>
+                    <div
+                        class="bg-surface dark:bg-surface-dark rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden">
+                        <div
+                            class="flex items-center justify-between p-4 border-b border-slate-100 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
+                            <div class="flex items-center gap-4">
+                                <div
+                                    class="flex items-center justify-center rounded-lg bg-primary/10 text-primary shrink-0 w-10 h-10">
+                                    <span class="material-symbols-outlined">dashboard</span>
+                                </div>
+                                <div class="flex flex-col">
+                                    <span class="text-slate-900 dark:text-white font-medium text-sm">Painel
+                                        Principal</span>
+                                    <span class="text-slate-500 text-xs">Visualização geral de métricas</span>
+                                </div>
+                            </div>
+                            <button
+                                class="p-2 rounded-full text-slate-400 hover:text-primary hover:bg-primary/10 transition-all">
+                                <span class="material-symbols-outlined text-[20px]">edit</span>
+                            </button>
+                        </div>
+                        <div
+                            class="flex items-center justify-between p-4 border-b border-slate-100 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
+                            <div class="flex items-center gap-4">
+                                <div
+                                    class="flex items-center justify-center rounded-lg bg-primary/10 text-primary shrink-0 w-10 h-10">
+                                    <span class="material-symbols-outlined">trending_up</span>
+                                </div>
+                                <div class="flex flex-col">
+                                    <span class="text-slate-900 dark:text-white font-medium text-sm">Funil de
+                                        Vendas</span>
+                                    <span class="text-slate-500 text-xs">Gestão de leads e oportunidades</span>
+                                </div>
+                            </div>
+                            <button
+                                class="p-2 rounded-full text-slate-400 hover:text-primary hover:bg-primary/10 transition-all">
+                                <span class="material-symbols-outlined text-[20px]">edit</span>
+                            </button>
+                        </div>
+                        <div
+                            class="flex items-center justify-between p-4 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
+                            <div class="flex items-center gap-4">
+                                <div
+                                    class="flex items-center justify-center rounded-lg bg-primary/10 text-primary shrink-0 w-10 h-10">
+                                    <span class="material-symbols-outlined">inventory_2</span>
+                                </div>
+                                <div class="flex flex-col">
+                                    <span class="text-slate-900 dark:text-white font-medium text-sm">Produtos</span>
+                                    <span class="text-slate-500 text-xs">Catálogo de geleias e insumos</span>
+                                </div>
+                            </div>
+                            <button
+                                class="p-2 rounded-full text-slate-400 hover:text-primary hover:bg-primary/10 transition-all">
+                                <span class="material-symbols-outlined text-[20px]">edit</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Visual Customization -->
+                <div class="flex flex-col gap-4">
+                    <h2 class="text-slate-800 dark:text-slate-200 text-lg font-bold">Customização Visual</h2>
+                    <div
+                        class="bg-surface dark:bg-surface-dark rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 p-5">
+                        <div class="flex items-center justify-between">
+                            <div class="flex flex-col gap-1">
+                                <span class="text-slate-900 dark:text-white font-medium text-sm">Paleta de Cores</span>
+                                <p class="text-slate-500 text-xs">Escolha a cor principal da interface</p>
+                            </div>
+                            <div
+                                class="flex items-center gap-3 bg-slate-50 dark:bg-slate-800/50 p-2 rounded-full border border-slate-100 dark:border-slate-700">
+                                <button data-color="#8c2bee"
+                                    class="w-8 h-8 rounded-full bg-[#8c2bee] ring-2 ring-offset-2 ring-primary transition-all hover:scale-110"
+                                    title="Roxo"></button>
+                                <button data-color="#E11D48"
+                                    class="w-6 h-6 rounded-full bg-[#E11D48] hover:scale-110 transition-all"
+                                    title="Rosa"></button>
+                                <button data-color="#DC2626"
+                                    class="w-6 h-6 rounded-full bg-[#DC2626] hover:scale-110 transition-all"
+                                    title="Vermelho"></button>
+                                <button data-color="#2563EB"
+                                    class="w-6 h-6 rounded-full bg-[#2563EB] hover:scale-110 transition-all"
+                                    title="Azul Royal"></button>
+                                <button data-color="#D97706"
+                                    class="w-6 h-6 rounded-full bg-[#D97706] hover:scale-110 transition-all"
+                                    title="Dourado"></button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- API Integrations -->
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div class="flex flex-col gap-4">
+                        <h2 class="text-slate-800 dark:text-slate-200 text-lg font-bold">Integrações API</h2>
+                        <div
+                            class="bg-surface dark:bg-surface-dark rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 p-5 flex flex-col gap-4 h-full">
+                            <div class="flex items-center gap-3">
+                                <div
+                                    class="w-10 h-10 rounded-full bg-green-100 text-green-600 flex items-center justify-center">
+                                    <span class="material-symbols-outlined">chat</span>
+                                </div>
+                                <div>
+                                    <h3 class="text-slate-900 dark:text-white font-semibold text-sm">WhatsApp Business
+                                        (Uazapi)</h3>
+                                    <p class="text-slate-500 text-xs">Status: <span class="text-slate-400 font-medium"
+                                            id="uazapi-status">Não configurado</span></p>
+                                </div>
+                                <div class="ml-auto">
+                                    <label class="relative inline-flex items-center cursor-pointer">
+                                        <input class="sr-only peer" type="checkbox" />
+                                        <div
+                                            class="w-11 h-6 bg-slate-200 rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-slate-600 peer-checked:bg-primary">
+                                        </div>
+                                    </label>
+                                </div>
+                            </div>
+                            <div
+                                class="mt-2 p-3 bg-slate-50 dark:bg-slate-800 rounded-lg border border-slate-100 dark:border-slate-700">
+                                <div class="flex justify-between items-center mb-1">
+                                    <span class="text-xs text-slate-500 font-medium">API Key</span>
+                                    <span class="text-xs text-primary cursor-pointer hover:underline">Gerar nova</span>
+                                </div>
+                                <code
+                                    class="text-xs text-slate-700 dark:text-slate-300 font-mono break-all">Configure via .env</code>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="flex flex-col gap-4">
+                        <h2 class="text-slate-800 dark:text-slate-200 text-lg font-bold">Banco de Dados</h2>
+                        <div
+                            class="bg-surface dark:bg-surface-dark rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 p-5 flex flex-col gap-4 h-full">
+                            <div class="flex items-center gap-3">
+                                <div
+                                    class="w-10 h-10 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center">
+                                    <span class="material-symbols-outlined">database</span>
+                                </div>
+                                <div>
+                                    <h3 class="text-slate-900 dark:text-white font-semibold text-sm">Supabase PostgreSQL
+                                    </h3>
+                                    <p class="text-slate-500 text-xs" id="db-status">Não configurado</p>
+                                </div>
+                                <div class="ml-auto">
+                                    <button
+                                        class="p-2 rounded-full text-slate-400 hover:text-primary hover:bg-primary/10 transition-all">
+                                        <span class="material-symbols-outlined text-[20px]">settings</span>
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="flex gap-2 mt-auto pt-2">
+                                <button
+                                    class="flex-1 py-2 px-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded-lg text-xs font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-50 transition-colors">
+                                    Backup Manual
+                                </button>
+                                <button
+                                    class="flex-1 py-2 px-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded-lg text-xs font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-50 transition-colors">
+                                    Logs de Acesso
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Footer -->
+                <div
+                    class="mt-8 border-t border-slate-200 dark:border-slate-700 pt-6 flex flex-col md:flex-row justify-between items-center text-xs text-slate-400 dark:text-slate-500">
+                    <p>© 2024 Neurix CRM System. Todos os direitos reservados.</p>
+                    <div class="flex gap-4 mt-2 md:mt-0">
+                        <a class="hover:text-primary transition-colors" href="#">Documentação</a>
+                        <a class="hover:text-primary transition-colors" href="#">Suporte</a>
+                        <a class="hover:text-primary transition-colors" href="#">Termos de Uso</a>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script>window.NEURIX_API_BASE = 'http://localhost:8000/api';</script>
+    <script src="js/auth.js"></script>
+    <script src="js/app.js"></script>
+    <script src="js/settings.js"></script>
+</body>
+
+</html>

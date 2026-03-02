@@ -1,0 +1,69 @@
+"""
+Pydantic models for Leads / Kanban Cards.
+Maps directly to the Kanban board columns in the frontend.
+"""
+
+from pydantic import BaseModel, Field
+from datetime import datetime
+from enum import Enum
+from typing import Optional
+
+
+class LeadPriority(str, Enum):
+    ALTA = "alta"
+    MEDIA = "media"
+    BAIXA = "baixa"
+
+
+class LeadStage(str, Enum):
+    CONTATO_INICIAL = "contato_inicial"
+    ESCOLHENDO_SABORES = "escolhendo_sabores"
+    AGUARDANDO_PAGAMENTO = "aguardando_pagamento"
+    ENVIADO = "enviado"
+
+
+class LeadBase(BaseModel):
+    company_name: str = Field(..., min_length=1, max_length=200, description="Nome da empresa")
+    contact_name: str = Field(..., min_length=1, max_length=200, description="Nome do contato")
+    stage: LeadStage = LeadStage.CONTATO_INICIAL
+    priority: Optional[LeadPriority] = None
+    value: float = Field(default=0.0, ge=0, description="Valor estimado em R$")
+    notes: Optional[str] = Field(None, max_length=1000, description="Observações sobre o lead")
+    whatsapp_chat_id: Optional[str] = None
+
+
+class LeadCreate(LeadBase):
+    pass
+
+
+class LeadUpdate(BaseModel):
+    company_name: Optional[str] = None
+    contact_name: Optional[str] = None
+    priority: Optional[LeadPriority] = None
+    value: Optional[float] = None
+    notes: Optional[str] = None
+
+
+class LeadMoveStage(BaseModel):
+    stage: LeadStage
+
+
+class LeadResponse(LeadBase):
+    id: str
+    tenant_id: str
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class KanbanColumn(BaseModel):
+    stage: LeadStage
+    label: str
+    count: int
+    total_value: float
+    leads: list[LeadResponse]
+
+
+class KanbanBoard(BaseModel):
+    columns: list[KanbanColumn]
