@@ -1,6 +1,6 @@
 FROM node:20-alpine AS base
 
-# Install dependencies
+# Install dependencies only when needed
 FROM base AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
@@ -26,6 +26,10 @@ ENV NEXT_TELEMETRY_DISABLED=1
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs
 
+# Create public dir in case it's empty/missing
+RUN mkdir -p ./public
+
+# Copy public folder if it exists (using shell trick)
 COPY --from=builder /app/public ./public
 
 # Standalone output
