@@ -18,6 +18,18 @@ services:
     networks:
       - default
       - dokploy-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=dokploy-network"
+      # HTTPS router
+      - "traefik.http.routers.crm-frontend.rule=Host(`crm.wbtech.dev`)"
+      - "traefik.http.routers.crm-frontend.entrypoints=websecure"
+      - "traefik.http.routers.crm-frontend.tls.certresolver=letsencrypt"
+      - "traefik.http.services.crm-frontend.loadbalancer.server.port=3000"
+      # HTTP → HTTPS redirect
+      - "traefik.http.routers.crm-frontend-http.rule=Host(`crm.wbtech.dev`)"
+      - "traefik.http.routers.crm-frontend-http.entrypoints=web"
+      - "traefik.http.routers.crm-frontend-http.middlewares=redirect-to-https@file"
 
   backend:
     build: ./backend
