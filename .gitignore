@@ -13,6 +13,9 @@ __pycache__/
 venv/
 env/
 node_modules/
+.next/
+.env.local
+stitch_neurix_crm_dashboard_vis_o_geral/
 .DS_Store
 Thumbs.db
 *.log

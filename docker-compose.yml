@@ -1,8 +1,19 @@
 # Neurix CRM — Docker Compose
-# Runs: FastAPI Backend + Webhook Worker
-# Supabase and Redis run separately on Dokploy
+# Runs: FastAPI Backend + Webhook Worker + Next.js Frontend
+# Redis runs separately on Dokploy
 
 services:
+  frontend:
+    build: ./frontend-next
+    container_name: neurix-crm-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://backend:8000
+    depends_on:
+      - backend
+    restart: unless-stopped
+
   backend:
     build: ./backend
     container_name: neurix-crm-backend
@@ -17,7 +28,6 @@ services:
       timeout: 10s
       retries: 3
 
-  # Worker for processing webhook events from Redis queue
   worker:
     build: ./backend
     container_name: neurix-crm-worker

@@ -1,0 +1,63 @@
+@import "tailwindcss";
+
+@theme {
+  --color-primary: #8b5cf6;
+  --color-primary-hover: #7c3aed;
+  --color-primary-light: #ede9fe;
+  --color-primary-dark: #6b21a8;
+
+  --color-background-light: #f8fafc;
+  --color-surface-light: #ffffff;
+  --color-border-light: #e2e8f0;
+  --color-text-main-light: #1e293b;
+  --color-text-secondary-light: #64748b;
+
+  --color-background-dark: #0f172a;
+  --color-surface-dark: #1e293b;
+  --color-border-dark: #334155;
+  --color-text-main-dark: #f1f5f9;
+  --color-text-secondary-dark: #94a3b8;
+
+  --font-display: "Plus Jakarta Sans", "Outfit", sans-serif;
+  --font-body: "Plus Jakarta Sans", "Inter", sans-serif;
+}
+
+/* Material Symbols Outlined */
+.material-symbols-outlined {
+  font-variation-settings: "FILL" 0, "wght" 400, "GRAD" 0, "opsz" 24;
+}
+.material-symbols-outlined.filled {
+  font-variation-settings: "FILL" 1, "wght" 400, "GRAD" 0, "opsz" 24;
+}
+
+/* Custom scrollbar */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #e5e7eb;
+  border-radius: 4px;
+}
+.dark .custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #374151;
+}
+
+/* Glass effect for login */
+.glass-effect {
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+/* Background pattern */
+.bg-pattern {
+  background-image: radial-gradient(var(--color-primary) 0.5px, transparent 0.5px),
+    radial-gradient(var(--color-primary) 0.5px, transparent 0.5px);
+  background-size: 24px 24px;
+  background-position: 0 0, 12px 12px;
+  opacity: 0.03;
+}
