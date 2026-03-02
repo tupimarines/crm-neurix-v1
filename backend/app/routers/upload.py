@@ -23,11 +23,11 @@ async def upload_product_image(
 ):
     """Upload a product image to Supabase Storage and return the public URL."""
 
-    # Validate MIME type
-    if file.content_type not in ALLOWED_MIME_TYPES:
+    # Validate MIME type — accept any image/*
+    if not (file.content_type or "").startswith("image/"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Tipo de arquivo não suportado: {file.content_type}. Use JPEG, PNG ou WebP.",
+            detail=f"Tipo de arquivo não suportado. Use uma imagem (JPEG, PNG ou WebP).",
         )
 
     content = await file.read()
@@ -40,16 +40,16 @@ async def upload_product_image(
         )
 
     # Generate unique filename
-    ext = mimetypes.guess_extension(file.content_type) or ".jpg"
-    if ext == ".jpe":
-        ext = ".jpg"
+    mime = file.content_type or "image/jpeg"
+    ext_map = {"image/jpeg": ".jpg", "image/jpg": ".jpg", "image/png": ".png", "image/webp": ".webp"}
+    ext = ext_map.get(mime, ".jpg")
     filename = f"{user.id}/{uuid.uuid4()}{ext}"
 
     try:
         response = supabase.storage.from_("products").upload(
             path=filename,
             file=content,
-            file_options={"content-type": file.content_type, "upsert": "false"},
+            file_options={"content-type": mime, "upsert": "true"},
         )
 
         # Get public URL
