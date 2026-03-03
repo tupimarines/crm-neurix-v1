@@ -31,6 +31,7 @@ async def list_settings(
     """Get all user settings."""
     response = supabase.table("settings") \
         .select("key, value") \
+        .eq("tenant_id", user.id) \
         .execute()
     return [SettingResponse(**row) for row in (response.data or [])]
 
@@ -44,6 +45,7 @@ async def get_setting(
     """Get a specific setting by key."""
     response = supabase.table("settings") \
         .select("key, value") \
+        .eq("tenant_id", user.id) \
         .eq("key", key) \
         .single() \
         .execute()

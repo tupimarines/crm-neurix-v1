@@ -5,9 +5,9 @@ Upload Router — File upload to Supabase Storage.
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status
 from supabase import Client as SupabaseClient
 import uuid
-import mimetypes
 
-from app.dependencies import get_supabase_admin, get_current_user
+from app.config import get_settings, Settings
+from app.dependencies import get_supabase, get_current_user
 
 router = APIRouter()
 
@@ -19,7 +19,8 @@ MAX_SIZE_BYTES = 5 * 1024 * 1024  # 5MB
 async def upload_product_image(
     file: UploadFile = File(...),
     user=Depends(get_current_user),
-    supabase: SupabaseClient = Depends(get_supabase_admin),
+    supabase: SupabaseClient = Depends(get_supabase),
+    settings: Settings = Depends(get_settings),
 ):
     """Upload a product image to Supabase Storage and return the public URL."""
 
@@ -52,8 +53,13 @@ async def upload_product_image(
             file_options={"content-type": mime, "upsert": "true"},
         )
 
-        # Get public URL
-        public_url = supabase.storage.from_("products").get_public_url(filename)
+        # Build public URL using the browser-accessible SUPABASE_PUBLIC_URL
+        # instead of the internal Docker SUPABASE_URL
+        base_url = settings.SUPABASE_PUBLIC_URL or settings.SUPABASE_URL
+        # Remove trailing slash if present
+        base_url = base_url.rstrip("/")
+        public_url = f"{base_url}/storage/v1/object/public/products/{filename}"
+
         return {"url": public_url, "path": filename}
 
     except Exception as e:

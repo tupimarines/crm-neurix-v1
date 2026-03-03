@@ -21,7 +21,7 @@ async def list_orders(
     supabase: SupabaseClient = Depends(get_supabase),
 ):
     """List orders with optional payment status filter."""
-    query = supabase.table("orders").select("*").order("created_at", desc=True).limit(limit)
+    query = supabase.table("orders").select("*").eq("tenant_id", user.id).order("created_at", desc=True).limit(limit)
 
     if payment_status:
         query = query.eq("payment_status", payment_status.value)
@@ -61,6 +61,7 @@ async def update_order(
     response = supabase.table("orders") \
         .update(update_data) \
         .eq("id", order_id) \
+        .eq("tenant_id", user.id) \
         .execute()
 
     if not response.data:

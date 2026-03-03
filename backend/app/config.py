@@ -16,6 +16,7 @@ class Settings(BaseSettings):
 
     # ── Supabase ──
     SUPABASE_URL: str = ""
+    SUPABASE_PUBLIC_URL: str = ""  # Browser-accessible URL (e.g. https://your-supabase.domain)
     SUPABASE_ANON_KEY: str = ""
     SUPABASE_SERVICE_ROLE_KEY: str = ""
     SUPABASE_JWT_SECRET: str = ""

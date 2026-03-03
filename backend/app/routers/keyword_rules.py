@@ -20,6 +20,7 @@ async def list_keyword_rules(
     """List all keyword rules for the current tenant."""
     response = supabase.table("keyword_rules") \
         .select("*") \
+        .eq("tenant_id", user.id) \
         .order("priority", desc=True) \
         .execute()
     return [KeywordRuleResponse(**row) for row in (response.data or [])]
@@ -62,6 +63,7 @@ async def update_keyword_rule(
     response = supabase.table("keyword_rules") \
         .update(update_data) \
         .eq("id", rule_id) \
+        .eq("tenant_id", user.id) \
         .execute()
 
     if not response.data:
@@ -77,7 +79,7 @@ async def delete_keyword_rule(
     supabase: SupabaseClient = Depends(get_supabase),
 ):
     """Delete a keyword rule."""
-    supabase.table("keyword_rules").delete().eq("id", rule_id).execute()
+    supabase.table("keyword_rules").delete().eq("id", rule_id).eq("tenant_id", user.id).execute()
 
 
 @router.post("/seed-defaults", response_model=list[KeywordRuleResponse])

@@ -33,6 +33,7 @@ async def get_kanban_board(
     """Get all leads organized as a Kanban board with columns."""
     response = supabase.table("leads") \
         .select("*") \
+        .eq("tenant_id", user.id) \
         .order("created_at", desc=False) \
         .execute()
 
@@ -64,7 +65,7 @@ async def list_leads(
     supabase: SupabaseClient = Depends(get_supabase),
 ):
     """List leads with optional stage and search filters."""
-    query = supabase.table("leads").select("*").order("created_at", desc=True)
+    query = supabase.table("leads").select("*").eq("tenant_id", user.id).order("created_at", desc=True)
 
     if stage:
         query = query.eq("stage", stage.value)
@@ -108,6 +109,7 @@ async def update_lead(
     response = supabase.table("leads") \
         .update(update_data) \
         .eq("id", lead_id) \
+        .eq("tenant_id", user.id) \
         .execute()
 
     if not response.data:
@@ -127,6 +129,7 @@ async def move_lead_stage(
     response = supabase.table("leads") \
         .update({"stage": payload.stage.value}) \
         .eq("id", lead_id) \
+        .eq("tenant_id", user.id) \
         .execute()
 
     if not response.data:
@@ -142,7 +145,7 @@ async def delete_lead(
     supabase: SupabaseClient = Depends(get_supabase),
 ):
     """Delete a lead."""
-    supabase.table("leads").delete().eq("id", lead_id).execute()
+    supabase.table("leads").delete().eq("id", lead_id).eq("tenant_id", user.id).execute()
 
 
 @router.get("/{lead_id}/messages")
@@ -161,6 +164,7 @@ async def get_lead_messages(
     lead_response = supabase.table("leads") \
         .select("id, company_name, contact_name, whatsapp_chat_id") \
         .eq("id", lead_id) \
+        .eq("tenant_id", user.id) \
         .single() \
         .execute()
 
@@ -183,6 +187,7 @@ async def get_lead_messages(
     messages_response = supabase.table("chat_messages") \
         .select("*", count="exact") \
         .eq("whatsapp_chat_id", whatsapp_chat_id) \
+        .eq("tenant_id", user.id) \
         .order("created_at", desc=False) \
         .range(offset, offset + limit - 1) \
         .execute()
@@ -218,6 +223,7 @@ async def send_message_to_lead(
     lead_response = supabase.table("leads") \
         .select("id, company_name, contact_name, whatsapp_chat_id, tenant_id") \
         .eq("id", lead_id) \
+        .eq("tenant_id", user.id) \
         .single() \
         .execute()
 

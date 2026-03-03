@@ -22,7 +22,9 @@ async def list_products(
     supabase: SupabaseClient = Depends(get_supabase),
 ):
     """List products with optional filters."""
-    query = supabase.table("products").select("*").order("created_at", desc=True)
+    query = supabase.table("products").select("*") \
+        .eq("tenant_id", user.id) \
+        .order("created_at", desc=True)
 
     if category:
         query = query.eq("category", category.value)
@@ -42,7 +44,10 @@ async def get_product(
     supabase: SupabaseClient = Depends(get_supabase),
 ):
     """Get a single product by ID."""
-    response = supabase.table("products").select("*").eq("id", product_id).single().execute()
+    response = supabase.table("products").select("*") \
+        .eq("id", product_id) \
+        .eq("tenant_id", user.id) \
+        .single().execute()
 
     if not response.data:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Produto não encontrado.")
@@ -84,6 +89,7 @@ async def update_product(
     response = supabase.table("products") \
         .update(update_data) \
         .eq("id", product_id) \
+        .eq("tenant_id", user.id) \
         .execute()
 
     if not response.data:
@@ -99,4 +105,7 @@ async def delete_product(
     supabase: SupabaseClient = Depends(get_supabase),
 ):
     """Delete a product."""
-    supabase.table("products").delete().eq("id", product_id).execute()
+    supabase.table("products").delete() \
+        .eq("id", product_id) \
+        .eq("tenant_id", user.id) \
+        .execute()

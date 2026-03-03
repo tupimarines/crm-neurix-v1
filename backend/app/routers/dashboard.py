@@ -33,7 +33,7 @@ async def get_kpis(
 ):
     """Get dashboard KPI metrics."""
     # Count leads and calculate conversion
-    leads_response = supabase.table("leads").select("id, stage", count="exact").execute()
+    leads_response = supabase.table("leads").select("id, stage", count="exact").eq("tenant_id", user.id).execute()
     total_leads = leads_response.count or 0
     converted = sum(1 for l in (leads_response.data or []) if l.get("stage") == "enviado")
     conversion_rate = (converted / total_leads * 100) if total_leads > 0 else 0
@@ -41,13 +41,14 @@ async def get_kpis(
     # Calculate monthly revenue from paid orders
     orders_response = supabase.table("orders") \
         .select("total, payment_status") \
+        .eq("tenant_id", user.id) \
         .eq("payment_status", "pago") \
         .execute()
     monthly_revenue = sum(o.get("total", 0) for o in (orders_response.data or []))
 
     # Message volume (from chat_messages table, if exists)
     try:
-        messages_response = supabase.table("chat_messages").select("id", count="exact").execute()
+        messages_response = supabase.table("chat_messages").select("id", count="exact").eq("tenant_id", user.id).execute()
         message_volume = messages_response.count or 0
     except Exception:
         message_volume = 0
@@ -70,6 +71,7 @@ async def get_recent_orders(
     """Get the most recent orders for the dashboard table."""
     response = supabase.table("orders") \
         .select("*") \
+        .eq("tenant_id", user.id) \
         .order("created_at", desc=True) \
         .limit(10) \
         .execute()
