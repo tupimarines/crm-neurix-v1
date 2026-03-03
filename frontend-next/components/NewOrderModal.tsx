@@ -146,8 +146,8 @@ export default function NewOrderModal({ onClose, onCreated }: NewOrderModalProps
                 .insert({
                     tenant_id: tenantId,
                     contact_name: newClientName.trim(),
-                    company_name: newClientCompany.trim() || null,
-                    phone: newClientPhone.trim() || null,
+                    company_name: newClientCompany.trim() || "",
+                    phone: newClientPhone.trim() || "",
                     stage: "contato_inicial",
                     priority: "normal",
                     value: 0,
