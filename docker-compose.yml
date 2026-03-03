@@ -6,7 +6,11 @@
 
 services:
   frontend:
-    build: ./frontend-next
+    build:
+      context: ./frontend-next
+      args:
+        NEXT_PUBLIC_SUPABASE_URL: ${SUPABASE_PUBLIC_URL:-https://crm-supabase.wbtech.dev}
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY}
     container_name: neurix-crm-frontend
     expose:
       - "3000"
