@@ -6,15 +6,16 @@ const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 /**
- * Set the Supabase auth session using the access_token from localStorage.
+ * Set the Supabase auth session using tokens from localStorage.
  * Call this before making authenticated queries.
  */
 export async function setSupabaseSession() {
     const accessToken = localStorage.getItem("access_token");
+    const refreshToken = localStorage.getItem("refresh_token");
     if (accessToken) {
         await supabase.auth.setSession({
             access_token: accessToken,
-            refresh_token: "", // We don't store refresh_token in localStorage currently
+            refresh_token: refreshToken || "",
         });
     }
 }
