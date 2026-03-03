@@ -52,11 +52,34 @@ export default function NewOrderModal({ onClose, onCreated }: NewOrderModalProps
     const [notes, setNotes] = useState("");
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState("");
+    const [tenantId, setTenantId] = useState<string | null>(null);
 
-    // Load available products on mount
+    // Load tenant_id and products on mount
     useEffect(() => {
+        loadTenantId();
         loadProducts();
     }, []);
+
+    async function loadTenantId() {
+        try {
+            const { data: { user } } = await supabase.auth.getUser();
+            if (user) {
+                const { data: profile } = await supabase
+                    .from("profiles")
+                    .select("tenant_id")
+                    .eq("id", user.id)
+                    .single();
+                if (profile?.tenant_id) {
+                    setTenantId(profile.tenant_id);
+                } else {
+                    // fallback: use user id as tenant_id
+                    setTenantId(user.id);
+                }
+            }
+        } catch (err) {
+            console.error("Error loading tenant_id:", err);
+        }
+    }
 
     async function loadProducts() {
         setProductsLoading(true);
@@ -121,6 +144,7 @@ export default function NewOrderModal({ onClose, onCreated }: NewOrderModalProps
             const { data, error } = await supabase
                 .from("leads")
                 .insert({
+                    tenant_id: tenantId,
                     contact_name: newClientName.trim(),
                     company_name: newClientCompany.trim() || null,
                     phone: newClientPhone.trim() || null,
@@ -199,6 +223,7 @@ export default function NewOrderModal({ onClose, onCreated }: NewOrderModalProps
             const { data, error } = await supabase
                 .from("orders")
                 .insert({
+                    tenant_id: tenantId,
                     lead_id: selectedClient.id,
                     client_name: selectedClient.contact_name,
                     client_company: selectedClient.company_name || null,
