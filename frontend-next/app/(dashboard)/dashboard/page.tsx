@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import { supabase, setSupabaseSession } from "@/lib/supabase";
+import NewOrderModal from "@/components/NewOrderModal";
 
 // Types for search and detail cards
 interface SearchResult {
@@ -593,65 +594,7 @@ export default function DashboardPage() {
 
             {/* New Order Modal */}
             {showNewOrder && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-                    <div className="absolute inset-0 bg-slate-900/30 dark:bg-slate-900/60 backdrop-blur-sm" onClick={() => setShowNewOrder(false)} />
-                    <div className="relative bg-surface-light dark:bg-surface-dark rounded-2xl shadow-2xl border border-border-light dark:border-border-dark w-full max-w-lg max-h-[90vh] overflow-y-auto">
-                        <div className="p-6 border-b border-border-light dark:border-border-dark flex items-center justify-between">
-                            <h3 className="text-lg font-bold font-display">Novo Pedido</h3>
-                            <button onClick={() => setShowNewOrder(false)} className="text-text-secondary-light hover:text-text-main-light transition-colors">
-                                <span className="material-symbols-outlined">close</span>
-                            </button>
-                        </div>
-                        <div className="p-6 space-y-5">
-                            {/* Client */}
-                            <div>
-                                <label className="block text-xs font-semibold text-text-secondary-light uppercase tracking-wider mb-1.5">Cliente</label>
-                                <div className="relative">
-                                    <input
-                                        className="w-full px-4 py-2.5 bg-white dark:bg-slate-800 border border-border-light dark:border-border-dark rounded-xl text-sm focus:ring-2 focus:ring-primary focus:border-transparent pl-10"
-                                        placeholder="Buscar cliente existente..."
-                                        type="text"
-                                    />
-                                    <span className="material-symbols-outlined absolute left-3 top-2.5 text-text-secondary-light text-lg">search</span>
-                                </div>
-                                <button className="mt-2 text-xs text-primary hover:underline flex items-center gap-1">
-                                    <span className="material-symbols-outlined text-sm">add</span>
-                                    Criar novo cliente
-                                </button>
-                            </div>
-                            {/* Products */}
-                            <div>
-                                <label className="block text-xs font-semibold text-text-secondary-light uppercase tracking-wider mb-1.5">Produtos</label>
-                                <div className="border border-border-light dark:border-border-dark rounded-xl overflow-hidden">
-                                    <div className="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-800/50">
-                                        <span className="text-sm text-text-secondary-light">Nenhum produto adicionado</span>
-                                        <button className="text-primary text-sm font-medium hover:underline flex items-center gap-1">
-                                            <span className="material-symbols-outlined text-sm">add</span>
-                                            Adicionar
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
-                            {/* Notes */}
-                            <div>
-                                <label className="block text-xs font-semibold text-text-secondary-light uppercase tracking-wider mb-1.5">Observações</label>
-                                <textarea
-                                    className="w-full px-4 py-2.5 bg-white dark:bg-slate-800 border border-border-light dark:border-border-dark rounded-xl text-sm focus:ring-2 focus:ring-primary focus:border-transparent resize-none"
-                                    placeholder="Notas sobre o pedido..."
-                                    rows={3}
-                                />
-                            </div>
-                        </div>
-                        <div className="p-6 border-t border-border-light dark:border-border-dark flex gap-3">
-                            <button onClick={() => setShowNewOrder(false)} className="flex-1 px-4 py-2.5 border border-border-light dark:border-border-dark rounded-xl text-sm font-medium hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors">
-                                Cancelar
-                            </button>
-                            <button className="flex-1 px-4 py-2.5 bg-primary text-white rounded-xl text-sm font-medium hover:bg-primary-hover shadow-lg shadow-primary/30 transition-all">
-                                Criar Pedido
-                            </button>
-                        </div>
-                    </div>
-                </div>
+                <NewOrderModal onClose={() => setShowNewOrder(false)} />
             )}
         </div>
     );
