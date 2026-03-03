@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { supabase } from "@/lib/supabase";
+import { supabase, setSupabaseSession } from "@/lib/supabase";
 
 // Types for search and detail cards
 interface SearchResult {
@@ -253,6 +253,11 @@ export default function DashboardPage() {
     const [selectedOrder, setSelectedOrder] = useState<OrderDetail | null>(null);
     const [selectedProduct, setSelectedProduct] = useState<ProductDetail | null>(null);
 
+    // Set Supabase auth session on mount
+    useEffect(() => {
+        setSupabaseSession();
+    }, []);
+
     useEffect(() => {
         function handleClick(e: MouseEvent) {
             if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
@@ -314,6 +319,7 @@ export default function DashboardPage() {
                     .select("id, contact_name, company_name, phone, stage, priority, value, notes, delivery_address, created_at")
                     .eq("id", result.id)
                     .single();
+                if (error) console.error("Lead fetch error:", error);
                 if (!error && data) setSelectedLead(data as LeadDetail);
             } else if (result.type === "order") {
                 const { data, error } = await supabase
@@ -321,6 +327,7 @@ export default function DashboardPage() {
                     .select("id, client_name, client_company, product_summary, total, payment_status, stage, notes, created_at")
                     .eq("id", result.id)
                     .single();
+                if (error) console.error("Order fetch error:", error);
                 if (!error && data) setSelectedOrder(data as OrderDetail);
             } else if (result.type === "product") {
                 const { data, error } = await supabase
@@ -328,6 +335,7 @@ export default function DashboardPage() {
                     .select("id, name, description, price, weight_grams, category, status, is_active, image_url, created_at")
                     .eq("id", result.id)
                     .single();
+                if (error) console.error("Product fetch error:", error);
                 if (!error && data) setSelectedProduct(data as ProductDetail);
             }
         } catch (err) {
