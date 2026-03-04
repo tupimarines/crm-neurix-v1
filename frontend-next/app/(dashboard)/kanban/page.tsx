@@ -211,7 +211,7 @@ export default function KanbanPage() {
     // Actions
     function addStage() {
         if (!newStageName.trim()) return;
-        const id = `s${Date.now()}`;
+        const id = `s${crypto.randomUUID()}`;
         setStages([...stages, { id, title: newStageName.trim(), total: "R$ 0,00" }]);
         setNewStageName("");
         setShowNewStage(false);
@@ -219,7 +219,7 @@ export default function KanbanPage() {
 
     function addCard(stageId: string) {
         if (!newCard.name.trim()) return;
-        const id = `c${Date.now()}`;
+        const id = `c${crypto.randomUUID()}`;
         const priorityColorMap: Record<string, string> = { Alta: "red", Média: "blue", Baixa: "yellow", OK: "green" };
         setCards([...cards, {
             id, stageId, name: newCard.name, contact: newCard.contact,

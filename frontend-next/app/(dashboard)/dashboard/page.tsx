@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import { supabase, setSupabaseSession } from "@/lib/supabase";
 import NewOrderModal from "@/components/NewOrderModal";
 
@@ -34,6 +35,8 @@ interface OrderDetail {
     stage: string;
     notes: string;
     created_at: string;
+    lead_id?: string;
+    tenant_id?: string;
 }
 
 interface ProductDetail {
@@ -237,6 +240,7 @@ function ProductCard({ product, onClose }: { product: ProductDetail; onClose: ()
 }
 
 export default function DashboardPage() {
+    const router = useRouter();
     const [showNewOrder, setShowNewOrder] = useState(false);
     const [searchQuery, setSearchQuery] = useState("");
     const [showSearch, setShowSearch] = useState(false);
@@ -255,9 +259,90 @@ export default function DashboardPage() {
     const [selectedProduct, setSelectedProduct] = useState<ProductDetail | null>(null);
 
     // Set Supabase auth session on mount
+    const [recentOrders, setRecentOrders] = useState<OrderDetail[]>([]);
+    const [ordersLoading, setOrdersLoading] = useState(true);
+
     useEffect(() => {
         setSupabaseSession();
+        loadRecentOrders();
     }, []);
+
+    async function loadRecentOrders() {
+        setOrdersLoading(true);
+        try {
+            const { data: { user } } = await supabase.auth.getUser();
+            if (!user) return;
+            const { data: profile } = await supabase.from("profiles").select("tenant_id").eq("id", user.id).single();
+            const tenantId = profile?.tenant_id || user.id;
+
+            const { data, error } = await supabase
+                .from("orders")
+                .select("*, leads(contact_name, company_name)")
+                .eq("tenant_id", tenantId)
+                .order("created_at", { ascending: false })
+                .limit(5);
+
+            if (!error && data) {
+                setRecentOrders(data as OrderDetail[]);
+            }
+        } catch (err) {
+            console.error("Error loading orders:", err);
+        } finally {
+            setOrdersLoading(false);
+        }
+    }
+
+    const handleArchiveOrder = async (order: OrderDetail) => {
+        try {
+            const { error: archiveError } = await supabase.from("orders_archived").insert({
+                original_order_id: order.id,
+                tenant_id: order.tenant_id,
+                lead_id: order.lead_id,
+                client_name: order.client_name,
+                total: order.total,
+                payment_status: order.payment_status
+            });
+            if (archiveError) throw archiveError;
+
+            const { error: deleteError } = await supabase.from("orders").delete().eq("id", order.id);
+            if (deleteError) throw deleteError;
+
+            setOpenMenu(null);
+            loadRecentOrders();
+        } catch (err) {
+            console.error("Archive error:", err);
+            alert("Erro ao arquivar pedido");
+        }
+    };
+
+    const handleDeleteOrder = async (order: OrderDetail) => {
+        try {
+            const { error } = await supabase.from("orders").delete().eq("id", order.id);
+            if (error) throw error;
+
+            setOpenMenu(null);
+            setShowDeleteConfirm(null);
+            loadRecentOrders();
+        } catch (err) {
+            console.error("Delete error:", err);
+            alert("Erro ao excluir pedido");
+        }
+    };
+
+    const handleOpenChat = async (order: OrderDetail) => {
+        if (!order.lead_id) return;
+        try {
+            const { data: lead } = await supabase.from("leads").select("phone").eq("id", order.lead_id).single();
+            if (lead?.phone) {
+                const cleanedPhone = lead.phone.replace(/\D/g, "");
+                window.open(`https://wa.me/${cleanedPhone}`, "_blank");
+            } else {
+                alert("Cliente não possui telefone cadastrado.");
+            }
+        } catch (err) {
+            console.error("Chat error:", err);
+        }
+    };
 
     useEffect(() => {
         function handleClick(e: MouseEvent) {
@@ -355,12 +440,29 @@ export default function DashboardPage() {
         { icon: "group_add", label: "Novos Contatos", value: "1,204", change: "0.0%", up: false, bar: "45%" },
     ];
 
-    const orders = [
-        { initials: "JD", bgClass: "bg-orange-100 dark:bg-orange-900/30", textClass: "text-orange-600 dark:text-orange-400", name: "João da Silva", company: "Supermercado Silva", product: "Geleia de Morango (Cx 12un)", status: "Pago", statusBg: "bg-green-100 dark:bg-green-500/20", statusText: "text-green-700 dark:text-green-400", statusDot: "bg-green-500", total: "R$ 450,00" },
-        { initials: "MC", bgClass: "bg-blue-100 dark:bg-blue-900/30", textClass: "text-blue-600 dark:text-blue-400", name: "Maria Clara", company: "Padaria Central", product: "Geleia de Damasco (Cx 6un)", status: "Pendente", statusBg: "bg-yellow-100 dark:bg-yellow-500/20", statusText: "text-yellow-700 dark:text-yellow-400", statusDot: "bg-yellow-500", total: "R$ 180,00" },
-        { initials: "EM", bgClass: "bg-purple-100 dark:bg-purple-900/30", textClass: "text-purple-600 dark:text-purple-400", name: "Empório Mineiro", company: "Varejo Gourmet", product: "Mix Frutas Vermelhas (Cx 24un)", status: "Pago", statusBg: "bg-green-100 dark:bg-green-500/20", statusText: "text-green-700 dark:text-green-400", statusDot: "bg-green-500", total: "R$ 890,00" },
-        { initials: "CF", bgClass: "bg-pink-100 dark:bg-pink-900/30", textClass: "text-pink-600 dark:text-pink-400", name: "Café Flores", company: "Bistrô", product: "Geleia de Pimenta (Cx 6un)", status: "Cancelado", statusBg: "bg-red-100 dark:bg-red-500/20", statusText: "text-red-700 dark:text-red-400", statusDot: "bg-red-500", total: "R$ 150,00" },
-    ];
+    // Helpers for rendering orders
+    const getStatusConfig = (status: string) => {
+        const s = (status || "").toLowerCase();
+        if (s === "pago") return { bg: "bg-green-100 dark:bg-green-500/20", text: "text-green-700 dark:text-green-400", dot: "bg-green-500" };
+        if (s === "cancelado") return { bg: "bg-red-100 dark:bg-red-500/20", text: "text-red-700 dark:text-red-400", dot: "bg-red-500" };
+        return { bg: "bg-yellow-100 dark:bg-yellow-500/20", text: "text-yellow-700 dark:text-yellow-400", dot: "bg-yellow-500" };
+    };
+
+    const getInitialsInfo = (name: string) => {
+        const initials = String(name || "C").substring(0, 2).toUpperCase();
+        let hash = 0;
+        for (let i = 0; i < initials.length; i++) hash += initials.charCodeAt(i);
+        const colors = [
+            { bg: "bg-orange-100 dark:bg-orange-900/30", text: "text-orange-600 dark:text-orange-400" },
+            { bg: "bg-blue-100 dark:bg-blue-900/30", text: "text-blue-600 dark:text-blue-400" },
+            { bg: "bg-purple-100 dark:bg-purple-900/30", text: "text-purple-600 dark:text-purple-400" },
+            { bg: "bg-pink-100 dark:bg-pink-900/30", text: "text-pink-600 dark:text-pink-400" },
+            { bg: "bg-green-100 dark:bg-green-900/30", text: "text-green-600 dark:text-green-400" },
+        ];
+        return { initials, ...colors[hash % colors.length] };
+    };
+
+    const fmt = (v: number) => new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(v);
 
     return (
         <div className="p-6 lg:p-10 max-w-7xl mx-auto space-y-8">
@@ -487,7 +589,7 @@ export default function DashboardPage() {
             <div className="bg-surface-light dark:bg-surface-dark rounded-2xl shadow-sm border border-border-light dark:border-border-dark overflow-hidden">
                 <div className="p-6 border-b border-border-light dark:border-border-dark flex items-center justify-between">
                     <h2 className="text-lg font-display font-semibold">Últimos Pedidos</h2>
-                    <button className="text-sm text-primary font-medium hover:text-primary-hover flex items-center gap-1">
+                    <button onClick={() => router.push("/pedidos")} className="text-sm text-primary font-medium hover:text-primary-hover flex items-center gap-1">
                         Ver todos <span className="material-symbols-outlined text-sm">arrow_forward</span>
                     </button>
                 </div>
@@ -503,81 +605,101 @@ export default function DashboardPage() {
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-border-light dark:divide-border-dark">
-                            {orders.map((order, i) => (
-                                <tr key={i} className="hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors group">
-                                    <td className="px-6 py-4 font-medium flex items-center gap-3">
-                                        <div className={`h-8 w-8 rounded-full ${order.bgClass} ${order.textClass} flex items-center justify-center text-xs font-bold`}>
-                                            {order.initials}
-                                        </div>
-                                        <div>
-                                            <p>{order.name}</p>
-                                            <p className="text-xs text-text-secondary-light dark:text-text-secondary-dark font-normal">{order.company}</p>
-                                        </div>
-                                    </td>
-                                    <td className="px-6 py-4 text-text-secondary-light dark:text-text-secondary-dark">{order.product}</td>
-                                    <td className="px-6 py-4">
-                                        <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${order.statusBg} ${order.statusText}`}>
-                                            <span className={`w-1.5 h-1.5 rounded-full ${order.statusDot}`} />
-                                            {order.status}
-                                        </span>
-                                    </td>
-                                    <td className="px-6 py-4 font-medium">{order.total}</td>
-                                    <td className="px-6 py-4 text-right relative">
-                                        <div ref={openMenu === i ? menuRef : null}>
-                                            <button className="text-green-600 hover:text-green-700 dark:text-green-400 bg-green-50 dark:bg-green-500/10 p-2 rounded-lg transition-colors">
-                                                <span className="material-symbols-outlined text-lg">chat</span>
-                                            </button>
-                                            <button
-                                                onClick={() => setOpenMenu(openMenu === i ? null : i)}
-                                                className="text-text-secondary-light hover:text-primary dark:text-text-secondary-dark p-2 ml-1 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors"
-                                            >
-                                                <span className="material-symbols-outlined text-lg">more_vert</span>
-                                            </button>
-                                            {/* Dropdown menu */}
-                                            {openMenu === i && (
-                                                <div className="absolute right-0 top-full mt-1 w-48 bg-surface-light dark:bg-surface-dark rounded-xl shadow-2xl border border-border-light dark:border-border-dark z-50 py-1 text-left">
-                                                    <button className="w-full px-4 py-2.5 text-sm hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-2 text-text-main-light dark:text-text-main-dark">
-                                                        <span className="material-symbols-outlined text-base">visibility</span>
-                                                        Visualizar Pedido
-                                                    </button>
-                                                    <button className="w-full px-4 py-2.5 text-sm hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-2 text-text-main-light dark:text-text-main-dark">
-                                                        <span className="material-symbols-outlined text-base">archive</span>
-                                                        Arquivar
-                                                    </button>
-                                                    <div className="h-px bg-border-light dark:bg-border-dark mx-2 my-1" />
-                                                    {showDeleteConfirm === i ? (
-                                                        <div className="px-4 py-2">
-                                                            <p className="text-xs text-red-600 mb-2">Confirmar exclusão?</p>
-                                                            <div className="flex gap-2">
-                                                                <button
-                                                                    onClick={() => { setShowDeleteConfirm(null); setOpenMenu(null); }}
-                                                                    className="flex-1 px-2 py-1 text-xs bg-red-500 text-white rounded-lg hover:bg-red-600"
-                                                                >
-                                                                    Excluir
-                                                                </button>
-                                                                <button
-                                                                    onClick={() => setShowDeleteConfirm(null)}
-                                                                    className="flex-1 px-2 py-1 text-xs border border-border-light dark:border-border-dark rounded-lg hover:bg-slate-50"
-                                                                >
-                                                                    Cancelar
-                                                                </button>
-                                                            </div>
-                                                        </div>
-                                                    ) : (
+                            {ordersLoading ? (
+                                <tr><td colSpan={5} className="px-6 py-8 text-center text-sm text-text-secondary-light">Carregando pedidos...</td></tr>
+                            ) : recentOrders.length === 0 ? (
+                                <tr><td colSpan={5} className="px-6 py-8 text-center text-sm text-text-secondary-light">Nenhum pedido recente.</td></tr>
+                            ) : recentOrders.map((order, i) => {
+                                const initialsInfo = getInitialsInfo(order.client_name);
+                                const statusConfig = getStatusConfig(order.payment_status);
+                                return (
+                                    <tr key={order.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors group">
+                                        <td className="px-6 py-4 font-medium flex items-center gap-3">
+                                            <div className={`h-8 w-8 rounded-full ${initialsInfo.bg} ${initialsInfo.text} flex items-center justify-center text-xs font-bold shrink-0`}>
+                                                {initialsInfo.initials}
+                                            </div>
+                                            <div className="flex-1 min-w-0">
+                                                <p className="truncate text-text-main-light dark:text-text-main-dark">{order.client_name}</p>
+                                                {order.client_company && <p className="text-xs text-text-secondary-light dark:text-text-secondary-dark font-normal truncate">{order.client_company}</p>}
+                                            </div>
+                                        </td>
+                                        <td className="px-6 py-4 text-text-secondary-light dark:text-text-secondary-dark">
+                                            <div className="line-clamp-2 max-w-xs" title={order.product_summary}>{order.product_summary || "—"}</div>
+                                        </td>
+                                        <td className="px-6 py-4">
+                                            <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium uppercase tracking-wider ${statusConfig.bg} ${statusConfig.text}`}>
+                                                <span className={`w-1.5 h-1.5 rounded-full ${statusConfig.dot}`} />
+                                                {order.payment_status || "Pendente"}
+                                            </span>
+                                        </td>
+                                        <td className="px-6 py-4 font-medium whitespace-nowrap">{fmt(order.total || 0)}</td>
+                                        <td className="px-6 py-4 text-right relative">
+                                            <div ref={openMenu === i ? menuRef : null}>
+                                                <button
+                                                    onClick={() => handleOpenChat(order)}
+                                                    className="text-green-600 hover:text-green-700 dark:text-green-400 bg-green-50 dark:bg-green-500/10 p-2 rounded-lg transition-colors"
+                                                    title="Conversar no WhatsApp"
+                                                >
+                                                    <span className="material-symbols-outlined text-lg">chat</span>
+                                                </button>
+                                                <button
+                                                    onClick={() => setOpenMenu(openMenu === i ? null : i)}
+                                                    className="text-text-secondary-light hover:text-primary dark:text-text-secondary-dark p-2 ml-1 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors"
+                                                >
+                                                    <span className="material-symbols-outlined text-lg">more_vert</span>
+                                                </button>
+                                                {/* Dropdown menu */}
+                                                {openMenu === i && (
+                                                    <div className="absolute right-0 top-full mt-1 w-48 bg-surface-light dark:bg-surface-dark rounded-xl shadow-2xl border border-border-light dark:border-border-dark z-50 py-1 text-left">
                                                         <button
-                                                            onClick={() => setShowDeleteConfirm(i)}
-                                                            className="w-full px-4 py-2.5 text-sm hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center gap-2 text-red-600 dark:text-red-400"
+                                                            onClick={() => { setSelectedOrder(order); setOpenMenu(null); }}
+                                                            className="w-full px-4 py-2.5 text-sm hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-2 text-text-main-light dark:text-text-main-dark"
                                                         >
-                                                            <span className="material-symbols-outlined text-base">delete</span>
-                                                            Excluir Pedido
+                                                            <span className="material-symbols-outlined text-base">visibility</span>
+                                                            Visualizar Pedido
                                                         </button>
-                                                    )}
-                                                </div>
-                                            )}
-                                        </div>
-                                    </td>
-                                </tr>
-                            ))}
+                                                        <button
+                                                            onClick={() => handleArchiveOrder(order)}
+                                                            className="w-full px-4 py-2.5 text-sm hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-2 text-text-main-light dark:text-text-main-dark"
+                                                        >
+                                                            <span className="material-symbols-outlined text-base">archive</span>
+                                                            Arquivar
+                                                        </button>
+                                                        <div className="h-px bg-border-light dark:bg-border-dark mx-2 my-1" />
+                                                        {showDeleteConfirm === i ? (
+                                                            <div className="px-4 py-2">
+                                                                <p className="text-xs text-red-600 mb-2">Confirmar exclusão?</p>
+                                                                <div className="flex gap-2">
+                                                                    <button
+                                                                        onClick={() => handleDeleteOrder(order)}
+                                                                        className="flex-1 px-2 py-1 text-xs bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors"
+                                                                    >
+                                                                        Excluir
+                                                                    </button>
+                                                                    <button
+                                                                        onClick={() => setShowDeleteConfirm(null)}
+                                                                        className="flex-1 px-2 py-1 text-xs border border-border-light dark:border-border-dark rounded-lg hover:bg-slate-50 transition-colors"
+                                                                    >
+                                                                        Cancelar
+                                                                    </button>
+                                                                </div>
+                                                            </div>
+                                                        ) : (
+                                                            <button
+                                                                onClick={() => setShowDeleteConfirm(i)}
+                                                                className="w-full px-4 py-2.5 text-sm hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center gap-2 text-red-600 dark:text-red-400 transition-colors"
+                                                            >
+                                                                <span className="material-symbols-outlined text-base">delete</span>
+                                                                Excluir Pedido
+                                                            </button>
+                                                        )}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </td>
+                                    </tr>
+                                );
+                            })}
                         </tbody>
                     </table>
                 </div>

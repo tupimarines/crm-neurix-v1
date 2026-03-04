@@ -76,7 +76,7 @@ const { data } = await supabase
 
 ---
 
-### 2. Modal "Novo Pedido"
+### ✅ 2. Modal "Novo Pedido" (CONCLUÍDO)
 
 **Arquivo:** `components/Dashboard/NewOrderModal.tsx`
 

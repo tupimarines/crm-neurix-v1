@@ -74,8 +74,8 @@ export default function ProdutosPage() {
             }
             const data = await res.json();
             setProducts(data);
-        } catch (e: any) {
-            setError(e.message);
+        } catch (e) {
+            setError(e instanceof Error ? e.message : "Erro desconhecido");
         } finally {
             setLoading(false);
         }
@@ -144,8 +144,8 @@ export default function ProdutosPage() {
             setPreviewImage(null);
             setSelectedFile(null);
             setNewProduct({ name: "", price: "", weight: "", category: "tradicional", description: "", lot_code: "" });
-        } catch (e: any) {
-            setError(e.message);
+        } catch (e) {
+            setError(e instanceof Error ? e.message : "Erro desconhecido");
         } finally {
             setSaving(false);
         }

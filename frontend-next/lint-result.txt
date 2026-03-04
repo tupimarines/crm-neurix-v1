@@ -1,0 +1,12 @@
+﻿C:\Users\augus\AI Agency - Coding Projects\000 - NEURIX\11  CRM Neurix\frontend-next\app\(dashboard)\kanban\page.tsx:222 - Error: Cannot call impure function during render
+
+`Date.now` is an impure function. Calling an impure function can produce unstable results that update unpredictably when the component happens to re-render. (https://react.dev/reference/rules/components-and-hooks-must-be-pure#components-and-hooks-must-be-idempotent).
+
+C:\Users\augus\AI Agency - Coding Projects\000 - NEURIX\11  CRM Neurix\frontend-next\app\(dashboard)\kanban\page.tsx:222:24
+  220 |     function addCard(stageId: string) {
+  221 |         if (!newCard.name.trim()) return;
+> 222 |         const id = `c${Date.now()}`;
+      |                        ^^^^^^^^^^ Cannot call impure function
+  223 |         const priorityColorMap: Record<string, string> = { Alta: "red", M├®dia: "blue", Baixa: "yellow", OK: "green" };
+  224 |         setCards([...cards, {
+  225 |             id, stageId, name: newCard.name, contact: newCard.contact,
