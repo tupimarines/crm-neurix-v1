@@ -652,14 +652,14 @@ export default function DashboardPage() {
                                                 {openMenu === i && (
                                                     <div className="absolute right-0 top-full mt-1 w-48 bg-surface-light dark:bg-surface-dark rounded-xl shadow-2xl border border-border-light dark:border-border-dark z-50 py-1 text-left">
                                                         <button
-                                                            onClick={() => { setSelectedOrder(order); setOpenMenu(null); }}
+                                                            onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); setSelectedOrder(order); setOpenMenu(null); }}
                                                             className="w-full px-4 py-2.5 text-sm hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-2 text-text-main-light dark:text-text-main-dark"
                                                         >
                                                             <span className="material-symbols-outlined text-base">visibility</span>
                                                             Visualizar Pedido
                                                         </button>
                                                         <button
-                                                            onClick={() => handleArchiveOrder(order)}
+                                                            onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); handleArchiveOrder(order); }}
                                                             className="w-full px-4 py-2.5 text-sm hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-2 text-text-main-light dark:text-text-main-dark"
                                                         >
                                                             <span className="material-symbols-outlined text-base">archive</span>
@@ -671,13 +671,13 @@ export default function DashboardPage() {
                                                                 <p className="text-xs text-red-600 mb-2">Confirmar exclusão?</p>
                                                                 <div className="flex gap-2">
                                                                     <button
-                                                                        onClick={() => handleDeleteOrder(order)}
+                                                                        onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); handleDeleteOrder(order); }}
                                                                         className="flex-1 px-2 py-1 text-xs bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors"
                                                                     >
                                                                         Excluir
                                                                     </button>
                                                                     <button
-                                                                        onClick={() => setShowDeleteConfirm(null)}
+                                                                        onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); setShowDeleteConfirm(null); }}
                                                                         className="flex-1 px-2 py-1 text-xs border border-border-light dark:border-border-dark rounded-lg hover:bg-slate-50 transition-colors"
                                                                     >
                                                                         Cancelar
@@ -686,7 +686,7 @@ export default function DashboardPage() {
                                                             </div>
                                                         ) : (
                                                             <button
-                                                                onClick={() => setShowDeleteConfirm(i)}
+                                                                onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); setShowDeleteConfirm(i); }}
                                                                 className="w-full px-4 py-2.5 text-sm hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center gap-2 text-red-600 dark:text-red-400 transition-colors"
                                                             >
                                                                 <span className="material-symbols-outlined text-base">delete</span>
