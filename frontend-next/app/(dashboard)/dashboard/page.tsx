@@ -293,6 +293,7 @@ export default function DashboardPage() {
     }
 
     const handleArchiveOrder = async (order: OrderDetail) => {
+        console.log("Iniciando processo de arquivamento", order);
         try {
             const { error: archiveError } = await supabase.from("orders_archived").insert({
                 original_order_id: order.id,
@@ -302,10 +303,21 @@ export default function DashboardPage() {
                 total: order.total,
                 payment_status: order.payment_status
             });
-            if (archiveError) throw archiveError;
 
+            if (archiveError) {
+                console.error("Erro no insert archive:", archiveError);
+                throw archiveError;
+            }
+
+            console.log("Insert success, deleting order now");
             const { error: deleteError } = await supabase.from("orders").delete().eq("id", order.id);
-            if (deleteError) throw deleteError;
+
+            if (deleteError) {
+                console.error("Erro no delete order:", deleteError);
+                throw deleteError;
+            }
+
+            console.log("Archive completely successful");
 
             setOpenMenu(null);
             loadRecentOrders();
@@ -316,11 +328,15 @@ export default function DashboardPage() {
     };
 
     const handleDeleteOrder = async (order: OrderDetail) => {
+        console.log("Iniciando exclusão de pedido:", order.id);
         try {
             const { error } = await supabase.from("orders").delete().eq("id", order.id);
-            if (error) throw error;
-
-            setOpenMenu(null);
+            if (error) {
+                console.error("Erro no delete order:", error);
+                throw error;
+            }
+            console.log("Exclusão bem sucedida");
+            setRecentOrders(prev => prev.filter(o => o.id !== order.id));
             setShowDeleteConfirm(null);
             loadRecentOrders();
         } catch (err) {
@@ -650,16 +666,22 @@ export default function DashboardPage() {
                                                 </button>
                                                 {/* Dropdown menu */}
                                                 {openMenu === i && (
-                                                    <div className="absolute right-0 top-full mt-1 w-48 bg-surface-light dark:bg-surface-dark rounded-xl shadow-2xl border border-border-light dark:border-border-dark z-50 py-1 text-left">
+                                                    <div
+                                                        onMouseDown={(e) => e.stopPropagation()}
+                                                        className="absolute right-0 top-full mt-1 w-48 bg-surface-light dark:bg-surface-dark rounded-xl shadow-2xl border border-border-light dark:border-border-dark z-50 py-1 text-left"
+                                                    >
                                                         <button
-                                                            onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); setSelectedOrder(order); setOpenMenu(null); }}
+                                                            onClick={() => { setSelectedOrder(order); setOpenMenu(null); }}
                                                             className="w-full px-4 py-2.5 text-sm hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-2 text-text-main-light dark:text-text-main-dark"
                                                         >
                                                             <span className="material-symbols-outlined text-base">visibility</span>
                                                             Visualizar Pedido
                                                         </button>
                                                         <button
-                                                            onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); handleArchiveOrder(order); }}
+                                                            onClick={async () => {
+                                                                console.log("Clicou em arquivar:", order.id);
+                                                                await handleArchiveOrder(order);
+                                                            }}
                                                             className="w-full px-4 py-2.5 text-sm hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-2 text-text-main-light dark:text-text-main-dark"
                                                         >
                                                             <span className="material-symbols-outlined text-base">archive</span>
@@ -671,13 +693,16 @@ export default function DashboardPage() {
                                                                 <p className="text-xs text-red-600 mb-2">Confirmar exclusão?</p>
                                                                 <div className="flex gap-2">
                                                                     <button
-                                                                        onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); handleDeleteOrder(order); }}
+                                                                        onClick={async () => {
+                                                                            console.log("Clicou em excluir confirmação:", order.id);
+                                                                            await handleDeleteOrder(order);
+                                                                        }}
                                                                         className="flex-1 px-2 py-1 text-xs bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors"
                                                                     >
                                                                         Excluir
                                                                     </button>
                                                                     <button
-                                                                        onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); setShowDeleteConfirm(null); }}
+                                                                        onClick={() => setShowDeleteConfirm(null)}
                                                                         className="flex-1 px-2 py-1 text-xs border border-border-light dark:border-border-dark rounded-lg hover:bg-slate-50 transition-colors"
                                                                     >
                                                                         Cancelar
@@ -686,7 +711,10 @@ export default function DashboardPage() {
                                                             </div>
                                                         ) : (
                                                             <button
-                                                                onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); setShowDeleteConfirm(i); }}
+                                                                onClick={() => {
+                                                                    console.log("Clicou para abrir confirmação excluir");
+                                                                    setShowDeleteConfirm(i);
+                                                                }}
                                                                 className="w-full px-4 py-2.5 text-sm hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center gap-2 text-red-600 dark:text-red-400 transition-colors"
                                                             >
                                                                 <span className="material-symbols-outlined text-base">delete</span>
