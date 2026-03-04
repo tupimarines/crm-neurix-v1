@@ -295,26 +295,32 @@ export default function DashboardPage() {
     const handleArchiveOrder = async (order: OrderDetail) => {
         console.log("Iniciando processo de arquivamento", order);
         try {
-            const { error: archiveError } = await supabase.from("orders_archived").insert({
+            const { data: archiveData, error: archiveError } = await supabase.from("orders_archived").insert({
                 original_order_id: order.id,
                 tenant_id: order.tenant_id,
                 lead_id: order.lead_id,
                 client_name: order.client_name,
                 total: order.total,
                 payment_status: order.payment_status
-            });
+            }).select();
 
             if (archiveError) {
                 console.error("Erro no insert archive:", archiveError);
                 throw archiveError;
             }
+            if (!archiveData || archiveData.length === 0) {
+                throw new Error("Falha silenciosa no insert (RLS bloqueou a inserção em orders_archived)");
+            }
 
             console.log("Insert success, deleting order now");
-            const { error: deleteError } = await supabase.from("orders").delete().eq("id", order.id);
+            const { data: deleteData, error: deleteError } = await supabase.from("orders").delete().eq("id", order.id).select();
 
             if (deleteError) {
                 console.error("Erro no delete order:", deleteError);
                 throw deleteError;
+            }
+            if (!deleteData || deleteData.length === 0) {
+                throw new Error("Falha silenciosa no delete (RLS bloqueou exclusão em orders)");
             }
 
             console.log("Archive completely successful");
@@ -330,10 +336,13 @@ export default function DashboardPage() {
     const handleDeleteOrder = async (order: OrderDetail) => {
         console.log("Iniciando exclusão de pedido:", order.id);
         try {
-            const { error } = await supabase.from("orders").delete().eq("id", order.id);
+            const { data: deleteData, error } = await supabase.from("orders").delete().eq("id", order.id).select();
             if (error) {
                 console.error("Erro no delete order:", error);
                 throw error;
+            }
+            if (!deleteData || deleteData.length === 0) {
+                throw new Error("Falha silenciosa no delete (RLS bloqueou exclusão em orders)");
             }
             console.log("Exclusão bem sucedida");
             setRecentOrders(prev => prev.filter(o => o.id !== order.id));
