@@ -131,12 +131,16 @@ export default function KanbanPage() {
     const [editStage, setEditStage] = useState<string | null>(null);
     const [editStageName, setEditStageName] = useState("");
     const menuRef = useRef<HTMLDivElement>(null);
+    const filterRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
         function handleClick(e: MouseEvent) {
             if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
                 setEditCardMenu(null);
                 setShowAddMenu(false);
+            }
+            if (filterRef.current && !filterRef.current.contains(e.target as Node)) {
+                setShowFilter(false);
             }
         }
         document.addEventListener("mousedown", handleClick);
@@ -243,7 +247,7 @@ export default function KanbanPage() {
             <header className="bg-surface-light dark:bg-surface-dark border-b border-border-light dark:border-border-dark h-14 flex items-center justify-between px-6 flex-shrink-0 z-10">
                 <div className="flex items-center gap-3">
                     {/* Filter */}
-                    <div className="relative">
+                    <div className="relative" ref={filterRef}>
                         <button onClick={() => setShowFilter(!showFilter)} className="inline-flex items-center px-3 py-1.5 border border-border-light dark:border-border-dark text-sm font-medium rounded-lg bg-surface-light dark:bg-surface-dark hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors">
                             <span className="material-symbols-outlined text-base mr-1.5 text-text-secondary-light">filter_list</span>
                             Filtro
