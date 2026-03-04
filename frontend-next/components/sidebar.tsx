@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useState, useRef, useEffect } from "react";
+import { supabase } from "@/lib/supabase";
+import EditProfileModal from "@/components/EditProfileModal";
 
 const navItems = [
     { href: "/dashboard", icon: "dashboard", label: "Painel" },
@@ -18,7 +20,36 @@ export default function Sidebar() {
     const pathname = usePathname();
     const router = useRouter();
     const [showProfile, setShowProfile] = useState(false);
+    const [showEditProfileModal, setShowEditProfileModal] = useState(false);
     const profileRef = useRef<HTMLDivElement>(null);
+
+    // User state
+    const [userName, setUserName] = useState("Carregando...");
+    const [userEmail, setUserEmail] = useState("");
+    const [userInitials, setUserInitials] = useState("--");
+
+    useEffect(() => {
+        async function fetchUser() {
+            const { data: { user } } = await supabase.auth.getUser();
+            if (user) {
+                setUserEmail(user.email || "");
+                const { data: profile } = await supabase
+                    .from("profiles")
+                    .select("full_name")
+                    .eq("id", user.id)
+                    .single();
+
+                if (profile?.full_name) {
+                    setUserName(profile.full_name);
+                    setUserInitials(profile.full_name.substring(0, 2).toUpperCase());
+                } else if (user.email) {
+                    setUserName(user.email.split("@")[0]);
+                    setUserInitials(user.email.substring(0, 2).toUpperCase());
+                }
+            }
+        }
+        fetchUser();
+    }, []);
 
     // Close popup when clicking outside
     useEffect(() => {
@@ -62,8 +93,8 @@ export default function Sidebar() {
                             key={item.href}
                             href={item.href}
                             className={`flex items-center gap-3 px-3 py-2.5 rounded-xl transition-colors ${isActive
-                                    ? "bg-primary-light dark:bg-primary/20 text-primary font-medium"
-                                    : "text-text-secondary-light dark:text-text-secondary-dark hover:bg-slate-100 dark:hover:bg-slate-700/50 hover:text-primary"
+                                ? "bg-primary-light dark:bg-primary/20 text-primary font-medium"
+                                : "text-text-secondary-light dark:text-text-secondary-dark hover:bg-slate-100 dark:hover:bg-slate-700/50 hover:text-primary"
                                 }`}
                         >
                             <span
@@ -90,8 +121,8 @@ export default function Sidebar() {
                             key={item.href}
                             href={item.href}
                             className={`flex items-center gap-3 px-3 py-2.5 mt-2 rounded-xl transition-colors ${isActive
-                                    ? "bg-primary-light dark:bg-primary/20 text-primary font-medium"
-                                    : "text-text-secondary-light dark:text-text-secondary-dark hover:bg-slate-100 dark:hover:bg-slate-700/50 hover:text-primary"
+                                ? "bg-primary-light dark:bg-primary/20 text-primary font-medium"
+                                : "text-text-secondary-light dark:text-text-secondary-dark hover:bg-slate-100 dark:hover:bg-slate-700/50 hover:text-primary"
                                 }`}
                         >
                             <span
@@ -111,26 +142,22 @@ export default function Sidebar() {
                 {showProfile && (
                     <div className="absolute bottom-full left-3 right-3 mb-2 bg-surface-light dark:bg-surface-dark rounded-xl shadow-2xl border border-border-light dark:border-border-dark p-4 z-50 animate-in fade-in slide-in-from-bottom-2 duration-200">
                         <div className="flex items-center gap-3 mb-4 pb-4 border-b border-border-light dark:border-border-dark">
-                            <div className="h-12 w-12 rounded-full bg-gradient-to-tr from-primary to-purple-400 flex items-center justify-center text-white font-bold text-lg">
-                                AF
+                            <div className="h-12 w-12 rounded-full bg-gradient-to-tr from-primary to-purple-400 flex items-center justify-center text-white font-bold text-lg uppercase">
+                                {userInitials}
                             </div>
-                            <div>
-                                <p className="font-semibold text-sm text-text-main-light dark:text-text-main-dark">
-                                    Admin Fábrica
+                            <div className="overflow-hidden">
+                                <p className="font-semibold text-sm text-text-main-light dark:text-text-main-dark truncate">
+                                    {userName}
                                 </p>
-                                <p className="text-xs text-text-secondary-light dark:text-text-secondary-dark">
-                                    Gerente
+                                <p className="text-xs text-text-secondary-light dark:text-text-secondary-dark truncate">
+                                    {userEmail}
                                 </p>
                             </div>
                         </div>
                         <div className="space-y-3 text-sm">
                             <div className="flex items-center gap-3 text-text-secondary-light dark:text-text-secondary-dark">
                                 <span className="material-symbols-outlined text-lg">mail</span>
-                                <span>admin@neurix.com</span>
-                            </div>
-                            <div className="flex items-center gap-3 text-text-secondary-light dark:text-text-secondary-dark">
-                                <span className="material-symbols-outlined text-lg">phone</span>
-                                <span>(11) 99999-0000</span>
+                                <span className="truncate">{userEmail}</span>
                             </div>
                             <div className="flex items-center gap-3 text-text-secondary-light dark:text-text-secondary-dark">
                                 <span className="material-symbols-outlined text-lg">badge</span>
@@ -138,8 +165,11 @@ export default function Sidebar() {
                             </div>
                         </div>
                         <button
-                            onClick={() => setShowProfile(false)}
-                            className="mt-4 w-full text-xs text-primary hover:underline text-center"
+                            onClick={() => {
+                                setShowProfile(false);
+                                setShowEditProfileModal(true);
+                            }}
+                            className="mt-4 w-full text-xs text-primary hover:underline text-center font-medium"
                         >
                             Editar Perfil
                         </button>
@@ -149,19 +179,19 @@ export default function Sidebar() {
                 <div className="flex items-center gap-3">
                     <button
                         onClick={() => setShowProfile(!showProfile)}
-                        className="h-9 w-9 rounded-full bg-gradient-to-tr from-primary to-purple-400 flex items-center justify-center text-white font-bold text-sm hover:scale-105 transition-transform cursor-pointer"
+                        className="h-9 w-9 shrink-0 rounded-full bg-gradient-to-tr from-primary to-purple-400 flex items-center justify-center text-white font-bold text-sm hover:scale-105 transition-transform cursor-pointer uppercase"
                     >
-                        AF
+                        {userInitials}
                     </button>
                     <button
                         onClick={() => setShowProfile(!showProfile)}
                         className="flex-1 min-w-0 text-left cursor-pointer"
                     >
                         <p className="text-sm font-medium text-text-main-light dark:text-text-main-dark truncate">
-                            Admin Fábrica
+                            {userName}
                         </p>
-                        <p className="text-xs text-text-secondary-light dark:text-text-secondary-dark truncate">
-                            admin@neurix.com
+                        <p className="text-[10px] text-text-secondary-light dark:text-text-secondary-dark truncate">
+                            {userEmail}
                         </p>
                     </button>
                     <button
@@ -173,6 +203,11 @@ export default function Sidebar() {
                     </button>
                 </div>
             </div>
+
+            {/* Edit Profile Modal */}
+            {showEditProfileModal && (
+                <EditProfileModal onClose={() => setShowEditProfileModal(false)} />
+            )}
         </aside>
     );
 }
