@@ -4,6 +4,7 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { supabase, setSupabaseSession } from "@/lib/supabase";
 import NewOrderModal from "@/components/NewOrderModal";
+import WhatsAppChat from "@/components/WhatsAppChat";
 
 // Types for search and detail cards
 interface SearchResult {
@@ -246,6 +247,7 @@ export default function DashboardPage() {
     const [showSearch, setShowSearch] = useState(false);
     const [openMenu, setOpenMenu] = useState<number | null>(null);
     const [showDeleteConfirm, setShowDeleteConfirm] = useState<number | null>(null);
+    const [chatConfig, setChatConfig] = useState<{ leadId: string; leadName: string } | null>(null);
     const menuRef = useRef<HTMLDivElement>(null);
 
     // Search state
@@ -277,7 +279,7 @@ export default function DashboardPage() {
 
             const { data, error } = await supabase
                 .from("orders")
-                .select("*, leads(contact_name, company_name)")
+                .select("*, leads(id, contact_name, company_name)")
                 .eq("tenant_id", tenantId)
                 .order("created_at", { ascending: false })
                 .limit(5);
@@ -355,18 +357,11 @@ export default function DashboardPage() {
     };
 
     const handleOpenChat = async (order: OrderDetail) => {
-        if (!order.lead_id) return;
-        try {
-            const { data: lead } = await supabase.from("leads").select("phone").eq("id", order.lead_id).single();
-            if (lead?.phone) {
-                const cleanedPhone = lead.phone.replace(/\D/g, "");
-                window.open(`https://wa.me/${cleanedPhone}`, "_blank");
-            } else {
-                alert("Cliente não possui telefone cadastrado.");
-            }
-        } catch (err) {
-            console.error("Chat error:", err);
+        if (!order.lead_id) {
+            alert("Este pedido não possui um Lead associado.");
+            return;
         }
+        setChatConfig({ leadId: order.lead_id, leadName: order.client_name });
     };
 
     useEffect(() => {
@@ -495,6 +490,7 @@ export default function DashboardPage() {
             {selectedLead && <LeadCard lead={selectedLead} onClose={() => setSelectedLead(null)} />}
             {selectedOrder && <OrderCard order={selectedOrder} onClose={() => setSelectedOrder(null)} />}
             {selectedProduct && <ProductCard product={selectedProduct} onClose={() => setSelectedProduct(null)} />}
+            {chatConfig && <WhatsAppChat leadId={chatConfig.leadId} leadName={chatConfig.leadName} onClose={() => setChatConfig(null)} />}
 
             {/* Header */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">

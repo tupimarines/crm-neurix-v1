@@ -201,6 +201,67 @@ async def get_lead_messages(
     }
 
 
+@router.get("/{lead_id}/chat-history")
+async def get_lead_chat_history(
+    lead_id: str,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    user=Depends(get_current_user),
+    supabase: SupabaseClient = Depends(get_supabase),
+):
+    """
+    Get the full chat message history for a lead directly from Uazapi device.
+    Returns messages fetched live from WhatsApp through the Uazapi integration.
+    """
+    lead_response = supabase.table("leads") \
+        .select("id, company_name, contact_name, whatsapp_chat_id") \
+        .eq("id", lead_id) \
+        .eq("tenant_id", user.id) \
+        .single() \
+        .execute()
+
+    if not lead_response.data:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead não encontrado.")
+
+    lead = lead_response.data
+    whatsapp_chat_id = lead.get("whatsapp_chat_id")
+
+    if not whatsapp_chat_id:
+        return {
+            "lead_id": lead_id,
+            "lead_name": f"{lead['contact_name']} - {lead['company_name']}",
+            "whatsapp_chat_id": None,
+            "messages": [],
+            "hasMore": False,
+        }
+
+    # Fetch directly from Uazapi
+    uazapi = get_uazapi_service()
+    try:
+        uazapi_response = await uazapi.find_messages(
+            chatid=whatsapp_chat_id,
+            limit=limit,
+            offset=offset,
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Falha ao buscar histórico via Uazapi: {str(e)}",
+        )
+
+    return {
+        "lead_id": lead_id,
+        "lead_name": f"{lead['contact_name']} - {lead['company_name']}",
+        "whatsapp_chat_id": whatsapp_chat_id,
+        "messages": uazapi_response.get("messages", []),
+        "returnedMessages": uazapi_response.get("returnedMessages", 0),
+        "limit": uazapi_response.get("limit", limit),
+        "offset": uazapi_response.get("offset", offset),
+        "nextOffset": uazapi_response.get("nextOffset", None),
+        "hasMore": uazapi_response.get("hasMore", False),
+    }
+
+
 @router.post("/{lead_id}/messages/send")
 async def send_message_to_lead(
     lead_id: str,

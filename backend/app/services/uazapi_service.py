@@ -158,6 +158,37 @@ class UazapiService:
             resp.raise_for_status()
             return resp.json()
 
+    async def find_messages(
+        self,
+        chatid: str,
+        limit: int = 100,
+        offset: int = 0,
+        instance_token: str | None = None,
+    ) -> dict:
+        """
+        Find messages in a specific chat via Uazapi.
+
+        Args:
+            chatid: Phone number or chat JID (e.g. 5511999999999@s.whatsapp.net)
+            limit: Maximum number of messages to return
+            offset: Offset for pagination
+            instance_token: Override default instance token
+        """
+        payload = {
+            "chatid": chatid,
+            "limit": limit,
+            "offset": offset,
+        }
+
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                f"{self.base_url}/message/find",
+                json=payload,
+                headers=self._instance_headers(instance_token),
+            )
+            resp.raise_for_status()
+            return resp.json()
+
 
 # ── Singleton ──
 

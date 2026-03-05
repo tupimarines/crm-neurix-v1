@@ -231,7 +231,7 @@ const onMouseUp = () => { isDragging = false; };
 
 ---
 
-### 3. Soma Real por Etapa 
+### 3. Soma Real por Etapa  (CONCLUÍDO)
 
 ```typescript
 // components/Kanban/StageColumn.tsx
