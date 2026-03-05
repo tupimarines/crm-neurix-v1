@@ -11,6 +11,7 @@ import {
     DragStartEvent,
     DragEndEvent,
     DragOverEvent,
+    useDroppable,
 } from "@dnd-kit/core";
 import {
     SortableContext,
@@ -93,26 +94,62 @@ function CardOverlay({ card }: { card: KanbanCard }) {
     );
 }
 
+// Droppable Stage Component
+function DroppableStage({ id, children, className }: { id: string, children: React.ReactNode, className?: string }) {
+    const { setNodeRef } = useDroppable({ id });
+    return (
+        <div ref={setNodeRef} className={className} data-stage-id={id}>
+            {children}
+        </div>
+    );
+}
+
 export default function KanbanPage() {
     const dndId = useId();
 
     // State
-    const [stages, setStages] = useState<KanbanStage[]>([
-        { id: "s1", title: "Contato Inicial" },
-        { id: "s2", title: "Escolhendo Sabores" },
-        { id: "s3", title: "Aguardando Pagamento" },
-        { id: "s4", title: "Enviado" },
-    ]);
+    const [isMounted, setIsMounted] = useState(false);
+    const [stages, setStages] = useState<KanbanStage[]>([]);
+    const [cards, setCards] = useState<KanbanCard[]>([]);
 
-    const [cards, setCards] = useState<KanbanCard[]>([
-        { id: "c1", stageId: "s1", name: "Empório Natural", contact: "Ana Silva", value: "R$ 1.200,00", priority: "Alta", priorityColor: "red", desc: "Interesse em geleias de morango e frutas vermelhas." },
-        { id: "c2", stageId: "s1", name: "Mercado Verde", contact: "Carlos", value: "R$ 850,00", priority: "Média", priorityColor: "blue", desc: "" },
-        { id: "c3", stageId: "s1", name: "Padaria Central", contact: "Roberta", value: "R$ 1.400,00", priority: "", priorityColor: "", desc: "" },
-        { id: "c4", stageId: "s2", name: "Rede Sabor", contact: "Marcos", value: "R$ 2.500,00", priority: "Baixa", priorityColor: "yellow", desc: "Solicitou amostras de pimenta e damasco." },
-        { id: "c5", stageId: "s2", name: "Café Colonial", contact: "Juliana", value: "R$ 2.600,00", priority: "Alta", priorityColor: "red", desc: "" },
-        { id: "c6", stageId: "s3", name: "Boutique Gourmet", contact: "Fernanda", value: "R$ 4.200,00", priority: "Alta", priorityColor: "red", desc: "Pedido #4092 - PIX pendente." },
-        { id: "c7", stageId: "s4", name: "Loja Orgânica", contact: "Pedro", value: "R$ 1.100,00", priority: "OK", priorityColor: "green", desc: "" },
-    ]);
+    useEffect(() => {
+        setIsMounted(true);
+        const savedStages = localStorage.getItem("kanban_stages");
+        const savedCards = localStorage.getItem("kanban_cards");
+
+        if (savedStages) setStages(JSON.parse(savedStages));
+        else {
+            setStages([
+                { id: "s1", title: "Contato Inicial" },
+                { id: "s2", title: "Escolhendo Sabores" },
+                { id: "s3", title: "Aguardando Pagamento" },
+                { id: "s4", title: "Enviado" },
+            ]);
+        }
+
+        if (savedCards) setCards(JSON.parse(savedCards));
+        else {
+            setCards([
+                { id: "c1", stageId: "s1", name: "Empório Natural", contact: "Ana Silva", value: "R$ 1.200,00", priority: "Alta", priorityColor: "red", desc: "Interesse em geleias de morango e frutas vermelhas." },
+                { id: "c2", stageId: "s1", name: "Mercado Verde", contact: "Carlos", value: "R$ 850,00", priority: "Média", priorityColor: "blue", desc: "" },
+                { id: "c3", stageId: "s1", name: "Padaria Central", contact: "Roberta", value: "R$ 1.400,00", priority: "", priorityColor: "", desc: "" },
+                { id: "c4", stageId: "s2", name: "Rede Sabor", contact: "Marcos", value: "R$ 2.500,00", priority: "Baixa", priorityColor: "yellow", desc: "Solicitou amostras de pimenta e damasco." },
+                { id: "c5", stageId: "s2", name: "Café Colonial", contact: "Juliana", value: "R$ 2.600,00", priority: "Alta", priorityColor: "red", desc: "" },
+                { id: "c6", stageId: "s3", name: "Boutique Gourmet", contact: "Fernanda", value: "R$ 4.200,00", priority: "Alta", priorityColor: "red", desc: "Pedido #4092 - PIX pendente." },
+                { id: "c7", stageId: "s4", name: "Loja Orgânica", contact: "Pedro", value: "R$ 1.100,00", priority: "OK", priorityColor: "green", desc: "" },
+            ]);
+        }
+    }, []);
+
+    useEffect(() => {
+        if (isMounted) localStorage.setItem("kanban_stages", JSON.stringify(stages));
+    }, [stages, isMounted]);
+
+    useEffect(() => {
+        if (isMounted) localStorage.setItem("kanban_cards", JSON.stringify(cards));
+    }, [cards, isMounted]);
+
+
 
     const [viewMode, setViewMode] = useState<"kanban" | "list">("kanban");
     const [activeCard, setActiveCard] = useState<KanbanCard | null>(null);
@@ -400,7 +437,7 @@ export default function KanbanPage() {
                                         </div>
                                         {/* Cards */}
                                         <SortableContext items={stageCards.map((c) => c.id)} strategy={verticalListSortingStrategy} id={stage.id}>
-                                            <div className="flex-1 p-3 overflow-y-auto space-y-2.5 custom-scrollbar min-h-[100px]" data-stage-id={stage.id}>
+                                            <DroppableStage id={stage.id} className="flex-1 p-3 overflow-y-auto space-y-2.5 custom-scrollbar min-h-[100px]">
                                                 {stageCards.map((card) => (
                                                     <div key={card.id} className="relative">
                                                         <SortableCard card={card} onOpenChat={() => { }} onOpenMenu={(id) => setEditCardMenu(editCardMenu === id ? null : id)} />
@@ -426,30 +463,32 @@ export default function KanbanPage() {
                                                         )}
                                                     </div>
                                                 ))}
-                                                {/* Add card */}
-                                                {showNewCard === stage.id ? (
-                                                    <div className="bg-surface-light dark:bg-surface-dark p-3 rounded-lg border border-primary/40 shadow-sm space-y-2">
-                                                        <input value={newCard.name} onChange={(e) => setNewCard({ ...newCard, name: e.target.value })} placeholder="Nome do negócio" className="w-full px-3 py-1.5 border border-border-light dark:border-border-dark rounded-lg text-sm bg-white dark:bg-slate-800 focus:ring-1 focus:ring-primary focus:border-transparent" />
-                                                        <input value={newCard.contact} onChange={(e) => setNewCard({ ...newCard, contact: e.target.value })} placeholder="Nome do contato" className="w-full px-3 py-1.5 border border-border-light dark:border-border-dark rounded-lg text-sm bg-white dark:bg-slate-800 focus:ring-1 focus:ring-primary focus:border-transparent" />
-                                                        <div className="flex gap-2">
-                                                            <input value={newCard.value} onChange={(e) => setNewCard({ ...newCard, value: e.target.value })} placeholder="R$ 0,00" className="flex-1 px-3 py-1.5 border border-border-light dark:border-border-dark rounded-lg text-sm bg-white dark:bg-slate-800 focus:ring-1 focus:ring-primary focus:border-transparent" />
-                                                            <select value={newCard.priority} onChange={(e) => setNewCard({ ...newCard, priority: e.target.value })} className="px-2 py-1.5 border border-border-light dark:border-border-dark rounded-lg text-sm bg-white dark:bg-slate-800">
-                                                                <option>Alta</option><option>Média</option><option>Baixa</option>
-                                                            </select>
-                                                        </div>
-                                                        <div className="flex gap-2">
-                                                            <button onClick={() => addCard(stage.id)} className="flex-1 py-1.5 bg-primary text-white rounded-lg text-xs font-medium hover:bg-primary-hover">Salvar</button>
-                                                            <button onClick={() => setShowNewCard(null)} className="flex-1 py-1.5 border border-border-light dark:border-border-dark rounded-lg text-xs font-medium hover:bg-slate-50">Cancelar</button>
-                                                        </div>
-                                                    </div>
-                                                ) : (
-                                                    <button onClick={() => setShowNewCard(stage.id)} className="w-full py-2.5 border-2 border-dashed border-border-light dark:border-border-dark rounded-lg text-text-secondary-light hover:text-primary hover:border-primary/50 hover:bg-primary/5 transition-all flex items-center justify-center gap-2 group">
-                                                        <span className="material-symbols-outlined text-lg group-hover:scale-110 transition-transform">add_circle_outline</span>
-                                                        <span className="text-xs font-semibold uppercase tracking-wide">Adicionar</span>
-                                                    </button>
-                                                )}
-                                            </div>
+                                            </DroppableStage>
                                         </SortableContext>
+                                        {/* Add card */}
+                                        <div className="p-3 border-t border-border-light/50 dark:border-border-dark/50 bg-slate-50/50 dark:bg-slate-800/30">
+                                            {showNewCard === stage.id ? (
+                                                <div className="bg-surface-light dark:bg-surface-dark p-3 rounded-lg border border-primary/40 shadow-sm space-y-2">
+                                                    <input value={newCard.name} onChange={(e) => setNewCard({ ...newCard, name: e.target.value })} placeholder="Nome do negócio" className="w-full px-3 py-1.5 border border-border-light dark:border-border-dark rounded-lg text-sm bg-white dark:bg-slate-800 focus:ring-1 focus:ring-primary focus:border-transparent" />
+                                                    <input value={newCard.contact} onChange={(e) => setNewCard({ ...newCard, contact: e.target.value })} placeholder="Nome do contato" className="w-full px-3 py-1.5 border border-border-light dark:border-border-dark rounded-lg text-sm bg-white dark:bg-slate-800 focus:ring-1 focus:ring-primary focus:border-transparent" />
+                                                    <div className="flex gap-2">
+                                                        <input value={newCard.value} onChange={(e) => setNewCard({ ...newCard, value: e.target.value })} placeholder="R$ 0,00" className="flex-1 px-3 py-1.5 border border-border-light dark:border-border-dark rounded-lg text-sm bg-white dark:bg-slate-800 focus:ring-1 focus:ring-primary focus:border-transparent" />
+                                                        <select value={newCard.priority} onChange={(e) => setNewCard({ ...newCard, priority: e.target.value })} className="px-2 py-1.5 border border-border-light dark:border-border-dark rounded-lg text-sm bg-white dark:bg-slate-800">
+                                                            <option>Alta</option><option>Média</option><option>Baixa</option>
+                                                        </select>
+                                                    </div>
+                                                    <div className="flex gap-2">
+                                                        <button onClick={() => addCard(stage.id)} className="flex-1 py-1.5 bg-primary text-white rounded-lg text-xs font-medium hover:bg-primary-hover">Salvar</button>
+                                                        <button onClick={() => setShowNewCard(null)} className="flex-1 py-1.5 border border-border-light dark:border-border-dark rounded-lg text-xs font-medium hover:bg-slate-50">Cancelar</button>
+                                                    </div>
+                                                </div>
+                                            ) : (
+                                                <button onClick={() => setShowNewCard(stage.id)} className="w-full py-2.5 border-2 border-dashed border-border-light dark:border-border-dark rounded-lg text-text-secondary-light hover:text-primary hover:border-primary/50 hover:bg-primary/5 transition-all flex items-center justify-center gap-2 group">
+                                                    <span className="material-symbols-outlined text-lg group-hover:scale-110 transition-transform">add_circle_outline</span>
+                                                    <span className="text-xs font-semibold uppercase tracking-wide">Adicionar</span>
+                                                </button>
+                                            )}
+                                        </div>
                                     </div>
                                 );
                             })}
