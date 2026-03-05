@@ -35,7 +35,6 @@ interface KanbanCard {
 interface KanbanStage {
     id: string;
     title: string;
-    total: string;
 }
 
 // Sortable Card Component
@@ -99,10 +98,10 @@ export default function KanbanPage() {
 
     // State
     const [stages, setStages] = useState<KanbanStage[]>([
-        { id: "s1", title: "Contato Inicial", total: "R$ 3.450,00" },
-        { id: "s2", title: "Escolhendo Sabores", total: "R$ 5.100,00" },
-        { id: "s3", title: "Aguardando Pagamento", total: "R$ 4.200,00" },
-        { id: "s4", title: "Enviado", total: "R$ 1.100,00" },
+        { id: "s1", title: "Contato Inicial" },
+        { id: "s2", title: "Escolhendo Sabores" },
+        { id: "s3", title: "Aguardando Pagamento" },
+        { id: "s4", title: "Enviado" },
     ]);
 
     const [cards, setCards] = useState<KanbanCard[]>([
@@ -183,6 +182,16 @@ export default function KanbanPage() {
         return 0;
     });
 
+    const parseCurrency = (val: string) => {
+        if (!val) return 0;
+        const cleanObj = val.replace(/[^\d,-]/g, '').replace(',', '.');
+        return parseFloat(cleanObj) || 0;
+    };
+
+    const formatCurrency = (val: number) => {
+        return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val);
+    };
+
     // DnD handlers
     function handleDragStart(event: DragStartEvent) {
         const card = cards.find((c) => c.id === event.active.id);
@@ -234,7 +243,7 @@ export default function KanbanPage() {
     function addStage() {
         if (!newStageName.trim()) return;
         const id = `s${crypto.randomUUID()}`;
-        setStages([...stages, { id, title: newStageName.trim(), total: "R$ 0,00" }]);
+        setStages([...stages, { id, title: newStageName.trim() }]);
         setNewStageName("");
         setShowNewStage(false);
     }
@@ -383,7 +392,7 @@ export default function KanbanPage() {
                                                 </span>
                                             </div>
                                             <div className="flex items-center text-xs text-text-secondary-light shrink-0 ml-2">
-                                                {stage.total}
+                                                {formatCurrency(stageCards.reduce((acc, c) => acc + parseCurrency(c.value), 0))}
                                                 <button onClick={() => { setShowNewStage(true); }} className="ml-1 p-0.5 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-full text-primary" title="Nova etapa">
                                                     <span className="material-symbols-outlined text-lg">add</span>
                                                 </button>
@@ -524,13 +533,15 @@ export default function KanbanPage() {
                             <div>
                                 <h4 className="text-sm font-bold mb-3">Negócios por Etapa</h4>
                                 {stages.map((s) => {
-                                    const count = cards.filter((c) => c.stageId === s.id).length;
+                                    const stageCardsInfo = cards.filter((c) => c.stageId === s.id);
+                                    const count = stageCardsInfo.length;
+                                    const computedTotal = formatCurrency(stageCardsInfo.reduce((acc, c) => acc + parseCurrency(c.value), 0));
                                     return (
                                         <div key={s.id} className="flex items-center justify-between py-2 border-b border-border-light/50 dark:border-border-dark last:border-0">
                                             <span className="text-sm">{s.title}</span>
                                             <div className="flex items-center gap-3">
                                                 <span className="text-xs text-text-secondary-light">{count} negócios</span>
-                                                <span className="text-sm font-bold">{s.total}</span>
+                                                <span className="text-sm font-bold">{computedTotal}</span>
                                             </div>
                                         </div>
                                     );

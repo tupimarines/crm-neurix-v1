@@ -208,7 +208,7 @@ useEffect(() => {
 
 ---
 
-### 2. Scroll Horizontal por Arraste
+### 2. Scroll Horizontal por Arraste (CONCLUÍDO)
 
 ```typescript
 // components/Kanban/KanbanBoard.tsx
@@ -231,7 +231,7 @@ const onMouseUp = () => { isDragging = false; };
 
 ---
 
-### 3. Soma Real por Etapa
+### 3. Soma Real por Etapa 
 
 ```typescript
 // components/Kanban/StageColumn.tsx
