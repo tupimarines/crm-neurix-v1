@@ -122,7 +122,7 @@ const { data: order } = await supabase
 
 ---
 
-### 3. Últimos Pedidos — Botões
+### 3. Últimos Pedidos — Botões (CONCLUÍDO)
 
 **Arquivo:** `components/Dashboard/RecentOrders.tsx`
 
@@ -167,7 +167,7 @@ await supabase.from('orders').delete().eq('id', order.id);
 
 ---
 
-### 4. Editar Perfil
+### 4. Editar Perfil (CONCLUÍDO)
 
 **Arquivo:** `pages/profile/edit.tsx`
 
@@ -192,7 +192,7 @@ await supabase.auth.updateUser({ password: newPassword });
 
 ## 🐛 BUGFIXES — KANBAN
 
-### 1. Fechar Filtro ao Clicar Fora
+### 1. Fechar Filtro ao Clicar Fora (CONCLUÍDO)
 
 ```typescript
 // components/Kanban/KanbanFilter.tsx

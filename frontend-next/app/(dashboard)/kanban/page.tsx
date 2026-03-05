@@ -49,6 +49,7 @@ function SortableCard({ card, onOpenChat, onOpenMenu }: { card: KanbanCard; onOp
 
     return (
         <div ref={setNodeRef} style={style} {...attributes} {...listeners}
+            data-kanban-card="true"
             className="bg-surface-light dark:bg-surface-dark p-4 rounded-lg shadow-sm border border-border-light dark:border-border-dark hover:shadow-md hover:border-primary/30 transition-all cursor-grab active:cursor-grabbing touch-none"
         >
             <div className="flex justify-between items-start mb-2">
@@ -85,7 +86,7 @@ function SortableCard({ card, onOpenChat, onOpenMenu }: { card: KanbanCard; onOp
 // Card overlay for dragging
 function CardOverlay({ card }: { card: KanbanCard }) {
     return (
-        <div className="bg-surface-light dark:bg-surface-dark p-4 rounded-lg shadow-2xl border-2 border-primary/40 w-[300px] rotate-2">
+        <div data-kanban-card="true" className="bg-surface-light dark:bg-surface-dark p-4 rounded-lg shadow-2xl border-2 border-primary/40 w-[300px] rotate-2">
             <h3 className="text-sm font-bold">{card.name}</h3>
             <p className="text-xs text-text-secondary-light mt-1">Contato: {card.contact}</p>
             <span className="text-sm font-bold text-green-600 mt-2 block">{card.value}</span>
@@ -132,6 +133,23 @@ export default function KanbanPage() {
     const [editStageName, setEditStageName] = useState("");
     const menuRef = useRef<HTMLDivElement>(null);
     const filterRef = useRef<HTMLDivElement>(null);
+
+    // Drag to scroll logic
+    const boardRef = useRef<HTMLDivElement>(null);
+    const draggingRef = useRef({ isDragging: false, startX: 0, scrollLeft: 0 });
+
+    const onMouseDown = (e: React.MouseEvent) => {
+        if ((e.target as HTMLElement).closest('[data-kanban-card]')) return;
+        draggingRef.current.isDragging = true;
+        draggingRef.current.startX = e.pageX - boardRef.current!.offsetLeft;
+        draggingRef.current.scrollLeft = boardRef.current!.scrollLeft;
+    };
+    const onMouseMove = (e: React.MouseEvent) => {
+        if (!draggingRef.current.isDragging) return;
+        e.preventDefault();
+        boardRef.current!.scrollLeft = draggingRef.current.scrollLeft - (e.pageX - boardRef.current!.offsetLeft - draggingRef.current.startX) * 1.5;
+    };
+    const onMouseUp = () => { draggingRef.current.isDragging = false; };
 
     useEffect(() => {
         function handleClick(e: MouseEvent) {
@@ -333,7 +351,14 @@ export default function KanbanPage() {
             {/* Main content */}
             {viewMode === "kanban" ? (
                 <DndContext id={dndId} sensors={sensors} collisionDetection={closestCenter} onDragStart={handleDragStart} onDragOver={handleDragOver} onDragEnd={handleDragEnd}>
-                    <div className="flex-1 overflow-x-auto overflow-y-hidden p-6">
+                    <div
+                        className="flex-1 overflow-x-auto overflow-y-hidden p-6 cursor-grab active:cursor-grabbing"
+                        ref={boardRef}
+                        onMouseDown={onMouseDown}
+                        onMouseMove={onMouseMove}
+                        onMouseUp={onMouseUp}
+                        onMouseLeave={onMouseUp}
+                    >
                         <div className="flex h-full gap-5 min-w-max pb-4">
                             {stages.map((stage) => {
                                 const stageCards = filteredCards.filter((c) => c.stageId === stage.id);
