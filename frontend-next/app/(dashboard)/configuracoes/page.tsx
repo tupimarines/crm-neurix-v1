@@ -87,14 +87,20 @@ export default function ConfiguracoesPage() {
         try {
             const token = localStorage.getItem("access_token") || undefined;
             const res = await connectWhatsappInstance(token);
-            // the response should have base64 in res.data.base64
-            if (res.data?.base64) {
-                setQrCodeBase64(res.data.base64);
+            // the response could have base64 in res.data.base64 or res.data.qrcode
+            const qrString = res.data?.base64 || res.data?.qrcode || res.data?.instance?.qrcode;
+
+            if (qrString) {
+                setQrCodeBase64(qrString);
                 setIsPolling(true);
                 setWhatsappStatus("connecting");
-            } else if (res.data?.instance?.state === "open") {
+            } else if (res.data?.instance?.state === "open" || res.data?.instance?.state === "connected") {
                 setWhatsappStatus("open");
                 setShowWhatsappModal(false);
+            } else if (res.data?.instance?.state === "connecting" || res.data?.state === "connecting") {
+                // If it's connecting but no QR yet, poll it
+                setWhatsappStatus("connecting");
+                setIsPolling(true);
             }
         } catch (error) {
             console.error(error);
@@ -137,6 +143,7 @@ export default function ConfiguracoesPage() {
     };
 
     const isConnected = whatsappStatus === "open" || whatsappStatus === "connected";
+    const isConfigured = whatsappStatus !== "disconnected" && whatsappStatus !== "Buscando...";
 
     // Dashboard metrics toggles
     const [dashMetrics, setDashMetrics] = useState({
@@ -567,7 +574,7 @@ export default function ConfiguracoesPage() {
                             )}
 
                             {/* Danger Zone */}
-                            {isConnected && (
+                            {isConfigured && (
                                 <div className="pt-4 border-t border-border-light dark:border-border-dark mt-4">
                                     <button
                                         onClick={handleDisconnectWhatsapp}
@@ -575,7 +582,7 @@ export default function ConfiguracoesPage() {
                                         className="w-full py-2 px-4 rounded-lg border border-red-200 text-red-600 bg-red-50 hover:bg-red-100 dark:border-red-900 dark:text-red-400 dark:bg-red-900/20 dark:hover:bg-red-900/40 text-sm font-medium transition-colors flex items-center justify-center gap-2"
                                     >
                                         <span className="material-symbols-outlined text-base">leak_remove</span>
-                                        Desconectar Instância
+                                        Excluir Configuração
                                     </button>
                                 </div>
                             )}
