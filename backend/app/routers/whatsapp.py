@@ -51,38 +51,41 @@ async def connect_instance(
 ):
     """Initiate a connection (Generate QR). If instance doesn't exist, it will be initialized."""
     instance_name = payload.instance_name
+    instance_token = None
     
-    # 1. Init instance (returns hash/token we need to use). 
-    # Try to init, if it already exists, uazapi might just return it.
+    # 1. Fetch existing instances to avoid re-creating or losing the token
     try:
-        init_res = await uazapi.init_instance(name=instance_name)
-        # Uazapi returns the token (hash) inside the response, typically init_res["token"] or init_res["instance"]["token"]
-        # Evolution API v1/v2 usually returns the token in the API response. We need to save this token.
-        # Often the token is the 'hash' or just the instance name if configured that way, let's assume it returns it in 'token' or we use 'instance_name' if none
-        instance_token = init_res.get("token", instance_name)
-        if "instance" in init_res and "token" in init_res["instance"]:
-            instance_token = init_res["instance"]["token"]
-            
-        # Save token to db
-        supabase.table("settings").upsert({
-            "tenant_id": user.id,
-            "key": "uazapi_instance_token",
-            "value": instance_token
-        }, on_conflict="tenant_id,key").execute()
-        
+        instances = await uazapi.list_instances()
+        for inst in instances:
+            # Uazapi list_instances returns array of objects.
+            inst_name = inst.get("instance", {}).get("instanceName", inst.get("name", ""))
+            if inst_name == instance_name:
+                instance_token = inst.get("instance", {}).get("token", inst.get("token", ""))
+                break
     except Exception as e:
-        # If init fails (e.g., already exists), we could try to fetch from somewhere, but let's just proceed
-        # For simplicity, if init fails, we assume we might already have the token in DB or it's the exact name
-        pass
-        
-    # Read token newly saved or existing
-    token_res = supabase.table("settings").select("value").eq("tenant_id", user.id).eq("key", "uazapi_instance_token").execute()
-    if not token_res.data:
-        raise HTTPException(status_code=400, detail="Não foi possível obter ou criar um token de instância.")
-        
-    instance_token = token_res.data[0]["value"]
+        print(f"Error listing instances: {e}")
+
+    # 2. If no token found, init new instance
+    if not instance_token:
+        try:
+            init_res = await uazapi.init_instance(name=instance_name)
+            instance_token = init_res.get("token", instance_name)
+            if "instance" in init_res and "token" in init_res["instance"]:
+                instance_token = init_res["instance"]["token"]
+        except Exception as e:
+            print(f"Error init_instance: {e}")
+
+    if not instance_token:
+        raise HTTPException(status_code=400, detail="Não foi possível obter ou criar um token para a instância. Tente excluir a instância manualmente e usar outro nome.")
+            
+    # 3. Save token to DB
+    supabase.table("settings").upsert({
+        "tenant_id": user.id,
+        "key": "uazapi_instance_token",
+        "value": instance_token
+    }, on_conflict="tenant_id,key").execute()
     
-    # 2. Call connect
+    # 4. Call connect
     try:
         connect_data = await uazapi.connect_instance(instance_token=instance_token)
         return {"message": "Connection initiated", "data": connect_data}

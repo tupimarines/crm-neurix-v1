@@ -25,6 +25,10 @@ export async function api<T = unknown>(
     });
 
     if (!res.ok) {
+        if (res.status === 401 && typeof window !== 'undefined') {
+            localStorage.removeItem("access_token");
+            window.location.href = "/login";
+        }
         const error = await res.json().catch(() => ({ detail: res.statusText }));
         throw new Error(error.detail || `API Error ${res.status}`);
     }
