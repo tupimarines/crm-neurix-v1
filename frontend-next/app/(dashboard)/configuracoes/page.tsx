@@ -29,7 +29,8 @@ export default function ConfiguracoesPage() {
 
     const fetchStatus = async () => {
         try {
-            const res = await getWhatsappStatus();
+            const token = localStorage.getItem("access_token") || undefined;
+            const res = await getWhatsappStatus(token);
             setWhatsappStatus(res.status);
             // In Uazapi the status is typically 'open' or 'connecting'
             if (res.status === "connecting" && !isPolling) {
@@ -47,7 +48,8 @@ export default function ConfiguracoesPage() {
         if (isPolling) {
             interval = setInterval(async () => {
                 try {
-                    const res = await getWhatsappStatus();
+                    const token = localStorage.getItem("access_token") || undefined;
+                    const res = await getWhatsappStatus(token);
                     setWhatsappStatus(res.status);
                     if (res.status === "open" || res.status === "connected") {
                         setIsPolling(false);
@@ -67,8 +69,9 @@ export default function ConfiguracoesPage() {
     const handleGenerateQR = async () => {
         setIsLoadingWhatsapp(true);
         try {
+            const token = localStorage.getItem("access_token") || undefined;
             // Using a default instance name like "neurix_crm_instance" or user tenant driven
-            const res = await connectWhatsappInstance("crm_instance");
+            const res = await connectWhatsappInstance("crm_instance", token);
             // the response should have base64 in res.data.base64
             if (res.data?.base64) {
                 setQrCodeBase64(res.data.base64);
@@ -90,7 +93,8 @@ export default function ConfiguracoesPage() {
         if (!manualToken) return;
         setIsLoadingWhatsapp(true);
         try {
-            await saveWhatsappToken(manualToken);
+            const token = localStorage.getItem("access_token") || undefined;
+            await saveWhatsappToken(manualToken, token);
             await fetchStatus();
             setShowWhatsappModal(false);
             setManualToken("");
@@ -105,7 +109,8 @@ export default function ConfiguracoesPage() {
         if (!confirm("Tem certeza que deseja desconectar o WhatsApp?")) return;
         setIsLoadingWhatsapp(true);
         try {
-            await disconnectWhatsappInstance();
+            const token = localStorage.getItem("access_token") || undefined;
+            await disconnectWhatsappInstance(token);
             setWhatsappStatus("disconnected");
             setIsPolling(false);
             setShowWhatsappModal(false);
