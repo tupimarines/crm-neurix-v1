@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { getWhatsappStatus, connectWhatsappInstance, saveWhatsappToken, disconnectWhatsappInstance } from "@/lib/api";
+import { getWhatsappStatus, initWhatsappInstance, connectWhatsappInstance, saveWhatsappToken, disconnectWhatsappInstance } from "@/lib/api";
 
 export default function ConfiguracoesPage() {
     const [activeColor, setActiveColor] = useState("#8b5cf6");
@@ -19,6 +19,7 @@ export default function ConfiguracoesPage() {
     const [whatsappModalTab, setWhatsappModalTab] = useState<"qr" | "manual">("qr");
     const [qrCodeBase64, setQrCodeBase64] = useState<string>("");
     const [manualToken, setManualToken] = useState("");
+    const [instanceNameInput, setInstanceNameInput] = useState("crm_neurix");
     const [isLoadingWhatsapp, setIsLoadingWhatsapp] = useState(false);
     const [isPolling, setIsPolling] = useState(false);
 
@@ -66,12 +67,26 @@ export default function ConfiguracoesPage() {
         return () => clearInterval(interval);
     }, [isPolling]);
 
+    const handleInitInstance = async () => {
+        if (!instanceNameInput.trim()) return;
+        setIsLoadingWhatsapp(true);
+        try {
+            const token = localStorage.getItem("access_token") || undefined;
+            await initWhatsappInstance(instanceNameInput, token);
+            await fetchStatus();
+        } catch (error: any) {
+            console.error(error);
+            alert(error.message || "Erro ao inicializar instância.");
+        } finally {
+            setIsLoadingWhatsapp(false);
+        }
+    };
+
     const handleGenerateQR = async () => {
         setIsLoadingWhatsapp(true);
         try {
             const token = localStorage.getItem("access_token") || undefined;
-            // Using a default instance name like "neurix_crm_instance" or user tenant driven
-            const res = await connectWhatsappInstance("crm_instance", token);
+            const res = await connectWhatsappInstance(token);
             // the response should have base64 in res.data.base64
             if (res.data?.base64) {
                 setQrCodeBase64(res.data.base64);
@@ -469,30 +484,58 @@ export default function ConfiguracoesPage() {
                             {/* Content QR */}
                             {whatsappModalTab === "qr" && (
                                 <div className="flex flex-col items-center gap-4 text-center">
-                                    <p className="text-sm text-text-secondary-light">
-                                        Para conectar, clique em "Gerar" e leia o QR Code com o WhatsApp do seu celular (Aparelhos Conectados).
-                                    </p>
-
-                                    {qrCodeBase64 ? (
-                                        <div className="p-4 bg-white rounded-xl border-2 border-primary/20 shadow-inner">
-                                            <img src={qrCodeBase64.startsWith('data:image') ? qrCodeBase64 : `data:image/png;base64,${qrCodeBase64}`} alt="WhatsApp QR Code" className="w-48 h-48 object-contain" />
-                                            {isPolling && <p className="text-xs text-primary mt-3 animate-pulse">Aguardando leitura do QR Code...</p>}
-                                        </div>
+                                    {whatsappStatus === "disconnected" ? (
+                                        <>
+                                            <p className="text-sm text-text-secondary-light">
+                                                Para gerar um QR Code, primeiro você precisa inicializar ou recuperar uma instância na Uazapi.
+                                            </p>
+                                            <div className="w-full text-left">
+                                                <label className="text-xs font-semibold text-text-secondary-light uppercase tracking-wider mb-1 block">Nome da Instância</label>
+                                                <input
+                                                    type="text"
+                                                    value={instanceNameInput}
+                                                    onChange={(e) => setInstanceNameInput(e.target.value)}
+                                                    placeholder="Ex: crm_neurix"
+                                                    className="w-full px-3 py-2 bg-white dark:bg-slate-800 border border-border-light dark:border-border-dark rounded-lg text-sm focus:ring-1 focus:ring-primary outline-none"
+                                                />
+                                            </div>
+                                            <button
+                                                onClick={handleInitInstance}
+                                                disabled={isLoadingWhatsapp}
+                                                className="w-full px-6 py-2.5 bg-primary text-white rounded-lg font-medium hover:bg-primary-hover disabled:opacity-50 transition-all flex items-center justify-center gap-2"
+                                            >
+                                                {isLoadingWhatsapp ? <span className="material-symbols-outlined animate-spin">refresh</span> : <span className="material-symbols-outlined">add_circle</span>}
+                                                Criar Instância
+                                            </button>
+                                        </>
                                     ) : (
-                                        <div className="w-48 h-48 bg-slate-100 dark:bg-slate-800 rounded-xl border-2 border-dashed border-slate-300 dark:border-slate-600 flex items-center justify-center">
-                                            <span className="material-symbols-outlined text-4xl text-slate-400">qr_code_scanner</span>
-                                        </div>
-                                    )}
+                                        <>
+                                            <p className="text-sm text-text-secondary-light">
+                                                Para conectar, clique em "Gerar" e leia o QR Code com o WhatsApp do seu celular (Aparelhos Conectados).
+                                            </p>
 
-                                    {!isConnected && (
-                                        <button
-                                            onClick={handleGenerateQR}
-                                            disabled={isLoadingWhatsapp}
-                                            className="px-6 py-2.5 bg-primary text-white rounded-lg font-medium hover:bg-primary-hover disabled:opacity-50 transition-all flex items-center gap-2"
-                                        >
-                                            {isLoadingWhatsapp ? <span className="material-symbols-outlined animate-spin">refresh</span> : <span className="material-symbols-outlined">sync</span>}
-                                            Gerar Novo QR Code
-                                        </button>
+                                            {qrCodeBase64 ? (
+                                                <div className="p-4 bg-white rounded-xl border-2 border-primary/20 shadow-inner">
+                                                    <img src={qrCodeBase64.startsWith('data:image') ? qrCodeBase64 : `data:image/png;base64,${qrCodeBase64}`} alt="WhatsApp QR Code" className="w-48 h-48 object-contain" />
+                                                    {isPolling && <p className="text-xs text-primary mt-3 animate-pulse">Aguardando leitura do QR Code...</p>}
+                                                </div>
+                                            ) : (
+                                                <div className="w-48 h-48 bg-slate-100 dark:bg-slate-800 rounded-xl border-2 border-dashed border-slate-300 dark:border-slate-600 flex items-center justify-center">
+                                                    <span className="material-symbols-outlined text-4xl text-slate-400">qr_code_scanner</span>
+                                                </div>
+                                            )}
+
+                                            {!isConnected && (
+                                                <button
+                                                    onClick={handleGenerateQR}
+                                                    disabled={isLoadingWhatsapp}
+                                                    className="px-6 py-2.5 bg-primary text-white rounded-lg font-medium hover:bg-primary-hover disabled:opacity-50 transition-all flex items-center gap-2"
+                                                >
+                                                    {isLoadingWhatsapp ? <span className="material-symbols-outlined animate-spin">refresh</span> : <span className="material-symbols-outlined">sync</span>}
+                                                    Gerar Novo QR Code
+                                                </button>
+                                            )}
+                                        </>
                                     )}
                                 </div>
                             )}

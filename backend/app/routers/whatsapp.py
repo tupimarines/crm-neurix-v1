@@ -43,13 +43,13 @@ async def get_status(
         return {"status": "error", "message": f"Erro ao consultar Uazapi: {str(e)}"}
 
 
-@router.post("/connect")
-async def connect_instance(
+@router.post("/init")
+async def init_instance_route(
     payload: ConnectRequest,
     user=Depends(get_current_user),
     supabase: SupabaseClient = Depends(get_supabase),
 ):
-    """Initiate a connection (Generate QR). If instance doesn't exist, it will be initialized."""
+    """Initializes a new instance in Uazapi and saves its token."""
     instance_name = payload.instance_name
     instance_token = None
     
@@ -57,7 +57,6 @@ async def connect_instance(
     try:
         instances = await uazapi.list_instances()
         for inst in instances:
-            # Uazapi list_instances returns array of objects.
             inst_name = inst.get("instance", {}).get("instanceName", inst.get("name", ""))
             if inst_name == instance_name:
                 instance_token = inst.get("instance", {}).get("token", inst.get("token", ""))
@@ -74,9 +73,10 @@ async def connect_instance(
                 instance_token = init_res["instance"]["token"]
         except Exception as e:
             print(f"Error init_instance: {e}")
+            raise HTTPException(status_code=500, detail=f"Erro ao inicializar instância Uazapi: {e}")
 
     if not instance_token:
-        raise HTTPException(status_code=400, detail="Não foi possível obter ou criar um token para a instância. Tente excluir a instância manualmente e usar outro nome.")
+        raise HTTPException(status_code=400, detail="Não foi possível obter ou criar um token para a instância.")
             
     # 3. Save token to DB
     supabase.table("settings").upsert({
@@ -85,7 +85,21 @@ async def connect_instance(
         "value": instance_token
     }, on_conflict="tenant_id,key").execute()
     
-    # 4. Call connect
+    return {"message": "Instância inicializada", "token": instance_token}
+
+
+@router.post("/connect")
+async def connect_instance(
+    user=Depends(get_current_user),
+    supabase: SupabaseClient = Depends(get_supabase),
+):
+    """Generate QR code / start connection for an already initialized instance."""
+    response = supabase.table("settings").select("value").eq("tenant_id", user.id).eq("key", "uazapi_instance_token").execute()
+    if not response.data:
+        raise HTTPException(status_code=400, detail="Nenhum token configurado. Crie uma instância primeiro.")
+        
+    instance_token = response.data[0]["value"]
+    
     try:
         connect_data = await uazapi.connect_instance(instance_token=instance_token)
         return {"message": "Connection initiated", "data": connect_data}

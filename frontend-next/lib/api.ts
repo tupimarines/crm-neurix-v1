@@ -53,8 +53,11 @@ export const apiDelete = <T = unknown>(endpoint: string, token?: string) =>
 export const getWhatsappStatus = (token?: string) =>
     apiGet<{ status: string; data?: any }>("/api/whatsapp/status", token);
 
-export const connectWhatsappInstance = (instanceName: string, token?: string) =>
-    apiPost<{ message: string; data: any }>("/api/whatsapp/connect", { instance_name: instanceName }, token);
+export const initWhatsappInstance = (instanceName: string, token?: string) =>
+    apiPost<{ message: string; token: string }>("/api/whatsapp/init", { instance_name: instanceName }, token);
+
+export const connectWhatsappInstance = (token?: string) =>
+    apiPost<{ message: string; data: any }>("/api/whatsapp/connect", {}, token);
 
 export const saveWhatsappToken = (instanceToken: string, token?: string) =>
     apiPost<{ message: string; status: string }>("/api/whatsapp/token", { instance_token: instanceToken }, token);
