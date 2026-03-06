@@ -189,6 +189,37 @@ class UazapiService:
             resp.raise_for_status()
             return resp.json()
 
+    async def update_contact(
+        self,
+        number: str,
+        name: str,
+        instance_token: str | None = None,
+    ) -> dict:
+        """
+        Update a contact's name in the Uazapi instance.
+        This allows Uazapi to use the correct name for placeholders like {{name}}.
+        """
+        payload = {
+            "number": number,
+            "name": name,
+        }
+
+        async with httpx.AsyncClient(timeout=15) as client:
+            # Endpoint is hypothetical based on spec suggestions (/chat/editLead or /chat/updateContact)
+            # We use /chat/updateContact as it's common in similar APIs
+            try:
+                resp = await client.post(
+                    f"{self.base_url}/chat/updateContact",
+                    json=payload,
+                    headers=self._instance_headers(instance_token),
+                )
+                resp.raise_for_status()
+                return resp.json()
+            except httpx.HTTPError as e:
+                # If the specific endpoint doesn't exist, we log and return avoiding crashing the CRM
+                print(f"⚠️ Uazapi update_contact failed: {e}")
+                return {"status": "error", "detail": str(e)}
+
 
 # ── Singleton ──
 

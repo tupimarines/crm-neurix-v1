@@ -84,6 +84,14 @@ async def process_uazapi_event(event: dict, supabase_client):
     if not chat_id:
         return
 
+    # Ignore non-message events
+    if payload.get("event") != "messages.upsert":
+        return
+
+    # Ignore groups
+    if "@g.us" in chat_id:
+        return
+
     # Extract content type and media info
     content_type, content_text, media_url, media_mimetype, media_filename = _extract_content_type(message_data)
 
@@ -112,6 +120,40 @@ async def process_uazapi_event(event: dict, supabase_client):
             lead_data = lead_response.data
     except Exception:
         pass
+
+    if not lead_data and not is_from_me:
+        # Create a new lead! Find the first profile to act as tenant_id
+        tenant_id = None
+        try:
+            profile_resp = supabase_client.table("profiles").select("id").eq("role", "admin").limit(1).execute()
+            if profile_resp.data:
+                tenant_id = profile_resp.data[0]["id"]
+            else:
+                profile_resp = supabase_client.table("profiles").select("id").limit(1).execute()
+                if profile_resp.data:
+                    tenant_id = profile_resp.data[0]["id"]
+            if not tenant_id:
+                print("⚠️ Critical: No profiles found to assign tenant_id to new webhook lead.")
+        except Exception as e:
+            print(f"⚠️ Failed to query fallback profile: {e}")
+
+        if tenant_id:
+            try:
+                new_lead = {
+                    "tenant_id": tenant_id,
+                    "whatsapp_chat_id": chat_id,
+                    "contact_name": sender_name or sender_phone or "Desconhecido",
+                    "company_name": sender_name or sender_phone or "Novo Lead",
+                    "stage": "contato_inicial",
+                    "value": 0
+                }
+                lead_insert = supabase_client.table("leads").insert(new_lead).execute()
+                if lead_insert.data:
+                    lead_id = lead_insert.data[0]["id"]
+                    lead_data = lead_insert.data[0]
+                    print(f"🌟 Created new Lead from Uazapi: {lead_id}")
+            except Exception as e:
+                print(f"⚠️ Failed to create new lead: {e}")
 
     # Save the message to chat_messages table
     try:

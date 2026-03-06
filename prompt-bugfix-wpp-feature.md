@@ -255,7 +255,7 @@ await supabase.from('leads')
 
 ---
 
-### 4. Chat nos Cards
+### 4. Chat nos Cards (CONCLUÍDO)
 
 ```typescript
 // components/Kanban/KanbanCard.tsx

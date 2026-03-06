@@ -3,7 +3,7 @@ Leads Router — CRUD + Kanban Stage Management + Chat Mirror
 Provides the data for the Funil de Vendas Kanban board and WhatsApp chat integration.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, BackgroundTasks
 from supabase import Client as SupabaseClient
 from typing import Optional
 
@@ -98,6 +98,7 @@ async def create_lead(
 async def update_lead(
     lead_id: str,
     payload: LeadUpdate,
+    background_tasks: BackgroundTasks,
     user=Depends(get_current_user),
     supabase: SupabaseClient = Depends(get_supabase),
 ):
@@ -115,7 +116,16 @@ async def update_lead(
     if not response.data:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead não encontrado.")
 
-    return LeadResponse(**response.data[0])
+    lead_data = response.data[0]
+
+    # Sync with Uazapi if contact_name was updated and lead has whatsapp_chat_id
+    if "contact_name" in update_data and lead_data.get("whatsapp_chat_id"):
+        phone_number = lead_data["whatsapp_chat_id"].replace("@s.whatsapp.net", "").replace("@g.us", "")
+        uazapi = get_uazapi_service()
+        # Run in background to not block the request
+        background_tasks.add_task(uazapi.update_contact, number=phone_number, name=lead_data["contact_name"])
+
+    return LeadResponse(**lead_data)
 
 
 @router.patch("/{lead_id}/stage", response_model=LeadResponse)
