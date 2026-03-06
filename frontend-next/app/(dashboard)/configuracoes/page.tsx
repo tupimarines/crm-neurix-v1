@@ -43,10 +43,10 @@ export default function ConfiguracoesPage() {
         }
     };
 
-    // Polling logic when connecting
+    // Polling logic when connecting or unknown
     useEffect(() => {
         let interval: NodeJS.Timeout;
-        if (isPolling) {
+        if (isPolling || whatsappStatus === "connecting" || whatsappStatus === "unknown") {
             interval = setInterval(async () => {
                 try {
                     const token = localStorage.getItem("access_token") || undefined;
@@ -65,7 +65,7 @@ export default function ConfiguracoesPage() {
             }, 3000);
         }
         return () => clearInterval(interval);
-    }, [isPolling]);
+    }, [isPolling, whatsappStatus]);
 
     const handleInitInstance = async () => {
         if (!instanceNameInput.trim()) return;

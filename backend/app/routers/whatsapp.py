@@ -38,7 +38,17 @@ async def get_status(
     
     try:
         status_data = await uazapi.get_instance_status(instance_token=instance_token)
-        return {"status": status_data.get("instance", {}).get("state", "unknown"), "data": status_data}
+        
+        # Uazapi pode retornar o status em vários lugares dependendo da versão (Evolution/Waha/CodeChat)
+        instance_state = "unknown"
+        if "instance" in status_data:
+            instance_state = status_data["instance"].get("state", status_data["instance"].get("status", "unknown"))
+        elif "state" in status_data:
+            instance_state = status_data["state"]
+        elif "status" in status_data:
+            instance_state = status_data["status"]
+            
+        return {"status": instance_state, "data": status_data}
     except Exception as e:
         return {"status": "error", "message": f"Erro ao consultar Uazapi: {str(e)}"}
 
