@@ -40,11 +40,45 @@ class UazapiService:
             resp.raise_for_status()
             return resp.json()
 
+    async def init_instance(self, name: str) -> dict:
+        """Create a new WhatsApp instance via Uazapi (requires admin token)."""
+        payload = {"name": name}
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post(
+                f"{self.base_url}/instance/init",
+                json=payload,
+                headers=self._admin_headers(),
+            )
+            resp.raise_for_status()
+            return resp.json()
+
+    # ── Instance Management (Instance Token) ──
+
     async def get_instance_status(self, instance_token: str | None = None) -> dict:
         """Check status of a specific instance."""
         async with httpx.AsyncClient(timeout=15) as client:
             resp = await client.get(
                 f"{self.base_url}/instance/status",
+                headers=self._instance_headers(instance_token),
+            )
+            resp.raise_for_status()
+            return resp.json()
+
+    async def connect_instance(self, instance_token: str | None = None) -> dict:
+        """Generate QR Code / Start connection for the instance."""
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post(
+                f"{self.base_url}/instance/connect",
+                headers=self._instance_headers(instance_token),
+            )
+            resp.raise_for_status()
+            return resp.json()
+
+    async def disconnect_instance(self, instance_token: str | None = None) -> dict:
+        """Disconnect the instance from WhatsApp."""
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.delete(
+                f"{self.base_url}/instance/disconnect",
                 headers=self._instance_headers(instance_token),
             )
             resp.raise_for_status()

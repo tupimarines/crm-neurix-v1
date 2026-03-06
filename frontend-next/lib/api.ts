@@ -44,3 +44,16 @@ export const apiPut = <T = unknown>(endpoint: string, body: unknown, token?: str
 
 export const apiDelete = <T = unknown>(endpoint: string, token?: string) =>
     api<T>(endpoint, { method: "DELETE", token });
+
+// ── WhatsApp Instance Management ──
+export const getWhatsappStatus = (token?: string) =>
+    apiGet<{ status: string; data?: any }>("/api/whatsapp/status", token);
+
+export const connectWhatsappInstance = (instanceName: string, token?: string) =>
+    apiPost<{ message: string; data: any }>("/api/whatsapp/connect", { instance_name: instanceName }, token);
+
+export const saveWhatsappToken = (instanceToken: string, token?: string) =>
+    apiPost<{ message: string; status: string }>("/api/whatsapp/token", { instance_token: instanceToken }, token);
+
+export const disconnectWhatsappInstance = (token?: string) =>
+    apiDelete<{ message: string }>("/api/whatsapp/disconnect", token);

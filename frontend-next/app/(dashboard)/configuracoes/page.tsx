@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { getWhatsappStatus, connectWhatsappInstance, saveWhatsappToken, disconnectWhatsappInstance } from "@/lib/api";
 
 export default function ConfiguracoesPage() {
     const [activeColor, setActiveColor] = useState("#8b5cf6");
@@ -11,7 +12,111 @@ export default function ConfiguracoesPage() {
     const [aiEnabled, setAiEnabled] = useState(true);
     const [nfEnabled, setNfEnabled] = useState(false);
     const [systemPromptExtra, setSystemPromptExtra] = useState("");
-    const [whatsappConnected] = useState(true);
+
+    // WhatsApp Integration States
+    const [whatsappStatus, setWhatsappStatus] = useState<string>("Buscando...");
+    const [showWhatsappModal, setShowWhatsappModal] = useState(false);
+    const [whatsappModalTab, setWhatsappModalTab] = useState<"qr" | "manual">("qr");
+    const [qrCodeBase64, setQrCodeBase64] = useState<string>("");
+    const [manualToken, setManualToken] = useState("");
+    const [isLoadingWhatsapp, setIsLoadingWhatsapp] = useState(false);
+    const [isPolling, setIsPolling] = useState(false);
+
+    // Fetch initial status
+    useEffect(() => {
+        fetchStatus();
+    }, []);
+
+    const fetchStatus = async () => {
+        try {
+            const res = await getWhatsappStatus();
+            setWhatsappStatus(res.status);
+            // In Uazapi the status is typically 'open' or 'connecting'
+            if (res.status === "connecting" && !isPolling) {
+                // If connecting, we should poll. But polling is handled by a separate effect or interval if modal open
+            }
+        } catch (error) {
+            console.error("Failed to fetch whatsapp status", error);
+            setWhatsappStatus("disconnected");
+        }
+    };
+
+    // Polling logic when connecting
+    useEffect(() => {
+        let interval: NodeJS.Timeout;
+        if (isPolling) {
+            interval = setInterval(async () => {
+                try {
+                    const res = await getWhatsappStatus();
+                    setWhatsappStatus(res.status);
+                    if (res.status === "open" || res.status === "connected") {
+                        setIsPolling(false);
+                        setShowWhatsappModal(false);
+                        setQrCodeBase64("");
+                    } else if (res.status === "disconnected") {
+                        setIsPolling(false);
+                    }
+                } catch (e) {
+                    setIsPolling(false);
+                }
+            }, 3000);
+        }
+        return () => clearInterval(interval);
+    }, [isPolling]);
+
+    const handleGenerateQR = async () => {
+        setIsLoadingWhatsapp(true);
+        try {
+            // Using a default instance name like "neurix_crm_instance" or user tenant driven
+            const res = await connectWhatsappInstance("crm_instance");
+            // the response should have base64 in res.data.base64
+            if (res.data?.base64) {
+                setQrCodeBase64(res.data.base64);
+                setIsPolling(true);
+                setWhatsappStatus("connecting");
+            } else if (res.data?.instance?.state === "open") {
+                setWhatsappStatus("open");
+                setShowWhatsappModal(false);
+            }
+        } catch (error) {
+            console.error(error);
+            alert("Erro ao gerar QR Code");
+        } finally {
+            setIsLoadingWhatsapp(false);
+        }
+    };
+
+    const handleSaveManualToken = async () => {
+        if (!manualToken) return;
+        setIsLoadingWhatsapp(true);
+        try {
+            await saveWhatsappToken(manualToken);
+            await fetchStatus();
+            setShowWhatsappModal(false);
+            setManualToken("");
+        } catch (error) {
+            alert("Erro ao salvar token manual");
+        } finally {
+            setIsLoadingWhatsapp(false);
+        }
+    };
+
+    const handleDisconnectWhatsapp = async () => {
+        if (!confirm("Tem certeza que deseja desconectar o WhatsApp?")) return;
+        setIsLoadingWhatsapp(true);
+        try {
+            await disconnectWhatsappInstance();
+            setWhatsappStatus("disconnected");
+            setIsPolling(false);
+            setShowWhatsappModal(false);
+        } catch (error) {
+            alert("Erro ao desconectar");
+        } finally {
+            setIsLoadingWhatsapp(false);
+        }
+    };
+
+    const isConnected = whatsappStatus === "open" || whatsappStatus === "connected";
 
     // Dashboard metrics toggles
     const [dashMetrics, setDashMetrics] = useState({
@@ -108,17 +213,22 @@ export default function ConfiguracoesPage() {
                         {/* WhatsApp */}
                         <div className="bg-surface-light dark:bg-surface-dark rounded-xl shadow-sm border border-border-light dark:border-border-dark p-5 space-y-4">
                             <div className="flex items-center gap-3">
-                                <div className="w-10 h-10 rounded-full bg-green-100 dark:bg-green-900/30 text-green-600 flex items-center justify-center">
+                                <div className={`w-10 h-10 rounded-full flex items-center justify-center ${isConnected ? "bg-green-100 dark:bg-green-900/30 text-green-600" : "bg-slate-100 dark:bg-slate-800 text-slate-500"}`}>
                                     <span className="material-symbols-outlined">chat</span>
                                 </div>
                                 <div className="flex-1">
                                     <h3 className="font-semibold text-sm">WhatsApp Business</h3>
                                     <p className="text-xs text-text-secondary-light">
-                                        Status: <span className={`font-medium ${whatsappConnected ? "text-green-600" : "text-red-500"}`}>{whatsappConnected ? "Conectado" : "Desconectado"}</span>
+                                        Status: <span className={`font-medium ${isConnected ? "text-green-600" : (whatsappStatus === "connecting" ? "text-yellow-600" : "text-red-500")}`}>{whatsappStatus === "open" ? "Conectado" : whatsappStatus}</span>
                                     </p>
                                 </div>
-                                <div className={`w-3 h-3 rounded-full ${whatsappConnected ? "bg-green-500" : "bg-red-500"} animate-pulse`} />
+                                <div className="flex flex-col items-end gap-2">
+                                    <div className={`w-3 h-3 rounded-full ${isConnected ? "bg-green-500" : "bg-red-500"} ${whatsappStatus === "connecting" ? "animate-pulse bg-yellow-500" : ""}`} />
+                                </div>
                             </div>
+                            <button onClick={() => setShowWhatsappModal(true)} className="w-full mt-2 py-2 px-3 text-sm font-medium border border-border-light dark:border-border-dark rounded-lg hover:border-primary hover:text-primary transition-colors">
+                                Configurar Conexão
+                            </button>
                             {/* AI Agent toggle */}
                             <div className="p-3 bg-slate-50 dark:bg-slate-800/50 rounded-lg border border-border-light dark:border-border-dark">
                                 <div className="flex items-center justify-between mb-3">
@@ -310,6 +420,117 @@ export default function ConfiguracoesPage() {
                         </div>
                         <div className="p-4 border-t border-border-light dark:border-border-dark">
                             <button onClick={() => setShowProductsPanel(false)} className="w-full py-2.5 bg-primary text-white rounded-xl font-medium hover:bg-primary-hover transition-all">Fechar</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* WhatsApp Integration Modal */}
+            {showWhatsappModal && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+                    <div className="absolute inset-0 bg-slate-900/30 backdrop-blur-sm" onClick={() => !isLoadingWhatsapp && setShowWhatsappModal(false)} />
+                    <div className="relative bg-surface-light dark:bg-surface-dark rounded-2xl shadow-2xl border border-border-light dark:border-border-dark w-full max-w-md flex flex-col max-h-[90vh]">
+                        <div className="p-6 border-b border-border-light dark:border-border-dark flex justify-between shrink-0">
+                            <h3 className="text-lg font-bold font-display">Conexão WhatsApp Uazapi</h3>
+                            <button onClick={() => !isLoadingWhatsapp && setShowWhatsappModal(false)} disabled={isLoadingWhatsapp}><span className="material-symbols-outlined text-text-secondary-light hover:text-text-primary-light transition-colors">close</span></button>
+                        </div>
+
+                        <div className="p-6 overflow-y-auto space-y-6">
+                            {/* Tabs */}
+                            <div className="flex rounded-lg bg-slate-100 dark:bg-slate-800 p-1">
+                                <button
+                                    className={`flex-1 py-1.5 text-sm font-medium rounded-md transition-colors ${whatsappModalTab === "qr" ? "bg-white dark:bg-slate-700 shadow-sm text-primary" : "text-text-secondary-light hover:text-text-primary-light"}`}
+                                    onClick={() => setWhatsappModalTab("qr")}
+                                >
+                                    QR Code
+                                </button>
+                                <button
+                                    className={`flex-1 py-1.5 text-sm font-medium rounded-md transition-colors ${whatsappModalTab === "manual" ? "bg-white dark:bg-slate-700 shadow-sm text-primary" : "text-text-secondary-light hover:text-text-primary-light"}`}
+                                    onClick={() => setWhatsappModalTab("manual")}
+                                >
+                                    Token Manual
+                                </button>
+                            </div>
+
+                            {/* Status Banner */}
+                            <div className={`p-3 rounded-lg border flex items-center gap-3 ${isConnected ? "bg-green-50 border-green-200 text-green-700 dark:bg-green-900/20 dark:border-green-800 dark:text-green-400" : "bg-slate-50 border-slate-200 text-slate-700 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-300"}`}>
+                                <span className="material-symbols-outlined">{isConnected ? "check_circle" : "info"}</span>
+                                <div className="text-sm">
+                                    <p className="font-semibold">Status Atual: {whatsappStatus === "open" ? "Conectado" : whatsappStatus}</p>
+                                    <p className="text-xs opacity-80">{isConnected ? "Sua instância está pronta para enviar e receber mensagens." : "Conecte sua instância para habilitar mensagens."}</p>
+                                </div>
+                            </div>
+
+                            {/* Content QR */}
+                            {whatsappModalTab === "qr" && (
+                                <div className="flex flex-col items-center gap-4 text-center">
+                                    <p className="text-sm text-text-secondary-light">
+                                        Para conectar, clique em "Gerar" e leia o QR Code com o WhatsApp do seu celular (Aparelhos Conectados).
+                                    </p>
+
+                                    {qrCodeBase64 ? (
+                                        <div className="p-4 bg-white rounded-xl border-2 border-primary/20 shadow-inner">
+                                            <img src={qrCodeBase64.startsWith('data:image') ? qrCodeBase64 : `data:image/png;base64,${qrCodeBase64}`} alt="WhatsApp QR Code" className="w-48 h-48 object-contain" />
+                                            {isPolling && <p className="text-xs text-primary mt-3 animate-pulse">Aguardando leitura do QR Code...</p>}
+                                        </div>
+                                    ) : (
+                                        <div className="w-48 h-48 bg-slate-100 dark:bg-slate-800 rounded-xl border-2 border-dashed border-slate-300 dark:border-slate-600 flex items-center justify-center">
+                                            <span className="material-symbols-outlined text-4xl text-slate-400">qr_code_scanner</span>
+                                        </div>
+                                    )}
+
+                                    {!isConnected && (
+                                        <button
+                                            onClick={handleGenerateQR}
+                                            disabled={isLoadingWhatsapp}
+                                            className="px-6 py-2.5 bg-primary text-white rounded-lg font-medium hover:bg-primary-hover disabled:opacity-50 transition-all flex items-center gap-2"
+                                        >
+                                            {isLoadingWhatsapp ? <span className="material-symbols-outlined animate-spin">refresh</span> : <span className="material-symbols-outlined">sync</span>}
+                                            Gerar Novo QR Code
+                                        </button>
+                                    )}
+                                </div>
+                            )}
+
+                            {/* Content Manual Token */}
+                            {whatsappModalTab === "manual" && (
+                                <div className="space-y-4">
+                                    <p className="text-sm text-text-secondary-light">
+                                        Caso já possua um token de instância Uazapi, você pode inseri-lo manualmente aqui.
+                                    </p>
+                                    <div>
+                                        <label className="text-xs font-semibold text-text-secondary-light uppercase tracking-wider mb-1 block">Token da Instância</label>
+                                        <input
+                                            type="text"
+                                            value={manualToken}
+                                            onChange={(e) => setManualToken(e.target.value)}
+                                            placeholder="Ex: bd42a2... ou instancename"
+                                            className="w-full px-3 py-2 bg-white dark:bg-slate-800 border border-border-light dark:border-border-dark rounded-lg text-sm focus:ring-1 focus:ring-primary outline-none"
+                                        />
+                                    </div>
+                                    <button
+                                        onClick={handleSaveManualToken}
+                                        disabled={isLoadingWhatsapp || !manualToken}
+                                        className="w-full py-2.5 bg-primary text-white rounded-lg font-medium hover:bg-primary-hover disabled:opacity-50 transition-all"
+                                    >
+                                        Salvar Token Manual
+                                    </button>
+                                </div>
+                            )}
+
+                            {/* Danger Zone */}
+                            {isConnected && (
+                                <div className="pt-4 border-t border-border-light dark:border-border-dark mt-4">
+                                    <button
+                                        onClick={handleDisconnectWhatsapp}
+                                        disabled={isLoadingWhatsapp}
+                                        className="w-full py-2 px-4 rounded-lg border border-red-200 text-red-600 bg-red-50 hover:bg-red-100 dark:border-red-900 dark:text-red-400 dark:bg-red-900/20 dark:hover:bg-red-900/40 text-sm font-medium transition-colors flex items-center justify-center gap-2"
+                                    >
+                                        <span className="material-symbols-outlined text-base">leak_remove</span>
+                                        Desconectar Instância
+                                    </button>
+                                </div>
+                            )}
                         </div>
                     </div>
                 </div>

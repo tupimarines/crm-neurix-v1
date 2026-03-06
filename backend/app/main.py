@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
-from app.routers import auth, leads, products, orders, dashboard, settings as settings_router, webhooks, keyword_rules, upload
+from app.routers import auth, leads, products, orders, dashboard, settings as settings_router, webhooks, keyword_rules, upload, whatsapp
 
 
 @asynccontextmanager
@@ -51,6 +51,7 @@ def create_app() -> FastAPI:
     app.include_router(webhooks.router, prefix="/api/webhooks", tags=["Webhooks"])
     app.include_router(keyword_rules.router, prefix="/api/keyword-rules", tags=["Regras de Keywords"])
     app.include_router(upload.router, prefix="/api/upload", tags=["Upload"])
+    app.include_router(whatsapp.router, prefix="/api/whatsapp", tags=["WhatsApp"])
 
     # ── Health Check ──
     @app.get("/api/health", tags=["Sistema"])
