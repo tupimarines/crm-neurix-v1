@@ -127,16 +127,17 @@ export default function ConfiguracoesPage() {
     };
 
     const handleDisconnectWhatsapp = async () => {
-        if (!confirm("Tem certeza que deseja desconectar o WhatsApp?")) return;
+        if (!confirm("Tem certeza que deseja excluir esta configuração?")) return;
         setIsLoadingWhatsapp(true);
         try {
             const token = localStorage.getItem("access_token") || undefined;
             await disconnectWhatsappInstance(token);
             setWhatsappStatus("disconnected");
             setIsPolling(false);
-            setShowWhatsappModal(false);
+            setQrCodeBase64("");
+            setInstanceNameInput("crm_neurix");
         } catch (error) {
-            alert("Erro ao desconectar");
+            alert("Erro ao excluir configuração");
         } finally {
             setIsLoadingWhatsapp(false);
         }
