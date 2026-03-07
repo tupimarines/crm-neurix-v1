@@ -193,6 +193,17 @@ export default function KanbanPage() {
     // Removed localStorage sync — data now comes from API
 
 
+    // Chat message type
+    interface ChatMessage {
+        id: string;
+        direction: string;
+        content: string;
+        content_type: string;
+        sender_name: string;
+        created_at: string;
+        media_url?: string;
+        caption?: string;
+    }
 
     const [viewMode, setViewMode] = useState<"kanban" | "list">("kanban");
     const [activeCard, setActiveCard] = useState<KanbanCard | null>(null);
@@ -212,8 +223,62 @@ export default function KanbanPage() {
     const [isSaving, setIsSaving] = useState(false);
     const [editStage, setEditStage] = useState<string | null>(null);
     const [editStageName, setEditStageName] = useState("");
+    // Chat drawer state
+    const [chatCardId, setChatCardId] = useState<string | null>(null);
+    const [chatCardName, setChatCardName] = useState("");
+    const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+    const [chatLoading, setChatLoading] = useState(false);
+    // Delete confirmation state
+    const [deleteCardId, setDeleteCardId] = useState<string | null>(null);
+    const [isDeleting, setIsDeleting] = useState(false);
     const menuRef = useRef<HTMLDivElement>(null);
     const filterRef = useRef<HTMLDivElement>(null);
+    const chatEndRef = useRef<HTMLDivElement>(null);
+
+    // Open chat drawer and fetch messages
+    async function openChat(cardId: string) {
+        const card = cards.find(c => c.id === cardId);
+        if (!card) return;
+        setChatCardId(cardId);
+        setChatCardName(card.name);
+        setChatMessages([]);
+        setChatLoading(true);
+        try {
+            const token = localStorage.getItem("access_token") || undefined;
+            const data = await api<{ messages: ChatMessage[]; lead_name: string }>(
+                `/api/leads/${cardId}/messages`, { method: "GET", token }
+            );
+            setChatMessages(data.messages || []);
+            if (data.lead_name) setChatCardName(data.lead_name);
+        } catch (err) {
+            console.error("Failed to fetch chat:", err);
+        } finally {
+            setChatLoading(false);
+        }
+    }
+
+    // Scroll to bottom when chat messages load
+    useEffect(() => {
+        if (chatEndRef.current && chatMessages.length > 0) {
+            chatEndRef.current.scrollIntoView({ behavior: "smooth" });
+        }
+    }, [chatMessages]);
+
+    // Delete lead handler
+    async function handleDeleteCard() {
+        if (!deleteCardId) return;
+        setIsDeleting(true);
+        try {
+            const token = localStorage.getItem("access_token") || undefined;
+            await api(`/api/leads/${deleteCardId}`, { method: "DELETE", token });
+            setCards(prev => prev.filter(c => c.id !== deleteCardId));
+        } catch (err) {
+            console.error("Failed to delete card:", err);
+        } finally {
+            setIsDeleting(false);
+            setDeleteCardId(null);
+        }
+    }
 
     // Drag to scroll logic
     const boardRef = useRef<HTMLDivElement>(null);
@@ -576,23 +641,17 @@ export default function KanbanPage() {
                                             <DroppableStage id={stage.id} className="flex-1 p-3 overflow-y-auto space-y-2.5 custom-scrollbar min-h-[100px]">
                                                 {stageCards.map((card) => (
                                                     <div key={card.id} className="relative">
-                                                        <SortableCard card={card} onOpenChat={() => { }} onOpenMenu={(id) => setEditCardMenu(editCardMenu === id ? null : id)} />
+                                                        <SortableCard card={card} onOpenChat={(id) => openChat(id)} onOpenMenu={(id) => setEditCardMenu(editCardMenu === id ? null : id)} />
                                                         {editCardMenu === card.id && (
                                                             <div ref={menuRef} className="absolute right-0 top-full mt-1 w-48 bg-surface-light dark:bg-surface-dark rounded-xl shadow-2xl border border-border-light dark:border-border-dark z-50 py-1">
                                                                 <button onClick={() => { setEditingCard(card); setEditCardMenu(null); }} className="w-full px-4 py-2 text-sm hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-2">
                                                                     <span className="material-symbols-outlined text-base">edit</span> Editar Card
                                                                 </button>
-                                                                <button className="w-full px-4 py-2 text-sm hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-2">
-                                                                    <span className="material-symbols-outlined text-base">handshake</span> Negócios
-                                                                </button>
-                                                                <button className="w-full px-4 py-2 text-sm hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-2">
-                                                                    <span className="material-symbols-outlined text-base">inventory_2</span> Produtos
-                                                                </button>
-                                                                <button className="w-full px-4 py-2 text-sm hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-2">
-                                                                    <span className="material-symbols-outlined text-base">flag</span> Prioridade
+                                                                <button onClick={() => { openChat(card.id); setEditCardMenu(null); }} className="w-full px-4 py-2 text-sm hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-2">
+                                                                    <span className="material-symbols-outlined text-base">chat</span> Ver Chat
                                                                 </button>
                                                                 <div className="h-px bg-border-light dark:bg-border-dark mx-2 my-1" />
-                                                                <button className="w-full px-4 py-2 text-sm hover:bg-red-50 dark:hover:bg-red-900/20 text-red-600 flex items-center gap-2">
+                                                                <button onClick={() => { setDeleteCardId(card.id); setEditCardMenu(null); }} className="w-full px-4 py-2 text-sm hover:bg-red-50 dark:hover:bg-red-900/20 text-red-600 flex items-center gap-2">
                                                                     <span className="material-symbols-outlined text-base">delete</span> Excluir
                                                                 </button>
                                                             </div>
@@ -776,6 +835,90 @@ export default function KanbanPage() {
                                 {isSaving ? "Salvando..." : "Salvar Alterações"}
                             </button>
                             <button onClick={() => setEditingCard(null)} disabled={isSaving} className="flex-1 py-2 border border-border-light dark:border-border-dark rounded-lg text-sm font-medium hover:bg-slate-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                                Cancelar
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Chat Drawer */}
+            {chatCardId && (
+                <div className="fixed inset-0 z-50 flex justify-end">
+                    <div className="absolute inset-0 bg-slate-900/30 backdrop-blur-sm" onClick={() => setChatCardId(null)} />
+                    <div className="relative w-full max-w-md bg-surface-light dark:bg-surface-dark shadow-2xl border-l border-border-light dark:border-border-dark flex flex-col h-full">
+                        {/* Chat header */}
+                        <div className="flex items-center justify-between px-4 py-3 border-b border-border-light dark:border-border-dark bg-green-600 text-white">
+                            <div className="flex items-center gap-3">
+                                <div className="w-9 h-9 rounded-full bg-white/20 flex items-center justify-center">
+                                    <span className="material-symbols-outlined text-lg">person</span>
+                                </div>
+                                <div>
+                                    <h3 className="text-sm font-bold">{chatCardName}</h3>
+                                    <p className="text-xs text-green-100">{chatMessages.length} mensagens</p>
+                                </div>
+                            </div>
+                            <button onClick={() => setChatCardId(null)} className="p-1 hover:bg-white/10 rounded-full transition-colors">
+                                <span className="material-symbols-outlined">close</span>
+                            </button>
+                        </div>
+                        {/* Chat messages */}
+                        <div className="flex-1 overflow-y-auto p-4 space-y-2" style={{ backgroundImage: 'url("data:image/svg+xml,%3Csvg width=\'200\' height=\'200\' xmlns=\'http://www.w3.org/2000/svg\'%3E%3Cdefs%3E%3Cpattern id=\'a\' width=\'40\' height=\'40\' patternUnits=\'userSpaceOnUse\'%3E%3Ccircle cx=\'20\' cy=\'20\' r=\'1\' fill=\'%23e2e8f0\'/%3E%3C/pattern%3E%3C/defs%3E%3Crect fill=\'%23f1f5f9\' width=\'200\' height=\'200\'/%3E%3Crect fill=\'url(%23a)\' width=\'200\' height=\'200\'/%3E%3C/svg%3E")' }}>
+                            {chatLoading ? (
+                                <div className="flex items-center justify-center h-full">
+                                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-green-600"></div>
+                                </div>
+                            ) : chatMessages.length === 0 ? (
+                                <div className="flex items-center justify-center h-full text-text-secondary-light">
+                                    <div className="text-center">
+                                        <span className="material-symbols-outlined text-4xl mb-2 block opacity-40">chat_bubble_outline</span>
+                                        <p className="text-sm">Nenhuma mensagem encontrada</p>
+                                    </div>
+                                </div>
+                            ) : (
+                                chatMessages.map((msg) => (
+                                    <div key={msg.id} className={`flex ${msg.direction === 'outgoing' ? 'justify-end' : 'justify-start'}`}>
+                                        <div className={`max-w-[80%] px-3 py-2 rounded-xl text-sm shadow-sm ${msg.direction === 'outgoing'
+                                                ? 'bg-green-100 dark:bg-green-900/40 text-green-900 dark:text-green-100 rounded-br-sm'
+                                                : 'bg-white dark:bg-slate-700 text-text-main-light dark:text-text-main-dark rounded-bl-sm'
+                                            }`}>
+                                            {msg.direction !== 'outgoing' && msg.sender_name && (
+                                                <p className="text-xs font-bold text-green-700 dark:text-green-400 mb-0.5">{msg.sender_name}</p>
+                                            )}
+                                            {msg.content_type !== 'text' && (
+                                                <span className="text-xs text-text-secondary-light italic">[{msg.content_type.toUpperCase()}] </span>
+                                            )}
+                                            <p className="whitespace-pre-wrap break-words">{msg.content || msg.caption || ''}</p>
+                                            <p className="text-[10px] text-text-secondary-light dark:text-slate-400 mt-1 text-right">
+                                                {new Date(msg.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                                            </p>
+                                        </div>
+                                    </div>
+                                ))
+                            )}
+                            <div ref={chatEndRef} />
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Delete Confirmation */}
+            {deleteCardId && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+                    <div className="absolute inset-0 bg-slate-900/30 backdrop-blur-sm" onClick={() => setDeleteCardId(null)} />
+                    <div className="relative bg-surface-light dark:bg-surface-dark rounded-xl shadow-2xl border border-border-light dark:border-border-dark w-full max-w-sm p-6 text-center space-y-4">
+                        <span className="material-symbols-outlined text-red-500 text-4xl">warning</span>
+                        <h3 className="text-lg font-bold">Excluir Lead?</h3>
+                        <p className="text-sm text-text-secondary-light dark:text-text-secondary-dark">
+                            Esta ação não pode ser desfeita. O lead e suas mensagens serão removidos.
+                        </p>
+                        <div className="flex gap-2 pt-2">
+                            <button onClick={handleDeleteCard} disabled={isDeleting}
+                                className="flex-1 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700 transition-colors disabled:opacity-50">
+                                {isDeleting ? 'Excluindo...' : 'Excluir'}
+                            </button>
+                            <button onClick={() => setDeleteCardId(null)} disabled={isDeleting}
+                                className="flex-1 py-2 border border-border-light dark:border-border-dark rounded-lg text-sm font-medium hover:bg-slate-50 transition-colors disabled:opacity-50">
                                 Cancelar
                             </button>
                         </div>
