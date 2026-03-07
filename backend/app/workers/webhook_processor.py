@@ -190,11 +190,23 @@ async def process_uazapi_event(event: dict, supabase_client, redis_client):
 
         if tenant_id:
             try:
+                # Format phone as DDI DDD NUMBER (e.g. "55 41 99580-2989")
+                formatted_phone = ""
+                if sender_phone:
+                    p = sender_phone.lstrip("+")
+                    if len(p) >= 12:
+                        formatted_phone = f"{p[:2]} {p[2:4]} {p[4:9]}-{p[9:]}"
+                    elif len(p) >= 10:
+                        formatted_phone = f"55 {p[:2]} {p[2:7]}-{p[7:]}"
+                    else:
+                        formatted_phone = p
+
                 new_lead = {
                     "tenant_id": tenant_id,
                     "whatsapp_chat_id": chat_id,
                     "contact_name": sender_name or sender_phone or "Desconhecido",
                     "company_name": sender_name or sender_phone or "Novo Lead",
+                    "phone": formatted_phone or None,
                     "stage": "contato_inicial",
                     "value": 0
                 }

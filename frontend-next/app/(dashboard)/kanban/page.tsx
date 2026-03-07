@@ -244,7 +244,7 @@ export default function KanbanPage() {
             try {
                 setProductFetchError(null);
                 const token = localStorage.getItem("access_token") || undefined;
-                const data = await api<any[]>("/api/products", { method: "GET", token });
+                const data = await api<any[]>("/api/products/", { method: "GET", token });
                 if (Array.isArray(data)) {
                     setAvailableProducts(data.filter(p => p.is_active));
                 }
