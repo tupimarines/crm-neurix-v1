@@ -127,9 +127,13 @@ async def debug_queue(redis: aioredis.Redis = Depends(get_redis)):
                     items.append(json.loads(it))
                 except:
                     items.append(it)
+                    
+        errors = await redis.lrange("neurix:webhook_errors", 0, 20)
+        
         return {
             "queue_length": queue_len,
-            "recent_items": items
+            "recent_items": items,
+            "worker_logs": errors
         }
     except Exception as e:
         return {"error": str(e)}

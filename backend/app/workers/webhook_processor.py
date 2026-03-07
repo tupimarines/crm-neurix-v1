@@ -73,7 +73,17 @@ def _extract_content_type(message_data: dict) -> tuple[str, str, str | None, str
     return "text", str(msg), None, None, None
 
 
-async def process_uazapi_event(event: dict, supabase_client):
+async def log_error_to_redis(redis_client, msg: str):
+    import time
+    err_event = f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {msg}"
+    print(err_event)
+    try:
+        await redis_client.lpush("neurix:webhook_errors", err_event)
+        await redis_client.ltrim("neurix:webhook_errors", 0, 49) # keep last 50
+    except:
+        pass
+
+async def process_uazapi_event(event: dict, supabase_client, redis_client):
     """Process a single Uazapi webhook event."""
     payload = event.get("payload", {})
     
@@ -134,8 +144,10 @@ async def process_uazapi_event(event: dict, supabase_client):
         if lead_response.data:
             lead_id = lead_response.data["id"]
             lead_data = lead_response.data
-    except Exception:
-        pass
+    except Exception as e:
+        # Expected PGRST116 (No rows) if lead does not exist
+        if "PGRST116" not in str(e):
+             await log_error_to_redis(redis_client, f"Error finding lead: {e}")
 
     if not lead_data and not is_from_me:
         # Create a new lead! Find the first profile to act as tenant_id
@@ -149,9 +161,9 @@ async def process_uazapi_event(event: dict, supabase_client):
                 if profile_resp.data:
                     tenant_id = profile_resp.data[0]["id"]
             if not tenant_id:
-                print("⚠️ Critical: No profiles found to assign tenant_id to new webhook lead.")
+                await log_error_to_redis(redis_client, "Critical: No profiles found to assign tenant_id to new webhook lead.")
         except Exception as e:
-            print(f"⚠️ Failed to query fallback profile: {e}")
+            await log_error_to_redis(redis_client, f"Failed to query fallback profile: {e}")
 
         if tenant_id:
             try:
@@ -167,9 +179,9 @@ async def process_uazapi_event(event: dict, supabase_client):
                 if lead_insert.data:
                     lead_id = lead_insert.data[0]["id"]
                     lead_data = lead_insert.data[0]
-                    print(f"🌟 Created new Lead from Uazapi: {lead_id}")
+                    await log_error_to_redis(redis_client, f"Created new Lead from Uazapi: {lead_id}")
             except Exception as e:
-                print(f"⚠️ Failed to create new lead: {e}")
+                await log_error_to_redis(redis_client, f"Failed to create new lead: {e}")
 
     # Save the message to chat_messages table
     try:
@@ -187,13 +199,14 @@ async def process_uazapi_event(event: dict, supabase_client):
             "caption": caption,
             "sender_name": sender_name,
             "sender_phone": sender_phone,
-            "metadata": message_data.get("message", {}),
+            "metadata": {"type": "v2_webhook"},
         }
         # Remove None values
         message_record = {k: v for k, v in message_record.items() if v is not None}
         supabase_client.table("chat_messages").insert(message_record).execute()
+        # await log_error_to_redis(redis_client, f"Saved message {msg_id}") # Debug success
     except Exception as e:
-        print(f"⚠️ Failed to save message: {e}")
+        await log_error_to_redis(redis_client, f"Failed to save message: {e}")
 
     # Only analyze incoming text messages for keyword detection
     if is_from_me or content_type != "text" or not content_text:
@@ -203,31 +216,31 @@ async def process_uazapi_event(event: dict, supabase_client):
         return
 
     # Load rules from DB and run keyword engine
-    rules = await keyword_engine.load_rules_from_db(supabase_client)
-    suggested_stage = keyword_engine.analyze_message(content_text, rules)
+    try:
+        rules = await keyword_engine.load_rules_from_db(supabase_client)
+        suggested_stage = keyword_engine.analyze_message(content_text, rules)
 
-    if not suggested_stage:
-        return
+        if not suggested_stage:
+            return
 
-    # Only move forward, never backward in the funnel
-    stage_order = {
-        "contato_inicial": 0,
-        "escolhendo_sabores": 1,
-        "aguardando_pagamento": 2,
-        "enviado": 3,
-    }
-    current_order = stage_order.get(lead_data["stage"], 0)
-    suggested_order = stage_order.get(suggested_stage.value, 0)
+        # Only move forward, never backward in the funnel
+        stage_order = {
+            "contato_inicial": 0,
+            "escolhendo_sabores": 1,
+            "aguardando_pagamento": 2,
+            "enviado": 3,
+        }
+        current_order = stage_order.get(lead_data["stage"], 0)
+        suggested_order = stage_order.get(suggested_stage.value, 0)
 
-    if suggested_order > current_order:
-        try:
+        if suggested_order > current_order:
             supabase_client.table("leads") \
                 .update({"stage": suggested_stage.value}) \
                 .eq("id", lead_data["id"]) \
                 .execute()
-            print(f"✅ Lead {lead_data['id']} moved: {lead_data['stage']} → {suggested_stage.value}")
-        except Exception as e:
-            print(f"⚠️ Failed to move lead: {e}")
+            await log_error_to_redis(redis_client, f"Lead {lead_data['id']} moved: {lead_data['stage']} -> {suggested_stage.value}")
+    except Exception as e:
+         await log_error_to_redis(redis_client, f"Failed keyword engine / moving lead: {e}")
 
 
 async def worker_loop():
@@ -237,8 +250,8 @@ async def worker_loop():
 
     from supabase import create_client
     supabase_client = create_client(settings.SUPABASE_URL, settings.SUPABASE_SERVICE_ROLE_KEY)
-
-    print("🔄 Webhook processor worker started. Listening on neurix:webhook_queue...")
+    
+    await log_error_to_redis(redis_client, "Webhook processor worker started properly.")
 
     while True:
         try:
@@ -251,16 +264,15 @@ async def worker_loop():
             source = event.get("source", "unknown")
 
             if source == "uazapi":
-                await process_uazapi_event(event, supabase_client)
+                await process_uazapi_event(event, supabase_client, redis_client)
             elif source == "invoice":
-                print(f"📄 Invoice webhook received (not yet implemented)")
+                pass
             else:
-                print(f"❓ Unknown webhook source: {source}")
+                await log_error_to_redis(redis_client, f"Unknown webhook source: {source}")
 
         except Exception as e:
-            print(f"❌ Worker error: {e}")
+            await log_error_to_redis(redis_client, f"Worker loop error: {e}")
             await asyncio.sleep(2)
-
 
 if __name__ == "__main__":
     asyncio.run(worker_loop())
