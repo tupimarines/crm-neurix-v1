@@ -112,3 +112,24 @@ async def generate_webhook_secret():
         "info": "Salve este secret no .env como UAZAPI_WEBHOOK_SECRET e use na URL do webhook Uazapi.",
         "example_webhook_url": f"https://crm.wbtech.dev/api/webhooks/uazapi?secret={new_secret}",
     }
+
+
+@router.get("/debug")
+async def debug_queue(redis: aioredis.Redis = Depends(get_redis)):
+    try:
+        queue_len = await redis.llen("neurix:webhook_queue")
+        items = []
+        if queue_len > 0:
+            raw_items = await redis.lrange("neurix:webhook_queue", 0, 5)
+            # Parse json if possible
+            for it in raw_items:
+                try:
+                    items.append(json.loads(it))
+                except:
+                    items.append(it)
+        return {
+            "queue_length": queue_len,
+            "recent_items": items
+        }
+    except Exception as e:
+        return {"error": str(e)}
