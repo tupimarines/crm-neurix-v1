@@ -60,6 +60,7 @@ async def receive_uazapi_webhook(
     """
     try:
         body = await request.json()
+        print(f"📥 UAZAPI WEBHOOK PAYLOAD: {json.dumps(body, indent=2)}")
     except Exception:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Payload JSON inválido.")
 

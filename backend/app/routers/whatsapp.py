@@ -95,7 +95,18 @@ async def init_instance_route(
         "value": instance_token
     }, on_conflict="tenant_id,key").execute()
     
-    return {"message": "Instância inicializada", "token": instance_token}
+    # 4. Configure Webhook
+    from app.config import get_settings
+    settings = get_settings()
+    webhook_url = "https://crm.wbtech.dev/api/webhooks/uazapi"
+    if settings.UAZAPI_WEBHOOK_SECRET:
+        webhook_url += f"?secret={settings.UAZAPI_WEBHOOK_SECRET}"
+    try:
+        await uazapi.set_webhook(url=webhook_url, instance_token=instance_token)
+    except Exception as e:
+        print(f"Error setting webhook: {e}")
+    
+    return {"message": "Instância inicializada e webhook configurado", "token": instance_token}
 
 
 @router.post("/connect")
