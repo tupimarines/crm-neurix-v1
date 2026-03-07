@@ -231,9 +231,12 @@ export default function KanbanPage() {
         if (!v) return "";
         // Auto-prefix DDI 55
         if (!v.startsWith('55') && v.length >= 10) v = '55' + v;
-        // Enforce 9-digit mobile: insert 9 after DDD if missing
+        // Enforce 9-digit mobile: insert 9 after DDD only if mobile (first digit 6-9)
         if (v.length === 12 && v.startsWith('55')) {
-            v = v.slice(0, 4) + '9' + v.slice(4);
+            const firstDigitAfterDDD = v[4];
+            if (['6', '7', '8', '9'].includes(firstDigitAfterDDD)) {
+                v = v.slice(0, 4) + '9' + v.slice(4);
+            }
         }
         if (v.length > 13) v = v.substring(0, 13);
 

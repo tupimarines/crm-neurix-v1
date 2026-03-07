@@ -194,8 +194,8 @@ async def process_uazapi_event(event: dict, supabase_client, redis_client):
                 formatted_phone = ""
                 if sender_phone:
                     p = sender_phone.lstrip("+")
-                    # Enforce 9-digit mobile: insert 9 after DDD if only 8 digits
-                    if len(p) == 12 and p.startswith('55'):
+                    # Enforce 9-digit mobile: insert 9 only for mobile (first digit 6-9)
+                    if len(p) == 12 and p.startswith('55') and p[4] in '6789':
                         p = p[:4] + '9' + p[4:]
                     if len(p) >= 13 and p.startswith('55'):
                         formatted_phone = f"{p[:2]} {p[2:4]} {p[4:9]}-{p[9:13]}"
