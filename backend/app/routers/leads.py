@@ -245,6 +245,20 @@ async def get_lead_chat_history(
             "hasMore": False,
         }
 
+    # Fetch instance_token for tenant
+    settings_response = supabase.table("settings") \
+        .select("value") \
+        .eq("key", "uazapi_instance_token") \
+        .eq("tenant_id", user.id) \
+        .limit(1) \
+        .execute()
+    
+    instance_token = None
+    if settings_response.data and len(settings_response.data) > 0:
+        val = settings_response.data[0].get("value")
+        if val:
+            instance_token = val.strip('"') if isinstance(val, str) else str(val)
+
     # Fetch directly from Uazapi
     uazapi = get_uazapi_service()
     try:
@@ -252,6 +266,7 @@ async def get_lead_chat_history(
             chatid=whatsapp_chat_id,
             limit=limit,
             offset=offset,
+            instance_token=instance_token,
         )
     except Exception as e:
         raise HTTPException(
@@ -310,6 +325,20 @@ async def send_message_to_lead(
             detail="Este lead não possui WhatsApp vinculado (whatsapp_chat_id).",
         )
 
+    # Fetch instance_token for tenant
+    settings_response = supabase.table("settings") \
+        .select("value") \
+        .eq("key", "uazapi_instance_token") \
+        .eq("tenant_id", user.id) \
+        .limit(1) \
+        .execute()
+    
+    instance_token = None
+    if settings_response.data and len(settings_response.data) > 0:
+        val = settings_response.data[0].get("value")
+        if val:
+            instance_token = val.strip('"') if isinstance(val, str) else str(val)
+
     # Extract the phone number from the JID
     phone_number = whatsapp_chat_id.replace("@s.whatsapp.net", "").replace("@g.us", "")
 
@@ -326,12 +355,14 @@ async def send_message_to_lead(
                 file_url=payload.file_url,
                 caption=payload.text or "",
                 doc_name=payload.file_name,
+                instance_token=instance_token,
             )
         else:
             # Send text only
             uazapi_response = await uazapi.send_text(
                 number=phone_number,
                 text=payload.text,
+                instance_token=instance_token,
             )
     except Exception as e:
         raise HTTPException(

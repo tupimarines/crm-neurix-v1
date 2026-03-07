@@ -22,11 +22,11 @@ class UazapiService:
         self.default_instance_token = settings.UAZAPI_INSTANCE_TOKEN
 
     def _admin_headers(self) -> dict:
-        return {"admintoken": self.admin_token, "Content-Type": "application/json"}
+        return {"apikey": self.admin_token, "Content-Type": "application/json"}
 
     def _instance_headers(self, instance_token: str | None = None) -> dict:
         token = instance_token or self.default_instance_token
-        return {"token": token, "Content-Type": "application/json"}
+        return {"apikey": token, "Content-Type": "application/json"}
 
     # ── Instance Management (Admin) ──
 
