@@ -59,8 +59,8 @@ function SortableCard({ card, onOpenChat, onOpenMenu }: { card: KanbanCard; onOp
             <div className="flex justify-between items-start mb-2">
                 <div className="flex-1 min-w-0">
                     <h3 className="text-sm font-bold truncate">{card.name}</h3>
-                    <p className="text-xs text-text-secondary-light dark:text-text-secondary-dark mt-0.5">Contato: {card.contact}</p>
                     {card.phone && <p className="text-xs text-text-secondary-light dark:text-text-secondary-dark">Tel: {card.phone}</p>}
+                    <p className="text-xs text-text-secondary-light dark:text-text-secondary-dark mt-0.5">Contato: {card.contact}</p>
                 </div>
                 <div className="flex items-center gap-1 ml-2">
                     {card.priority && (
@@ -244,11 +244,13 @@ export default function KanbanPage() {
             try {
                 setProductFetchError(null);
                 const token = localStorage.getItem("access_token") || undefined;
-                const data = await api<any[]>("/api/products", { token });
-                if (Array.isArray(data)) setAvailableProducts(data.filter(p => p.is_active));
+                const data = await api<any[]>("/api/products", { method: "GET", token });
+                if (Array.isArray(data)) {
+                    setAvailableProducts(data.filter(p => p.is_active));
+                }
             } catch (err) {
                 console.error("Failed to load products", err);
-                setProductFetchError("Erro ao carregar lista de produtos.");
+                setProductFetchError(`Erro ao carregar lista de produtos: ${err instanceof Error ? err.message : String(err)}`);
             }
         }
         fetchProducts();
@@ -824,6 +826,10 @@ export default function KanbanPage() {
                         <div>
                             <label className="block text-xs font-semibold text-text-secondary-light uppercase tracking-wider mb-1">Contato do WhatsApp</label>
                             <input value={editingCard.contact} onChange={(e) => setEditingCard({ ...editingCard, contact: e.target.value })} className="w-full px-3 py-2 border border-border-light dark:border-border-dark rounded-lg text-sm bg-white dark:bg-slate-800 focus:ring-1 focus:ring-primary focus:border-transparent" />
+                        </div>
+                        <div>
+                            <label className="block text-xs font-semibold text-text-secondary-light uppercase tracking-wider mb-1">Telefone</label>
+                            <input value={editingCard.phone || ""} onChange={(e) => setEditingCard({ ...editingCard, phone: formatPhone(e.target.value) })} placeholder="55 41 99999-9999" maxLength={16} className="w-full px-3 py-2 border border-border-light dark:border-border-dark rounded-lg text-sm bg-white dark:bg-slate-800 focus:ring-1 focus:ring-primary focus:border-transparent" />
                         </div>
                         <div className="flex gap-4">
                             <div className="flex-1">
