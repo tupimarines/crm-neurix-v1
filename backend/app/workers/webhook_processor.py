@@ -86,6 +86,7 @@ async def log_error_to_redis(redis_client, msg: str):
 async def process_uazapi_event(event: dict, supabase_client, redis_client):
     """Process a single Uazapi webhook event."""
     payload = event.get("payload", {})
+    await log_error_to_redis(redis_client, f"START process_uazapi_event. EventType: {payload.get('EventType')}")
     
     # ── Handle New Uazapi Format ──
     if payload.get("EventType") == "messages":
@@ -94,8 +95,11 @@ async def process_uazapi_event(event: dict, supabase_client, redis_client):
         msg_id = message_data.get("messageid", "")
         is_from_me = message_data.get("fromMe", False)
         
+        await log_error_to_redis(redis_client, f"Parsed message fields: chat_id={chat_id}, is_from_me={is_from_me}, isGroup={message_data.get('isGroup')}")
+        
         # Ignore invalid or group chats
         if not chat_id or "@g.us" in chat_id or message_data.get("isGroup"):
+            await log_error_to_redis(redis_client, "RETURN: Invalid chat or group chat")
             return
             
         content_type = message_data.get("type", "text")
@@ -109,12 +113,14 @@ async def process_uazapi_event(event: dict, supabase_client, redis_client):
 
     # ── Handle Old Baileys Format ──
     elif payload.get("event") == "messages.upsert":
+        await log_error_to_redis(redis_client, "Parsed as old Baileys format.")
         message_data = payload.get("data", {})
         chat_id = message_data.get("key", {}).get("remoteJid", "")
         msg_id = message_data.get("key", {}).get("id", "")
         is_from_me = message_data.get("key", {}).get("fromMe", False)
 
         if not chat_id or "@g.us" in chat_id:
+            await log_error_to_redis(redis_client, "RETURN: Invalid chat or group chat (Old Format)")
             return
 
         content_type, content_text, media_url, media_mimetype, media_filename = _extract_content_type(message_data)
@@ -123,6 +129,7 @@ async def process_uazapi_event(event: dict, supabase_client, redis_client):
         sender_phone = chat_id.replace("@s.whatsapp.net", "").replace("@g.us", "")
     else:
         # Unknown event type
+        await log_error_to_redis(redis_client, f"RETURN: Unknown event type: {payload.get('EventType')} / {payload.get('event')}")
         return
 
     # Get caption if available
@@ -135,6 +142,7 @@ async def process_uazapi_event(event: dict, supabase_client, redis_client):
     # Find lead associated with this chat
     lead_id = None
     lead_data = None
+    await log_error_to_redis(redis_client, f"Querying Supabase for lead with whatsapp_chat_id={chat_id}")
     try:
         lead_response = supabase_client.table("leads") \
             .select("id, stage, tenant_id") \
@@ -150,6 +158,7 @@ async def process_uazapi_event(event: dict, supabase_client, redis_client):
              await log_error_to_redis(redis_client, f"Error finding lead: {e}")
 
     if not lead_data and not is_from_me:
+        await log_error_to_redis(redis_client, "No lead data. Creating a new lead!")
         # Create a new lead! Find the first profile to act as tenant_id
         tenant_id = None
         try:
@@ -175,6 +184,7 @@ async def process_uazapi_event(event: dict, supabase_client, redis_client):
                     "stage": "contato_inicial",
                     "value": 0
                 }
+                await log_error_to_redis(redis_client, f"Inserting lead: {new_lead}")
                 lead_insert = supabase_client.table("leads").insert(new_lead).execute()
                 if lead_insert.data:
                     lead_id = lead_insert.data[0]["id"]
@@ -182,6 +192,10 @@ async def process_uazapi_event(event: dict, supabase_client, redis_client):
                     await log_error_to_redis(redis_client, f"Created new Lead from Uazapi: {lead_id}")
             except Exception as e:
                 await log_error_to_redis(redis_client, f"Failed to create new lead: {e}")
+    elif is_from_me:
+        await log_error_to_redis(redis_client, "is_from_me is True. Not creating lead.")
+    else:
+        await log_error_to_redis(redis_client, "Lead already exists!")
 
     # Save the message to chat_messages table
     try:
