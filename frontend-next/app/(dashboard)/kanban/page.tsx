@@ -28,11 +28,13 @@ interface KanbanCard {
     id: string;
     name: string;
     contact: string;
+    phone: string;
     value: string;
     priority: string;
     priorityColor: string;
     desc: string;
     stageId: string;
+    order_products?: { id: string; name: string; quantity: number; price: number }[];
 }
 
 interface KanbanStage {
@@ -58,6 +60,7 @@ function SortableCard({ card, onOpenChat, onOpenMenu }: { card: KanbanCard; onOp
                 <div className="flex-1 min-w-0">
                     <h3 className="text-sm font-bold truncate">{card.name}</h3>
                     <p className="text-xs text-text-secondary-light dark:text-text-secondary-dark mt-0.5">Contato: {card.contact}</p>
+                    {card.phone && <p className="text-xs text-text-secondary-light dark:text-text-secondary-dark">Tel: {card.phone}</p>}
                 </div>
                 <div className="flex items-center gap-1 ml-2">
                     {card.priority && (
@@ -91,6 +94,7 @@ function CardOverlay({ card }: { card: KanbanCard }) {
         <div data-kanban-card="true" className="bg-surface-light dark:bg-surface-dark p-4 rounded-lg shadow-2xl border-2 border-primary/40 w-[300px] rotate-2">
             <h3 className="text-sm font-bold">{card.name}</h3>
             <p className="text-xs text-text-secondary-light mt-1">Contato: {card.contact}</p>
+            {card.phone && <p className="text-xs text-text-secondary-light">Tel: {card.phone}</p>}
             <span className="text-sm font-bold text-green-600 mt-2 block">{card.value}</span>
         </div>
     );
@@ -155,6 +159,7 @@ export default function KanbanPage() {
                             id: string;
                             company_name: string;
                             contact_name: string;
+                            phone?: string | null;
                             value: number;
                             priority: string | null;
                             notes: string | null;
@@ -174,6 +179,7 @@ export default function KanbanPage() {
                             stageId,
                             name: lead.company_name,
                             contact: lead.contact_name,
+                            phone: lead.phone || "",
                             value: new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(lead.value || 0),
                             priority: pri?.label || "",
                             priorityColor: pri?.color || "",
@@ -199,7 +205,7 @@ export default function KanbanPage() {
     const [showNewStage, setShowNewStage] = useState(false);
     const [newStageName, setNewStageName] = useState("");
     const [showNewCard, setShowNewCard] = useState<string | null>(null);
-    const [newCard, setNewCard] = useState({ name: "", contact: "", value: "", priority: "Média" });
+    const [newCard, setNewCard] = useState({ name: "", contact: "", phone: "", value: "", priority: "Média" });
     const [showFilter, setShowFilter] = useState(false);
     const [filterPriority, setFilterPriority] = useState("");
     const [filterSort, setFilterSort] = useState("");
@@ -212,6 +218,42 @@ export default function KanbanPage() {
     const [isSaving, setIsSaving] = useState(false);
     const [editStage, setEditStage] = useState<string | null>(null);
     const [editStageName, setEditStageName] = useState("");
+
+    // Product data state
+    const [availableProducts, setAvailableProducts] = useState<{ id: string, name: string, price: number }[]>([]);
+    const [productFetchError, setProductFetchError] = useState<string | null>(null);
+    const [editSelectedProductId, setEditSelectedProductId] = useState("");
+    const [editSelectedQuantity, setEditSelectedQuantity] = useState<number | "">(1);
+
+    // Formata o telefone (Ref: F5)
+    const formatPhone = (val: string) => {
+        let v = val.replace(/\D/g, '');
+        if (!v) return "";
+        if (!v.startsWith('55') && v.length >= 10) v = '55' + v;
+        if (v.length > 13) v = v.substring(0, 13);
+
+        if (v.length <= 2) return v;
+        if (v.length <= 4) return v.replace(/^(\d{2})(\d{1,2})/, '$1 $2');
+        if (v.length <= 8) return v.replace(/^(\d{2})(\d{2})(\d{1,4})/, '$1 $2 $3');
+        return v.replace(/^(\d{2})(\d{2})(\d{4,5})(\d{4})$/, '$1 $2 $3-$4');
+    };
+
+    // Fetch products
+    useEffect(() => {
+        async function fetchProducts() {
+            try {
+                setProductFetchError(null);
+                const token = localStorage.getItem("access_token") || undefined;
+                const data = await api<any[]>("/api/products", { token });
+                if (Array.isArray(data)) setAvailableProducts(data.filter(p => p.is_active));
+            } catch (err) {
+                console.error("Failed to load products", err);
+                setProductFetchError("Erro ao carregar lista de produtos.");
+            }
+        }
+        fetchProducts();
+    }, []);
+
     // Chat modal state (reuses shared WhatsAppChat component)
     const [chatConfig, setChatConfig] = useState<{ leadId: string; leadName: string } | null>(null);
     // Delete confirmation state
@@ -379,11 +421,12 @@ export default function KanbanPage() {
         const priorityColorMap: Record<string, string> = { Alta: "red", Média: "blue", Baixa: "yellow", OK: "green" };
 
         try {
-            const created = await api<{ id: string; company_name: string; contact_name: string; value: number; priority: string | null; notes: string | null }>("/api/leads", {
+            const created = await api<{ id: string; company_name: string; contact_name: string; phone: string | null; value: number; priority: string | null; notes: string | null }>("/api/leads", {
                 method: "POST",
                 body: JSON.stringify({
                     company_name: newCard.name,
                     contact_name: newCard.contact || newCard.name,
+                    phone: newCard.phone || undefined,
                     stage: stageSlug,
                     value: parseCurrency(newCard.value),
                     priority: priorityApiMap[newCard.priority] || null,
@@ -393,6 +436,7 @@ export default function KanbanPage() {
 
             setCards([...cards, {
                 id: created.id, stageId, name: newCard.name, contact: newCard.contact || newCard.name,
+                phone: newCard.phone,
                 value: newCard.value || "R$ 0,00", priority: newCard.priority,
                 priorityColor: priorityColorMap[newCard.priority] || "blue", desc: "",
             }]);
@@ -402,11 +446,12 @@ export default function KanbanPage() {
             const id = `c${crypto.randomUUID()}`;
             setCards([...cards, {
                 id, stageId, name: newCard.name, contact: newCard.contact,
+                phone: newCard.phone,
                 value: newCard.value || "R$ 0,00", priority: newCard.priority,
                 priorityColor: priorityColorMap[newCard.priority] || "blue", desc: "",
             }]);
         }
-        setNewCard({ name: "", contact: "", value: "", priority: "Média" });
+        setNewCard({ name: "", contact: "", phone: "", value: "", priority: "Média" });
         setShowNewCard(null);
     }
 
@@ -427,9 +472,11 @@ export default function KanbanPage() {
             const payload = {
                 company_name: editingCard.name,
                 contact_name: editingCard.contact,
+                phone: editingCard.phone || undefined,
                 priority: priorityMap[editingCard.priority],
                 value: parseCurrency(editingCard.value),
                 notes: editingCard.desc,
+                order_products: editingCard.order_products || [],
             };
 
             // Call the PATCH endpoint to sync with Uazapi
@@ -629,6 +676,7 @@ export default function KanbanPage() {
                                                 <div className="bg-surface-light dark:bg-surface-dark p-3 rounded-lg border border-primary/40 shadow-sm space-y-2">
                                                     <input value={newCard.name} onChange={(e) => setNewCard({ ...newCard, name: e.target.value })} placeholder="Nome do negócio" className="w-full px-3 py-1.5 border border-border-light dark:border-border-dark rounded-lg text-sm bg-white dark:bg-slate-800 focus:ring-1 focus:ring-primary focus:border-transparent" />
                                                     <input value={newCard.contact} onChange={(e) => setNewCard({ ...newCard, contact: e.target.value })} placeholder="Nome do contato" className="w-full px-3 py-1.5 border border-border-light dark:border-border-dark rounded-lg text-sm bg-white dark:bg-slate-800 focus:ring-1 focus:ring-primary focus:border-transparent" />
+                                                    <input value={newCard.phone} onChange={(e) => setNewCard({ ...newCard, phone: formatPhone(e.target.value) })} placeholder="55 41 99999-9999" maxLength={16} className="w-full px-3 py-1.5 border border-border-light dark:border-border-dark rounded-lg text-sm bg-white dark:bg-slate-800 focus:ring-1 focus:ring-primary focus:border-transparent" />
                                                     <div className="flex gap-2">
                                                         <input value={newCard.value} onChange={(e) => setNewCard({ ...newCard, value: e.target.value })} placeholder="R$ 0,00" className="flex-1 px-3 py-1.5 border border-border-light dark:border-border-dark rounded-lg text-sm bg-white dark:bg-slate-800 focus:ring-1 focus:ring-primary focus:border-transparent" />
                                                         <select value={newCard.priority} onChange={(e) => setNewCard({ ...newCard, priority: e.target.value })} className="px-2 py-1.5 border border-border-light dark:border-border-dark rounded-lg text-sm bg-white dark:bg-slate-800">
@@ -788,6 +836,54 @@ export default function KanbanPage() {
                                     <option>Alta</option><option>Média</option><option>Baixa</option>
                                 </select>
                             </div>
+                        </div>
+                        <div>
+                            <label className="block text-xs font-semibold text-text-secondary-light uppercase tracking-wider mb-1">Produtos</label>
+                            {productFetchError ? (
+                                <div className="text-red-500 text-xs mb-2 p-2 bg-red-50 dark:bg-red-900/10 rounded">{productFetchError}</div>
+                            ) : null}
+                            <div className="flex gap-2 mb-2">
+                                <select value={editSelectedProductId} onChange={e => setEditSelectedProductId(e.target.value)} className="flex-1 px-3 py-2 border border-border-light dark:border-border-dark rounded-lg text-sm bg-white dark:bg-slate-800 focus:ring-1 focus:ring-primary">
+                                    <option value="">Selecione um produto</option>
+                                    {availableProducts.map(p => <option key={p.id} value={p.id}>{p.name} - {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(p.price)}</option>)}
+                                </select>
+                                <input type="number" min="1" value={editSelectedQuantity} onChange={e => setEditSelectedQuantity(e.target.value ? Number(e.target.value) : "")} className="w-20 px-3 py-2 border border-border-light dark:border-border-dark rounded-lg text-sm bg-white dark:bg-slate-800 focus:ring-1 focus:ring-primary" />
+                                <button type="button" onClick={() => {
+                                    if (!editSelectedProductId || !editSelectedQuantity || editSelectedQuantity < 1) return;
+                                    const p = availableProducts.find(x => x.id === editSelectedProductId);
+                                    if (!p) return;
+
+                                    const current = [...(editingCard.order_products || [])];
+                                    const existingIdx = current.findIndex(x => x.id === p.id);
+                                    if (existingIdx >= 0) {
+                                        current[existingIdx] = {
+                                            ...current[existingIdx],
+                                            quantity: current[existingIdx].quantity + (Number(editSelectedQuantity) || 1)
+                                        };
+                                    } else {
+                                        current.push({ id: p.id, name: p.name, price: p.price, quantity: (Number(editSelectedQuantity) || 1) });
+                                    }
+                                    setEditingCard({ ...editingCard, order_products: current });
+                                    setEditSelectedProductId("");
+                                    setEditSelectedQuantity(1);
+                                }} className="bg-primary text-white px-3 border border-transparent rounded-lg text-sm font-medium hover:bg-primary-hover">Add</button>
+                            </div>
+                            {(editingCard.order_products || []).length > 0 && (
+                                <div className="space-y-1 mb-3">
+                                    {(editingCard.order_products || []).map((op, idx) => (
+                                        <div key={idx} className="flex justify-between items-center text-sm p-2 bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 mx-1 rounded">
+                                            <span>{op.quantity}x {op.name}</span>
+                                            <div className="flex items-center gap-2">
+                                                <span>{new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(op.quantity * op.price)}</span>
+                                                <button type="button" onClick={() => {
+                                                    const filtered = editingCard.order_products!.filter((_, i) => i !== idx);
+                                                    setEditingCard({ ...editingCard, order_products: filtered });
+                                                }} className="text-red-500 material-symbols-outlined text-[16px]">close</button>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
                         </div>
                         <div>
                             <label className="block text-xs font-semibold text-text-secondary-light uppercase tracking-wider mb-1">Observações</label>

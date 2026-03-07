@@ -25,11 +25,13 @@ class LeadStage(str, Enum):
 class LeadBase(BaseModel):
     company_name: str = Field(..., min_length=1, max_length=200, description="Nome da empresa")
     contact_name: str = Field(..., min_length=1, max_length=200, description="Nome do contato")
+    phone: Optional[str] = Field(None, max_length=50, description="Telefone do contato")
     stage: LeadStage = LeadStage.CONTATO_INICIAL
     priority: Optional[LeadPriority] = None
     value: float = Field(default=0.0, ge=0, description="Valor estimado em R$")
     notes: Optional[str] = Field(None, max_length=1000, description="Observações sobre o lead")
     whatsapp_chat_id: Optional[str] = None
+    order_products: Optional[list[dict]] = Field(None, description="Produtos e quantidades selecionados")
 
 
 class LeadCreate(LeadBase):
@@ -39,9 +41,11 @@ class LeadCreate(LeadBase):
 class LeadUpdate(BaseModel):
     company_name: Optional[str] = None
     contact_name: Optional[str] = None
+    phone: Optional[str] = None
     priority: Optional[LeadPriority] = None
     value: Optional[float] = None
     notes: Optional[str] = None
+    order_products: Optional[list[dict]] = None
 
 
 class LeadMoveStage(BaseModel):
