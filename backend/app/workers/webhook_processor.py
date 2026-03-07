@@ -166,7 +166,8 @@ async def process_uazapi_event(event: dict, supabase_client, redis_client):
         try:
             if instance_token:
                 # Look up the tenant_id from settings using the instance_token
-                setting_resp = supabase_client.table("settings").select("tenant_id").eq("key", "uazapi_instance_token").eq("value", instance_token).limit(1).execute()
+                # The 'value' column is JSONB, so we must quote strings correctly
+                setting_resp = supabase_client.table("settings").select("tenant_id").eq("key", "uazapi_instance_token").eq("value", f'"{instance_token}"').limit(1).execute()
                 if setting_resp.data:
                     tenant_id = setting_resp.data[0]["tenant_id"]
                     await log_error_to_redis(redis_client, f"Found tenant_id {tenant_id} via instance_token match.")
