@@ -137,3 +137,19 @@ async def debug_queue(redis: aioredis.Redis = Depends(get_redis)):
         }
     except Exception as e:
         return {"error": str(e)}
+
+@router.get("/force-delete/{phone}")
+async def force_delete_test_lead(phone: str, settings: Settings = Depends(get_settings)):
+    """Temporary endpoint to hard-delete a lead and its messages by phone number to bypass RLS and FK constraints."""
+    from supabase import create_client
+    supabase = create_client(settings.SUPABASE_URL, settings.SUPABASE_SERVICE_ROLE_KEY)
+    
+    chat_id = f"{phone}@s.whatsapp.net"
+    try:
+        # 1. Delete all messages (bypasses foreign key restraint)
+        supabase.table("chat_messages").delete().eq("whatsapp_chat_id", chat_id).execute()
+        # 2. Delete the lead
+        resp = supabase.table("leads").delete().eq("whatsapp_chat_id", chat_id).execute()
+        return {"message": "Lead and messages hard-deleted successfully!", "deleted_leads": resp.data}
+    except Exception as e:
+        return {"error": str(e)}
