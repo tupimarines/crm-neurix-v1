@@ -105,50 +105,92 @@ function DroppableStage({ id, children, className }: { id: string, children: Rea
     );
 }
 
+// Stage slug to stageId mapping
+const STAGE_MAP: Record<string, string> = {
+    contato_inicial: "s1",
+    escolhendo_sabores: "s2",
+    aguardando_pagamento: "s3",
+    enviado: "s4",
+};
+const STAGE_ID_TO_SLUG: Record<string, string> = {
+    s1: "contato_inicial",
+    s2: "escolhendo_sabores",
+    s3: "aguardando_pagamento",
+    s4: "enviado",
+};
+
+const PRIORITY_MAP: Record<string, { label: string; color: string }> = {
+    alta: { label: "Alta", color: "red" },
+    media: { label: "Média", color: "blue" },
+    baixa: { label: "Baixa", color: "yellow" },
+};
+
 export default function KanbanPage() {
     const dndId = useId();
 
     // State
     const [isMounted, setIsMounted] = useState(false);
-    const [stages, setStages] = useState<KanbanStage[]>([]);
+    const [isLoading, setIsLoading] = useState(true);
+    const [stages, setStages] = useState<KanbanStage[]>([
+        { id: "s1", title: "Contato Inicial" },
+        { id: "s2", title: "Escolhendo Sabores" },
+        { id: "s3", title: "Aguardando Pagamento" },
+        { id: "s4", title: "Enviado" },
+    ]);
     const [cards, setCards] = useState<KanbanCard[]>([]);
 
+    // Fetch real leads from API on mount
     useEffect(() => {
         setIsMounted(true);
-        const savedStages = localStorage.getItem("kanban_stages");
-        const savedCards = localStorage.getItem("kanban_cards");
+        async function fetchKanban() {
+            setIsLoading(true);
+            try {
+                const token = localStorage.getItem("access_token") || undefined;
+                const data = await api<{
+                    columns: Array<{
+                        stage: string;
+                        label: string;
+                        leads: Array<{
+                            id: string;
+                            company_name: string;
+                            contact_name: string;
+                            value: number;
+                            priority: string | null;
+                            notes: string | null;
+                            stage: string;
+                            whatsapp_chat_id: string | null;
+                        }>;
+                    }>
+                }>("/api/leads/kanban", { method: "GET", token });
 
-        if (savedStages) setStages(JSON.parse(savedStages));
-        else {
-            setStages([
-                { id: "s1", title: "Contato Inicial" },
-                { id: "s2", title: "Escolhendo Sabores" },
-                { id: "s3", title: "Aguardando Pagamento" },
-                { id: "s4", title: "Enviado" },
-            ]);
+                const allCards: KanbanCard[] = [];
+                for (const col of data.columns) {
+                    const stageId = STAGE_MAP[col.stage] || col.stage;
+                    for (const lead of col.leads) {
+                        const pri = lead.priority ? PRIORITY_MAP[lead.priority] : null;
+                        allCards.push({
+                            id: lead.id,
+                            stageId,
+                            name: lead.company_name,
+                            contact: lead.contact_name,
+                            value: new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(lead.value || 0),
+                            priority: pri?.label || "",
+                            priorityColor: pri?.color || "",
+                            desc: lead.notes || "",
+                        });
+                    }
+                }
+                setCards(allCards);
+            } catch (err) {
+                console.error("Failed to fetch kanban data:", err);
+            } finally {
+                setIsLoading(false);
+            }
         }
-
-        if (savedCards) setCards(JSON.parse(savedCards));
-        else {
-            setCards([
-                { id: "c1", stageId: "s1", name: "Empório Natural", contact: "Ana Silva", value: "R$ 1.200,00", priority: "Alta", priorityColor: "red", desc: "Interesse em geleias de morango e frutas vermelhas." },
-                { id: "c2", stageId: "s1", name: "Mercado Verde", contact: "Carlos", value: "R$ 850,00", priority: "Média", priorityColor: "blue", desc: "" },
-                { id: "c3", stageId: "s1", name: "Padaria Central", contact: "Roberta", value: "R$ 1.400,00", priority: "", priorityColor: "", desc: "" },
-                { id: "c4", stageId: "s2", name: "Rede Sabor", contact: "Marcos", value: "R$ 2.500,00", priority: "Baixa", priorityColor: "yellow", desc: "Solicitou amostras de pimenta e damasco." },
-                { id: "c5", stageId: "s2", name: "Café Colonial", contact: "Juliana", value: "R$ 2.600,00", priority: "Alta", priorityColor: "red", desc: "" },
-                { id: "c6", stageId: "s3", name: "Boutique Gourmet", contact: "Fernanda", value: "R$ 4.200,00", priority: "Alta", priorityColor: "red", desc: "Pedido #4092 - PIX pendente." },
-                { id: "c7", stageId: "s4", name: "Loja Orgânica", contact: "Pedro", value: "R$ 1.100,00", priority: "OK", priorityColor: "green", desc: "" },
-            ]);
-        }
+        fetchKanban();
     }, []);
 
-    useEffect(() => {
-        if (isMounted) localStorage.setItem("kanban_stages", JSON.stringify(stages));
-    }, [stages, isMounted]);
-
-    useEffect(() => {
-        if (isMounted) localStorage.setItem("kanban_cards", JSON.stringify(cards));
-    }, [cards, isMounted]);
+    // Removed localStorage sync — data now comes from API
 
 
 
@@ -277,6 +319,19 @@ export default function KanbanPage() {
                 return [...others, ...reordered];
             });
         }
+
+        // Sync stage change with backend
+        if (activeCardObj) {
+            const newStageSlug = STAGE_ID_TO_SLUG[activeCardObj.stageId];
+            if (newStageSlug) {
+                const token = localStorage.getItem("access_token") || undefined;
+                api(`/api/leads/${activeCardObj.id}/stage`, {
+                    method: 'PATCH',
+                    body: JSON.stringify({ stage: newStageSlug }),
+                    token
+                }).catch(err => console.warn("Failed to sync stage move:", err));
+            }
+        }
     }
 
     // Actions
@@ -288,15 +343,41 @@ export default function KanbanPage() {
         setShowNewStage(false);
     }
 
-    function addCard(stageId: string) {
+    async function addCard(stageId: string) {
         if (!newCard.name.trim()) return;
-        const id = `c${crypto.randomUUID()}`;
+        const token = localStorage.getItem("access_token") || undefined;
+        const stageSlug = STAGE_ID_TO_SLUG[stageId] || "contato_inicial";
+        const priorityApiMap: Record<string, string> = { Alta: "alta", Média: "media", Baixa: "baixa" };
         const priorityColorMap: Record<string, string> = { Alta: "red", Média: "blue", Baixa: "yellow", OK: "green" };
-        setCards([...cards, {
-            id, stageId, name: newCard.name, contact: newCard.contact,
-            value: newCard.value || "R$ 0,00", priority: newCard.priority,
-            priorityColor: priorityColorMap[newCard.priority] || "blue", desc: "",
-        }]);
+
+        try {
+            const created = await api<{ id: string; company_name: string; contact_name: string; value: number; priority: string | null; notes: string | null }>("/api/leads", {
+                method: "POST",
+                body: JSON.stringify({
+                    company_name: newCard.name,
+                    contact_name: newCard.contact || newCard.name,
+                    stage: stageSlug,
+                    value: parseCurrency(newCard.value),
+                    priority: priorityApiMap[newCard.priority] || null,
+                }),
+                token
+            });
+
+            setCards([...cards, {
+                id: created.id, stageId, name: newCard.name, contact: newCard.contact || newCard.name,
+                value: newCard.value || "R$ 0,00", priority: newCard.priority,
+                priorityColor: priorityColorMap[newCard.priority] || "blue", desc: "",
+            }]);
+        } catch (err) {
+            console.error("Failed to create lead:", err);
+            // Fallback: add locally anyway
+            const id = `c${crypto.randomUUID()}`;
+            setCards([...cards, {
+                id, stageId, name: newCard.name, contact: newCard.contact,
+                value: newCard.value || "R$ 0,00", priority: newCard.priority,
+                priorityColor: priorityColorMap[newCard.priority] || "blue", desc: "",
+            }]);
+        }
         setNewCard({ name: "", contact: "", value: "", priority: "Média" });
         setShowNewCard(null);
     }
@@ -443,7 +524,14 @@ export default function KanbanPage() {
             </header>
 
             {/* Main content */}
-            {viewMode === "kanban" ? (
+            {isLoading ? (
+                <div className="flex-1 flex items-center justify-center">
+                    <div className="text-center">
+                        <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary mx-auto mb-3"></div>
+                        <p className="text-sm text-text-secondary-light dark:text-text-secondary-dark">Carregando leads...</p>
+                    </div>
+                </div>
+            ) : viewMode === "kanban" ? (
                 <DndContext id={dndId} sensors={sensors} collisionDetection={closestCenter} onDragStart={handleDragStart} onDragOver={handleDragOver} onDragEnd={handleDragEnd}>
                     <div
                         className="flex-1 overflow-x-auto overflow-y-hidden p-6 cursor-grab active:cursor-grabbing"
