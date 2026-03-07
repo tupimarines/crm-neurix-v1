@@ -190,14 +190,17 @@ async def process_uazapi_event(event: dict, supabase_client, redis_client):
 
         if tenant_id:
             try:
-                # Format phone as DDI DDD NUMBER (e.g. "55 41 99580-2989")
+                # Format phone as DDI DDD 9NUMBER (e.g. "55 41 99580-2989")
                 formatted_phone = ""
                 if sender_phone:
                     p = sender_phone.lstrip("+")
-                    if len(p) >= 12:
-                        formatted_phone = f"{p[:2]} {p[2:4]} {p[4:9]}-{p[9:]}"
+                    # Enforce 9-digit mobile: insert 9 after DDD if only 8 digits
+                    if len(p) == 12 and p.startswith('55'):
+                        p = p[:4] + '9' + p[4:]
+                    if len(p) >= 13 and p.startswith('55'):
+                        formatted_phone = f"{p[:2]} {p[2:4]} {p[4:9]}-{p[9:13]}"
                     elif len(p) >= 10:
-                        formatted_phone = f"55 {p[:2]} {p[2:7]}-{p[7:]}"
+                        formatted_phone = f"55 {p[:2]} 9{p[2:6]}-{p[6:10]}"
                     else:
                         formatted_phone = p
 

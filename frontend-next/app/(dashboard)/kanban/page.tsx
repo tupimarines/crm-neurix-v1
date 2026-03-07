@@ -225,17 +225,22 @@ export default function KanbanPage() {
     const [editSelectedProductId, setEditSelectedProductId] = useState("");
     const [editSelectedQuantity, setEditSelectedQuantity] = useState<number | "">(1);
 
-    // Formata o telefone (Ref: F5)
+    // Formata o telefone para padrão BR: 55 DDD 9XXXX-XXXX
     const formatPhone = (val: string) => {
         let v = val.replace(/\D/g, '');
         if (!v) return "";
+        // Auto-prefix DDI 55
         if (!v.startsWith('55') && v.length >= 10) v = '55' + v;
+        // Enforce 9-digit mobile: insert 9 after DDD if missing
+        if (v.length === 12 && v.startsWith('55')) {
+            v = v.slice(0, 4) + '9' + v.slice(4);
+        }
         if (v.length > 13) v = v.substring(0, 13);
 
         if (v.length <= 2) return v;
         if (v.length <= 4) return v.replace(/^(\d{2})(\d{1,2})/, '$1 $2');
-        if (v.length <= 8) return v.replace(/^(\d{2})(\d{2})(\d{1,4})/, '$1 $2 $3');
-        return v.replace(/^(\d{2})(\d{2})(\d{4,5})(\d{4})$/, '$1 $2 $3-$4');
+        if (v.length <= 9) return v.replace(/^(\d{2})(\d{2})(\d{1,5})/, '$1 $2 $3');
+        return v.replace(/^(\d{2})(\d{2})(\d{5})(\d{0,4})/, '$1 $2 $3-$4');
     };
 
     // Fetch products
@@ -817,7 +822,7 @@ export default function KanbanPage() {
             {editingCard && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
                     <div className="absolute inset-0 bg-slate-900/30 backdrop-blur-sm" onClick={() => setEditingCard(null)} />
-                    <div className="relative bg-surface-light dark:bg-surface-dark rounded-xl shadow-2xl border border-border-light dark:border-border-dark w-full max-w-md p-6 space-y-4">
+                    <div className="relative bg-surface-light dark:bg-surface-dark rounded-xl shadow-2xl border border-border-light dark:border-border-dark w-full max-w-lg p-6 space-y-4 max-h-[90vh] overflow-y-auto">
                         <h3 className="text-lg font-bold">Editar Negócio</h3>
                         <div>
                             <label className="block text-xs font-semibold text-text-secondary-light uppercase tracking-wider mb-1">Empresa / Negócio</label>
