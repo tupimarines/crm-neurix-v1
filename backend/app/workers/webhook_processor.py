@@ -76,28 +76,44 @@ def _extract_content_type(message_data: dict) -> tuple[str, str, str | None, str
 async def process_uazapi_event(event: dict, supabase_client):
     """Process a single Uazapi webhook event."""
     payload = event.get("payload", {})
-    message_data = payload.get("data", {})
-    chat_id = message_data.get("key", {}).get("remoteJid", "")
-    is_from_me = message_data.get("key", {}).get("fromMe", False)
-    msg_id = message_data.get("key", {}).get("id", "")
+    
+    # ── Handle New Uazapi Format ──
+    if payload.get("EventType") == "messages":
+        message_data = payload.get("message", {})
+        chat_id = message_data.get("chatid", "")
+        msg_id = message_data.get("messageid", "")
+        is_from_me = message_data.get("fromMe", False)
+        
+        # Ignore invalid or group chats
+        if not chat_id or "@g.us" in chat_id or message_data.get("isGroup"):
+            return
+            
+        content_type = message_data.get("type", "text")
+        content_text = message_data.get("text", message_data.get("content", ""))
+        media_url = None # Needs adaptation if Uazapi v2 sends file urls differently
+        media_mimetype = message_data.get("mediaType", None)
+        media_filename = None
+        
+        sender_name = message_data.get("senderName", "")
+        sender_phone = chat_id.replace("@s.whatsapp.net", "").replace("@g.us", "")
 
-    if not chat_id:
+    # ── Handle Old Baileys Format ──
+    elif payload.get("event") == "messages.upsert":
+        message_data = payload.get("data", {})
+        chat_id = message_data.get("key", {}).get("remoteJid", "")
+        msg_id = message_data.get("key", {}).get("id", "")
+        is_from_me = message_data.get("key", {}).get("fromMe", False)
+
+        if not chat_id or "@g.us" in chat_id:
+            return
+
+        content_type, content_text, media_url, media_mimetype, media_filename = _extract_content_type(message_data)
+        
+        sender_name = message_data.get("pushName", "")
+        sender_phone = chat_id.replace("@s.whatsapp.net", "").replace("@g.us", "")
+    else:
+        # Unknown event type
         return
-
-    # Ignore non-message events
-    if payload.get("event") != "messages.upsert":
-        return
-
-    # Ignore groups
-    if "@g.us" in chat_id:
-        return
-
-    # Extract content type and media info
-    content_type, content_text, media_url, media_mimetype, media_filename = _extract_content_type(message_data)
-
-    # Extract sender info
-    sender_name = message_data.get("pushName", "")
-    sender_phone = chat_id.replace("@s.whatsapp.net", "").replace("@g.us", "")
 
     # Get caption if available
     caption = None
