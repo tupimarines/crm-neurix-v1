@@ -307,7 +307,7 @@ export default function KanbanPage() {
             // Query por stage agrupando leads:
             const { data: stagesData, error: stagesError } = await supabase
                 .from('pipeline_stages')
-                .select('name, order_position')
+                .select('id, name, order_position')
                 .eq('tenant_id', tenantId)
                 .order('order_position');
 
@@ -331,29 +331,43 @@ export default function KanbanPage() {
 
             if (ordersError) throw ordersError;
 
-            const sData = stagesData || [];
+            // Use database stages if available, otherwise fallback to UI stages state
+            let sData = stagesData && stagesData.length > 0 ? stagesData : stages.map(s => ({ id: s.id, name: s.title, order_position: 0 }));
             const allLeadsThisMonth = leadsData || [];
             // For metrics like "Pipeline Value" and "Active Deals", we only want non-deleted, non-archived leads
             const activeLeadsThisMonth = allLeadsThisMonth.filter((l: any) => !l.archived && !l.deleted);
 
-            const report = sData.map((s: any) => ({
-                stage: s.name,
-                count: activeLeadsThisMonth.filter((l: any) => l.stage === s.name).length,
-                total: activeLeadsThisMonth.filter((l: any) => l.stage === s.name)
-                    .reduce((a: number, l: any) => a + (Number(l.value) || 0), 0)
-            }));
+            const report = sData.map((s: any) => {
+                const leadsInStage = activeLeadsThisMonth.filter((l: any) => {
+                    const lStage = l.stage?.toLowerCase();
+                    const sName = s.name?.toLowerCase();
+                    // Match by name, normalized slug, or ID
+                    return lStage === sName ||
+                        lStage === sName?.replace(/\s+/g, '_') ||
+                        lStage === s.name ||
+                        lStage === STAGE_ID_TO_SLUG[s.id as keyof typeof STAGE_ID_TO_SLUG];
+                });
 
+                return {
+                    stage: s.name,
+                    count: leadsInStage.length,
+                    total: leadsInStage.reduce((a: number, l: any) => a + (Number(l.value) || 0), 0)
+                };
+            });
 
             // Calculate conversion rate
-            // First stage is the one with lowest order_position
             const sortedStages = [...sData].sort((a: any, b: any) => a.order_position - b.order_position);
             const firstStage = sortedStages.length > 0 ? sortedStages[0].name : "Contato Inicial";
-            // Confirmed stage is usually the last one, or second to last if there's an "Archived" stage
             const confirmedStage = sortedStages.length > 0 ? sortedStages[sortedStages.length - 1].name : "Enviado";
 
-            // Conversion looks at ALL leads generated this month (even if they were archived later)
-            const initialCount = allLeadsThisMonth.length > 0 ? allLeadsThisMonth.length : 0; // Everything starts at the funnel
-            const confirmedCount = allLeadsThisMonth.filter((l: any) => l.stage === confirmedStage || l.stage?.toLowerCase().includes('pagamento')).length;
+            const initialCount = allLeadsThisMonth.length > 0 ? allLeadsThisMonth.length : 0;
+            const confirmedCount = allLeadsThisMonth.filter((l: any) => {
+                const lStage = l.stage?.toLowerCase() || '';
+                return lStage === confirmedStage?.toLowerCase() ||
+                    lStage.includes('pagamento') ||
+                    lStage.includes('confirmado');
+            }).length;
+
             const conversionRate = initialCount > 0 ? ((confirmedCount / initialCount) * 100).toFixed(1) + '%' : '0%';
 
             const totalLeads = allLeadsThisMonth.length;
@@ -366,8 +380,9 @@ export default function KanbanPage() {
                 for (const order of ordersData) {
                     const prods = order.products_json || [];
                     for (const p of prods) {
-                        if (p.name && p.qty) {
-                            productSales[p.name] = (productSales[p.name] || 0) + Number(p.qty);
+                        const qty = Number(p.quantity || p.qty || 0);
+                        if (p.name && qty > 0) {
+                            productSales[p.name] = (productSales[p.name] || 0) + qty;
                         }
                     }
                 }
