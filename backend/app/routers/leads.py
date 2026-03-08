@@ -31,24 +31,59 @@ async def get_kanban_board(
     supabase: SupabaseClient = Depends(get_supabase),
 ):
     """Get all leads organized as a Kanban board with columns."""
+    # 1. Fetch Stages
+    stages_response = supabase.table("pipeline_stages") \
+        .select("*") \
+        .eq("tenant_id", user.id) \
+        .order("order_position") \
+        .execute()
+    
+    stages_data = stages_response.data
+    
+    # Default stages if none exist
+    if not stages_data:
+        stages_data = [
+            {"id": "s1", "name": "Contato Inicial", "order_position": 0},
+            {"id": "s2", "name": "Escolhendo Sabores", "order_position": 1},
+            {"id": "s3", "name": "Aguardando Pagamento", "order_position": 2},
+            {"id": "s4", "name": "Enviado", "order_position": 3},
+        ]
+
+    # 2. Fetch Leads
     response = supabase.table("leads") \
         .select("*") \
         .eq("tenant_id", user.id) \
+        .eq("archived", False) \
+        .eq("deleted", False) \
         .order("created_at", desc=False) \
         .execute()
 
-    leads_by_stage: dict[LeadStage, list] = {stage: [] for stage in LeadStage}
-
+    # 3. Group Leads by Stage Name (or slug)
+    leads_by_stage: dict[str, list] = {s["name"]: [] for s in stages_data}
+    # Also support mapping by ID if needed, but leads table uses string names
+    
     for row in response.data:
-        stage = LeadStage(row.get("stage", LeadStage.CONTATO_INICIAL))
-        leads_by_stage[stage].append(LeadResponse(**row))
+        stage_val = row.get("stage", "Contato Inicial")
+        # Direct match or case-insensitive match
+        matched = False
+        for s_name in leads_by_stage.keys():
+            if stage_val.lower() == s_name.lower():
+                leads_by_stage[s_name].append(LeadResponse(**row))
+                matched = True
+                break
+        
+        if not matched and stages_data:
+            # Fallback to first stage if no match found
+            leads_by_stage[stages_data[0]["name"]].append(LeadResponse(**row))
 
+    # 4. Build Columns
     columns = []
-    for stage in LeadStage:
-        stage_leads = leads_by_stage[stage]
+    for stage_info in stages_data:
+        name = stage_info["name"]
+        stage_leads = leads_by_stage[name]
         columns.append(KanbanColumn(
-            stage=stage,
-            label=STAGE_LABELS[stage],
+            stage=name,
+            label=name,
             count=len(stage_leads),
             total_value=sum(l.value for l in stage_leads),
             leads=stage_leads,
@@ -59,7 +94,7 @@ async def get_kanban_board(
 
 @router.get("/", response_model=list[LeadResponse])
 async def list_leads(
-    stage: Optional[LeadStage] = None,
+    stage: Optional[str] = None,
     search: Optional[str] = Query(None, min_length=1),
     user=Depends(get_current_user),
     supabase: SupabaseClient = Depends(get_supabase),
@@ -68,7 +103,7 @@ async def list_leads(
     query = supabase.table("leads").select("*").eq("tenant_id", user.id).order("created_at", desc=True)
 
     if stage:
-        query = query.eq("stage", stage.value)
+        query = query.eq("stage", stage)
     if search:
         query = query.or_(f"company_name.ilike.%{search}%,contact_name.ilike.%{search}%")
 
@@ -137,7 +172,7 @@ async def move_lead_stage(
 ):
     """Move a lead to a different Kanban column/stage."""
     response = supabase.table("leads") \
-        .update({"stage": payload.stage.value}) \
+        .update({"stage": payload.stage}) \
         .eq("id", lead_id) \
         .eq("tenant_id", user.id) \
         .execute()

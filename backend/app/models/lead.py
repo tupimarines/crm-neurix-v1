@@ -26,7 +26,7 @@ class LeadBase(BaseModel):
     company_name: str = Field(..., min_length=1, max_length=200, description="Nome da empresa")
     contact_name: str = Field(..., min_length=1, max_length=200, description="Nome do contato")
     phone: Optional[str] = Field(None, max_length=50, description="Telefone do contato")
-    stage: LeadStage = LeadStage.CONTATO_INICIAL
+    stage: str = "contato_inicial"
     priority: Optional[LeadPriority] = None
     value: float = Field(default=0.0, ge=0, description="Valor estimado em R$")
     notes: Optional[str] = Field(None, max_length=1000, description="Observações sobre o lead")
@@ -49,7 +49,7 @@ class LeadUpdate(BaseModel):
 
 
 class LeadMoveStage(BaseModel):
-    stage: LeadStage
+    stage: str
 
 
 class LeadResponse(LeadBase):
@@ -62,7 +62,7 @@ class LeadResponse(LeadBase):
 
 
 class KanbanColumn(BaseModel):
-    stage: LeadStage
+    stage: str
     label: str
     count: int
     total_value: float

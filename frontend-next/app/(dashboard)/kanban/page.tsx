@@ -111,20 +111,6 @@ function DroppableStage({ id, children, className }: { id: string, children: Rea
     );
 }
 
-// Stage slug to stageId mapping
-const STAGE_MAP: Record<string, string> = {
-    contato_inicial: "s1",
-    escolhendo_sabores: "s2",
-    aguardando_pagamento: "s3",
-    enviado: "s4",
-};
-const STAGE_ID_TO_SLUG: Record<string, string> = {
-    s1: "contato_inicial",
-    s2: "escolhendo_sabores",
-    s3: "aguardando_pagamento",
-    s4: "enviado",
-};
-
 const PRIORITY_MAP: Record<string, { label: string; color: string }> = {
     alta: { label: "Alta", color: "red" },
     media: { label: "Média", color: "blue" },
@@ -137,15 +123,10 @@ export default function KanbanPage() {
     // State
     const [isMounted, setIsMounted] = useState(false);
     const [isLoading, setIsLoading] = useState(true);
-    const [stages, setStages] = useState<KanbanStage[]>([
-        { id: "s1", title: "Contato Inicial" },
-        { id: "s2", title: "Escolhendo Sabores" },
-        { id: "s3", title: "Aguardando Pagamento" },
-        { id: "s4", title: "Enviado" },
-    ]);
+    const [stages, setStages] = useState<KanbanStage[]>([]);
     const [cards, setCards] = useState<KanbanCard[]>([]);
 
-    // Fetch real leads from API on mount
+    // Fetch real leads and stages from API on mount
     useEffect(() => {
         setIsMounted(true);
         async function fetchKanban() {
@@ -171,9 +152,16 @@ export default function KanbanPage() {
                     }>
                 }>("/api/leads/kanban", { method: "GET", token });
 
+                // Update stages state from columns
+                const fetchedStages: KanbanStage[] = data.columns.map((col) => ({
+                    id: `s-${col.stage}`,
+                    title: col.label
+                }));
+                setStages(fetchedStages);
+
                 const allCards: KanbanCard[] = [];
                 for (const col of data.columns) {
-                    const stageId = STAGE_MAP[col.stage] || col.stage;
+                    const stageId = `s-${col.stage}`;
                     for (const lead of col.leads) {
                         const pri = lead.priority ? PRIORITY_MAP[lead.priority] : null;
                         allCards.push({
@@ -344,8 +332,7 @@ export default function KanbanPage() {
                     // Match by name, normalized slug, or ID
                     return lStage === sName ||
                         lStage === sName?.replace(/\s+/g, '_') ||
-                        lStage === s.name ||
-                        lStage === STAGE_ID_TO_SLUG[s.id as keyof typeof STAGE_ID_TO_SLUG];
+                        lStage === s.name;
                 });
 
                 return {
@@ -562,12 +549,15 @@ export default function KanbanPage() {
 
         // Sync stage change with backend
         if (activeCardObj) {
-            const newStageSlug = STAGE_ID_TO_SLUG[activeCardObj.stageId];
-            if (newStageSlug) {
+            const newStageId = activeCardObj.stageId;
+            const targetStage = stages.find(s => s.id === newStageId);
+            const newStageName = targetStage ? targetStage.title : newStageId.replace(/^s-/, '');
+
+            if (newStageName) {
                 const token = localStorage.getItem("access_token") || undefined;
                 api(`/api/leads/${activeCardObj.id}/stage`, {
                     method: 'PATCH',
-                    body: JSON.stringify({ stage: newStageSlug }),
+                    body: JSON.stringify({ stage: newStageName }),
                     token
                 }).catch(err => console.warn("Failed to sync stage move:", err));
             }
@@ -575,18 +565,37 @@ export default function KanbanPage() {
     }
 
     // Actions
-    function addStage() {
+    async function addStage() {
         if (!newStageName.trim()) return;
-        const id = `s${crypto.randomUUID()}`;
-        setStages([...stages, { id, title: newStageName.trim() }]);
-        setNewStageName("");
-        setShowNewStage(false);
+        const name = newStageName.trim();
+        try {
+            const token = localStorage.getItem("access_token") || undefined;
+            const { data: { user } } = await supabase.auth.getUser();
+            if (!user) return;
+            const { data: profile } = await supabase.from("profiles").select("tenant_id").eq("id", user.id).single();
+            const tenantId = profile?.tenant_id || user.id;
+
+            const { data: newS, error } = await supabase.from('pipeline_stages').insert({
+                tenant_id: tenantId,
+                name: name,
+                order_position: stages.length
+            }).select().single();
+
+            if (error) throw error;
+
+            setStages([...stages, { id: `s-${name}`, title: name }]);
+            setNewStageName("");
+            setShowNewStage(false);
+        } catch (err) {
+            console.error("Failed to add stage:", err);
+        }
     }
 
     async function addCard(stageId: string) {
         if (!newCard.name.trim()) return;
         const token = localStorage.getItem("access_token") || undefined;
-        const stageSlug = STAGE_ID_TO_SLUG[stageId] || "contato_inicial";
+        const targetStage = stages.find(s => s.id === stageId);
+        const stageName = targetStage ? targetStage.title : stageId.replace(/^s-/, '');
         const priorityApiMap: Record<string, string> = { Alta: "alta", Média: "media", Baixa: "baixa" };
         const priorityColorMap: Record<string, string> = { Alta: "red", Média: "blue", Baixa: "yellow", OK: "green" };
 
@@ -597,7 +606,7 @@ export default function KanbanPage() {
                     company_name: newCard.name,
                     contact_name: newCard.contact || newCard.name,
                     phone: newCard.phone || undefined,
-                    stage: stageSlug,
+                    stage: stageName,
                     value: parseCurrency(newCard.value),
                     priority: priorityApiMap[newCard.priority] || null,
                     products_json: newCard.products_json,
