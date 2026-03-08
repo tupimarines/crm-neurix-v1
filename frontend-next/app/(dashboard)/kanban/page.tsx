@@ -357,15 +357,25 @@ export default function KanbanPage() {
 
             // Calculate conversion rate
             const sortedStages = [...sData].sort((a: any, b: any) => a.order_position - b.order_position);
-            const firstStage = sortedStages.length > 0 ? sortedStages[0].name : "Contato Inicial";
-            const confirmedStage = sortedStages.length > 0 ? sortedStages[sortedStages.length - 1].name : "Enviado";
+            const confirmedStageIndex = sortedStages.findIndex(s =>
+                s.name?.toLowerCase().includes('pagamento confirmado') ||
+                s.name?.toLowerCase() === 'pagamento confirmado'
+            );
 
             const initialCount = allLeadsThisMonth.length > 0 ? allLeadsThisMonth.length : 0;
             const confirmedCount = allLeadsThisMonth.filter((l: any) => {
                 const lStage = l.stage?.toLowerCase() || '';
-                return lStage === confirmedStage?.toLowerCase() ||
-                    lStage.includes('pagamento') ||
-                    lStage.includes('confirmado');
+
+                // If we found the explicit "Pagamento confirmado" stage in the sorted list
+                if (confirmedStageIndex !== -1) {
+                    const successfulStages = sortedStages.slice(confirmedStageIndex).map(s => s.name?.toLowerCase());
+                    return successfulStages.includes(lStage) ||
+                        successfulStages.includes(lStage.replace(/\s+/g, '_'));
+                }
+
+                // Fallback: specifically include "confirmado" but exclude "aguardando"
+                return (lStage.includes('confirmado') || lStage === 'enviado') &&
+                    !lStage.includes('aguardando');
             }).length;
 
             const conversionRate = initialCount > 0 ? ((confirmedCount / initialCount) * 100).toFixed(1) + '%' : '0%';
