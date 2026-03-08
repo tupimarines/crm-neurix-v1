@@ -1108,19 +1108,18 @@ export default function KanbanPage() {
                                 </div>
                             )}
                         </div>
-
-                    </div>
-                    <div>
-                        <label className="block text-xs font-semibold text-text-secondary-light uppercase tracking-wider mb-1">Observações</label>
-                        <textarea value={editingCard.desc || ""} onChange={(e) => setEditingCard({ ...editingCard, desc: e.target.value })} className="w-full px-3 py-2 border border-border-light dark:border-border-dark rounded-lg text-sm bg-white dark:bg-slate-800 focus:ring-1 focus:ring-primary focus:border-transparent min-h-[80px]" />
-                    </div>
-                    <div className="flex gap-2 pt-2">
-                        <button onClick={handleSaveEditCard} disabled={isSaving} className="flex-1 py-2 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
-                            {isSaving ? "Salvando..." : "Salvar Alterações"}
-                        </button>
-                        <button onClick={() => setEditingCard(null)} disabled={isSaving} className="flex-1 py-2 border border-border-light dark:border-border-dark rounded-lg text-sm font-medium hover:bg-slate-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
-                            Cancelar
-                        </button>
+                        <div>
+                            <label className="block text-xs font-semibold text-text-secondary-light uppercase tracking-wider mb-1">Observações</label>
+                            <textarea value={editingCard.desc || ""} onChange={(e) => setEditingCard({ ...editingCard, desc: e.target.value })} className="w-full px-3 py-2 border border-border-light dark:border-border-dark rounded-lg text-sm bg-white dark:bg-slate-800 focus:ring-1 focus:ring-primary focus:border-transparent min-h-[80px]" />
+                        </div>
+                        <div className="flex gap-2 pt-2">
+                            <button onClick={handleSaveEditCard} disabled={isSaving} className="flex-1 py-2 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                                {isSaving ? "Salvando..." : "Salvar Alterações"}
+                            </button>
+                            <button onClick={() => setEditingCard(null)} disabled={isSaving} className="flex-1 py-2 border border-border-light dark:border-border-dark rounded-lg text-sm font-medium hover:bg-slate-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                                Cancelar
+                            </button>
+                        </div>
                     </div>
                 </div>
             )}
