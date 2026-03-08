@@ -21,6 +21,7 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { api } from "@/lib/api";
+import { supabase } from "@/lib/supabase";
 import WhatsAppChat from "@/components/WhatsAppChat";
 
 // Types
@@ -212,6 +213,8 @@ export default function KanbanPage() {
     const [showSearch, setShowSearch] = useState(false);
     const [searchQuery, setSearchQuery] = useState("");
     const [showReport, setShowReport] = useState(false);
+    const [reportData, setReportData] = useState<any>(null);
+    const [isLoadingReport, setIsLoadingReport] = useState(false);
     const [showAddMenu, setShowAddMenu] = useState(false);
     const [editCardMenu, setEditCardMenu] = useState<string | null>(null);
     const [editingCard, setEditingCard] = useState<KanbanCard | null>(null);
@@ -278,6 +281,129 @@ export default function KanbanPage() {
         if (!card) return;
         setChatConfig({ leadId: cardId, leadName: `${card.contact} - ${card.name}` });
     }
+
+    const handleOpenReport = async () => {
+        setShowReport(true);
+        setIsLoadingReport(true);
+        try {
+            const { data: { user } } = await supabase.auth.getUser();
+            if (!user) return;
+            const { data: profile } = await supabase.from("profiles").select("tenant_id").eq("id", user.id).single();
+            const tenantId = profile?.tenant_id || user.id;
+
+            // Date Filtering: First day of current month
+            const now = new Date();
+            const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+
+            // Query por stage agrupando leads:
+            const { data: stagesData, error: stagesError } = await supabase
+                .from('pipeline_stages')
+                .select('name, order_position')
+                .eq('tenant_id', tenantId)
+                .order('order_position');
+
+            if (stagesError) throw stagesError;
+
+            const { data: leadsData, error: leadsError } = await supabase
+                .from('leads')
+                .select('stage, value, archived, deleted')
+                .eq('tenant_id', tenantId)
+                .gte('created_at', startOfMonth);
+
+            if (leadsError) throw leadsError;
+
+            // Only fetch orders created this month and paid
+            const { data: ordersData, error: ordersError } = await supabase
+                .from('orders')
+                .select('products_json')
+                .eq('tenant_id', tenantId)
+                .eq('payment_status', 'pago')
+                .gte('created_at', startOfMonth);
+
+            if (ordersError) throw ordersError;
+
+            const sData = stagesData || [];
+            const allLeadsThisMonth = leadsData || [];
+            // For metrics like "Pipeline Value" and "Active Deals", we only want non-deleted, non-archived leads
+            const activeLeadsThisMonth = allLeadsThisMonth.filter((l: any) => !l.archived && !l.deleted);
+
+            const report = sData.map((s: any) => ({
+                stage: s.name,
+                count: activeLeadsThisMonth.filter((l: any) => l.stage === s.name).length,
+                total: activeLeadsThisMonth.filter((l: any) => l.stage === s.name)
+                    .reduce((a: number, l: any) => a + (Number(l.value) || 0), 0)
+            }));
+
+
+            // Calculate conversion rate
+            // First stage is the one with lowest order_position
+            const sortedStages = [...sData].sort((a: any, b: any) => a.order_position - b.order_position);
+            const firstStage = sortedStages.length > 0 ? sortedStages[0].name : "Contato Inicial";
+            // Confirmed stage is usually the last one, or second to last if there's an "Archived" stage
+            const confirmedStage = sortedStages.length > 0 ? sortedStages[sortedStages.length - 1].name : "Enviado";
+
+            // Conversion looks at ALL leads generated this month (even if they were archived later)
+            const initialCount = allLeadsThisMonth.length > 0 ? allLeadsThisMonth.length : 0; // Everything starts at the funnel
+            const confirmedCount = allLeadsThisMonth.filter((l: any) => l.stage === confirmedStage || l.stage?.toLowerCase().includes('pagamento')).length;
+            const conversionRate = initialCount > 0 ? ((confirmedCount / initialCount) * 100).toFixed(1) + '%' : '0%';
+
+            const totalLeads = allLeadsThisMonth.length;
+            const activeLeads = activeLeadsThisMonth.length;
+            const totalValue = report.reduce((a: number, s: any) => a + s.total, 0);
+
+            // Product sales aggregation
+            const productSales: Record<string, number> = {};
+            if (ordersData) {
+                for (const order of ordersData) {
+                    const prods = order.products_json || [];
+                    for (const p of prods) {
+                        if (p.name && p.qty) {
+                            productSales[p.name] = (productSales[p.name] || 0) + Number(p.qty);
+                        }
+                    }
+                }
+            }
+            const topProducts = Object.entries(productSales)
+                .map(([name, sales]) => ({ name, sales }))
+                .sort((a, b) => b.sales - a.sales)
+                .slice(0, 5);
+
+            setReportData({
+                totalLeads,
+                activeLeads,
+                totalValue,
+                conversionRate,
+                stages: report,
+                products: topProducts
+            });
+        } catch (err: any) {
+            console.error("Failed to fetch report data:", err);
+            // Optionally set an error state here if UI should show it
+        } finally {
+            setIsLoadingReport(false);
+        }
+    };
+
+    // Export CSV:
+    const handleDownloadCSV = () => {
+        if (!reportData) return;
+        const totalGeral = reportData.totalValue;
+        const headers = ['Etapa', 'Qtd. Negócios', 'Valor Total', '% do Total'];
+        const escapeCSV = (val: string) => `"${String(val).replace(/"/g, '""')}"`;
+
+        const rows = reportData.stages.map((r: any) => [
+            escapeCSV(r.stage),
+            r.count,
+            r.total.toFixed(2),
+            totalGeral > 0 ? escapeCSV(((r.total / totalGeral) * 100).toFixed(1) + '%') : escapeCSV('0%')
+        ]);
+        const csv = '\uFEFF' + [headers.map(escapeCSV), ...rows].map((r: any[]) => r.join(',')).join('\n');
+        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `relatorio_${new Date().toISOString().slice(0, 10)}.csv`;
+        a.click();
+    };
 
     // Delete lead handler
     async function handleDeleteCard() {
@@ -582,7 +708,7 @@ export default function KanbanPage() {
                         </button>
                     </div>
                     {/* Report */}
-                    <button onClick={() => setShowReport(true)} className="flex items-center text-sm font-medium text-text-secondary-light hover:text-primary transition-colors">
+                    <button onClick={handleOpenReport} className="flex items-center text-sm font-medium text-text-secondary-light hover:text-primary transition-colors">
                         <span className="material-symbols-outlined mr-1 text-lg">trending_up</span>
                         Relatório
                     </button>
@@ -761,60 +887,79 @@ export default function KanbanPage() {
             {showReport && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
                     <div className="absolute inset-0 bg-slate-900/30 backdrop-blur-sm" onClick={() => setShowReport(false)} />
-                    <div className="relative bg-surface-light dark:bg-surface-dark rounded-2xl shadow-2xl border border-border-light dark:border-border-dark w-full max-w-xl max-h-[85vh] overflow-y-auto">
-                        <div className="p-6 border-b border-border-light dark:border-border-dark flex justify-between">
+                    <div className="relative bg-surface-light dark:bg-surface-dark rounded-2xl shadow-2xl border border-border-light dark:border-border-dark w-full max-w-xl max-h-[85vh] flex flex-col">
+                        <div className="p-6 border-b border-border-light dark:border-border-dark flex justify-between items-center shrink-0">
                             <h3 className="text-lg font-bold font-display">Relatório Mensal</h3>
                             <button onClick={() => setShowReport(false)}><span className="material-symbols-outlined text-text-secondary-light hover:text-text-main-light">close</span></button>
                         </div>
-                        <div className="p-6 space-y-6">
-                            <div className="grid grid-cols-2 gap-4">
-                                <div className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-xl">
-                                    <p className="text-xs text-text-secondary-light font-medium uppercase">Total de Conversas</p>
-                                    <p className="text-2xl font-bold mt-1">127</p>
+                        <div className="p-6 space-y-6 overflow-y-auto">
+                            {isLoadingReport || !reportData ? (
+                                <div className="flex justify-center py-8">
+                                    <span className="material-symbols-outlined animate-spin text-primary text-3xl">autorenew</span>
                                 </div>
-                                <div className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-xl">
-                                    <p className="text-xs text-text-secondary-light font-medium uppercase">Negócios Ativos</p>
-                                    <p className="text-2xl font-bold mt-1">{cards.length}</p>
-                                </div>
-                                <div className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-xl">
-                                    <p className="text-xs text-text-secondary-light font-medium uppercase">Valor Total Pipeline</p>
-                                    <p className="text-2xl font-bold mt-1 text-green-600">R$ 13.850</p>
-                                </div>
-                                <div className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-xl">
-                                    <p className="text-xs text-text-secondary-light font-medium uppercase">Taxa de Conversão</p>
-                                    <p className="text-2xl font-bold mt-1 text-primary">24.8%</p>
-                                </div>
-                            </div>
-                            <div>
-                                <h4 className="text-sm font-bold mb-3">Negócios por Etapa</h4>
-                                {stages.map((s) => {
-                                    const stageCardsInfo = cards.filter((c) => c.stageId === s.id);
-                                    const count = stageCardsInfo.length;
-                                    const computedTotal = formatCurrency(stageCardsInfo.reduce((acc, c) => acc + parseCurrency(c.value), 0));
-                                    return (
-                                        <div key={s.id} className="flex items-center justify-between py-2 border-b border-border-light/50 dark:border-border-dark last:border-0">
-                                            <span className="text-sm">{s.title}</span>
-                                            <div className="flex items-center gap-3">
-                                                <span className="text-xs text-text-secondary-light">{count} negócios</span>
-                                                <span className="text-sm font-bold">{computedTotal}</span>
+                            ) : (
+                                <>
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-xl">
+                                            <p className="text-xs text-text-secondary-light font-medium uppercase">Total de Conversas</p>
+                                            <p className="text-2xl font-bold mt-1">{reportData.totalLeads}</p>
+                                        </div>
+                                        <div className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-xl">
+                                            <p className="text-xs text-text-secondary-light font-medium uppercase">Negócios Ativos</p>
+                                            <p className="text-2xl font-bold mt-1">{reportData.activeLeads}</p>
+                                        </div>
+                                        <div className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-xl">
+                                            <p className="text-xs text-text-secondary-light font-medium uppercase">Valor Total Pipeline</p>
+                                            <p className="text-2xl font-bold mt-1 text-green-600">
+                                                {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(reportData.totalValue)}
+                                            </p>
+                                        </div>
+                                        <div className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-xl">
+                                            <p className="text-xs text-text-secondary-light font-medium uppercase">Taxa de Conversão</p>
+                                            <p className="text-2xl font-bold mt-1 text-primary">{reportData.conversionRate}</p>
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <h4 className="text-sm font-bold mb-3">Negócios por Etapa</h4>
+                                        {reportData.stages.map((s: any) => (
+                                            <div key={s.stage} className="flex items-center justify-between py-2 border-b border-border-light/50 dark:border-border-dark last:border-0">
+                                                <span className="text-sm">{s.stage}</span>
+                                                <div className="flex items-center gap-3">
+                                                    <span className="text-xs text-text-secondary-light">{s.count} negócios</span>
+                                                    <span className="text-sm font-bold">
+                                                        {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(s.total)}
+                                                    </span>
+                                                </div>
                                             </div>
+                                        ))}
+                                    </div>
+                                    <div>
+                                        <h4 className="text-sm font-bold mb-3">Produtos Mais Vendidos</h4>
+                                        <div className="space-y-2">
+                                            {reportData.products.length === 0 ? (
+                                                <p className="text-xs text-text-secondary-light">Nenhuma venda registrada no período.</p>
+                                            ) : (
+                                                reportData.products.map((p: any, i: number) => (
+                                                    <div key={p.name} className="flex items-center justify-between py-1.5">
+                                                        <span className="text-sm">{i + 1}. {p.name}</span>
+                                                        <span className="text-xs font-medium text-text-secondary-light">{p.sales} vendas</span>
+                                                    </div>
+                                                ))
+                                            )}
                                         </div>
-                                    );
-                                })}
-                            </div>
-                            <div>
-                                <h4 className="text-sm font-bold mb-3">Produtos Mais Vendidos</h4>
-                                <div className="space-y-2">
-                                    {["Geleia de Morango", "Mix Frutas Vermelhas", "Geleia de Damasco"].map((p, i) => (
-                                        <div key={p} className="flex items-center justify-between py-1.5">
-                                            <span className="text-sm">{i + 1}. {p}</span>
-                                            <span className="text-xs font-medium text-text-secondary-light">{[42, 28, 15][i]} vendas</span>
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
+                                    </div>
+                                </>
+                            )}
                         </div>
-                        <div className="p-4 border-t border-border-light dark:border-border-dark text-center">
+                        <div className="p-4 border-t border-border-light dark:border-border-dark flex justify-between items-center shrink-0">
+                            <button
+                                onClick={handleDownloadCSV}
+                                disabled={isLoadingReport || !reportData}
+                                className="inline-flex items-center px-4 py-2 bg-primary text-white text-sm font-medium rounded-lg hover:bg-primary-hover transition-colors disabled:opacity-50"
+                            >
+                                <span className="material-symbols-outlined mr-2 text-[18px]">download</span>
+                                Exportar CSV
+                            </button>
                             <p className="text-xs text-text-secondary-light">© 2026 — Neurix IA</p>
                         </div>
                     </div>

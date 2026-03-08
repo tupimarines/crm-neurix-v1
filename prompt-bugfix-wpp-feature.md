@@ -274,7 +274,7 @@ const { data: messages } = await supabase
 
 ---
 
-### 5. Menu 3 Pontinhos — Funcional
+### 5. Menu 3 Pontinhos — Funcional (CONCLUÍDO)
 
 ```typescript
 // components/Kanban/KanbanCardMenu.tsx
@@ -298,7 +298,7 @@ await supabase.from('leads')
 
 ---
 
-### 6. Adicionar Card no Final de Cada Etapa
+### 6. Adicionar Card no Final de Cada Etapa (CONCLUÍDO)
 
 ```typescript
 // components/Kanban/AddLeadForm.tsx
