@@ -31,7 +31,7 @@ class LeadBase(BaseModel):
     value: float = Field(default=0.0, ge=0, description="Valor estimado em R$")
     notes: Optional[str] = Field(None, max_length=1000, description="Observações sobre o lead")
     whatsapp_chat_id: Optional[str] = None
-    order_products: Optional[list[dict]] = Field(None, description="Produtos e quantidades selecionados")
+    products_json: Optional[list[dict]] = Field(None, description="Produtos e quantidades selecionados")
 
 
 class LeadCreate(LeadBase):
@@ -45,7 +45,7 @@ class LeadUpdate(BaseModel):
     priority: Optional[LeadPriority] = None
     value: Optional[float] = None
     notes: Optional[str] = None
-    order_products: Optional[list[dict]] = None
+    products_json: Optional[list[dict]] = None
 
 
 class LeadMoveStage(BaseModel):

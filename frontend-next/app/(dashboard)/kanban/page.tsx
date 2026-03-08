@@ -35,7 +35,7 @@ interface KanbanCard {
     priorityColor: string;
     desc: string;
     stageId: string;
-    order_products?: { id: string; name: string; quantity: number; price: number }[];
+    products_json?: { id: string; name: string; quantity: number; price: number }[];
 }
 
 interface KanbanStage {
@@ -166,6 +166,7 @@ export default function KanbanPage() {
                             notes: string | null;
                             stage: string;
                             whatsapp_chat_id: string | null;
+                            products_json?: any[];
                         }>;
                     }>
                 }>("/api/leads/kanban", { method: "GET", token });
@@ -185,6 +186,7 @@ export default function KanbanPage() {
                             priority: pri?.label || "",
                             priorityColor: pri?.color || "",
                             desc: lead.notes || "",
+                            products_json: lead.products_json || [],
                         });
                     }
                 }
@@ -206,7 +208,14 @@ export default function KanbanPage() {
     const [showNewStage, setShowNewStage] = useState(false);
     const [newStageName, setNewStageName] = useState("");
     const [showNewCard, setShowNewCard] = useState<string | null>(null);
-    const [newCard, setNewCard] = useState({ name: "", contact: "", phone: "", value: "", priority: "Média" });
+    const [newCard, setNewCard] = useState<{
+        name: string;
+        contact: string;
+        phone: string;
+        value: string;
+        priority: string;
+        products_json: any[];
+    }>({ name: "", contact: "", phone: "", value: "", priority: "Média", products_json: [] });
     const [showFilter, setShowFilter] = useState(false);
     const [filterPriority, setFilterPriority] = useState("");
     const [filterSort, setFilterSort] = useState("");
@@ -566,6 +575,7 @@ export default function KanbanPage() {
                     stage: stageSlug,
                     value: parseCurrency(newCard.value),
                     priority: priorityApiMap[newCard.priority] || null,
+                    products_json: newCard.products_json,
                 }),
                 token
             });
@@ -575,6 +585,7 @@ export default function KanbanPage() {
                 phone: newCard.phone,
                 value: newCard.value || "R$ 0,00", priority: newCard.priority,
                 priorityColor: priorityColorMap[newCard.priority] || "blue", desc: "",
+                products_json: newCard.products_json,
             }]);
         } catch (err) {
             console.error("Failed to create lead:", err);
@@ -587,7 +598,7 @@ export default function KanbanPage() {
                 priorityColor: priorityColorMap[newCard.priority] || "blue", desc: "",
             }]);
         }
-        setNewCard({ name: "", contact: "", phone: "", value: "", priority: "Média" });
+        setNewCard({ name: "", contact: "", phone: "", value: "", priority: "Média", products_json: [] });
         setShowNewCard(null);
     }
 
@@ -612,7 +623,7 @@ export default function KanbanPage() {
                 priority: priorityMap[editingCard.priority],
                 value: parseCurrency(editingCard.value),
                 notes: editingCard.desc,
-                order_products: editingCard.order_products || [],
+                products_json: editingCard.products_json || [],
             };
 
             // Call the PATCH endpoint to sync with Uazapi
@@ -644,6 +655,27 @@ export default function KanbanPage() {
             setIsSaving(false);
         }
     }
+
+    // Auto-calculate value from products
+    useEffect(() => {
+        if (editingCard && editingCard.products_json && editingCard.products_json.length > 0) {
+            const total = editingCard.products_json.reduce((sum, p) => sum + (p.price * p.quantity), 0);
+            const formatted = formatCurrency(total);
+            if (editingCard.value !== formatted) {
+                setEditingCard({ ...editingCard, value: formatted });
+            }
+        }
+    }, [editingCard?.products_json]);
+
+    useEffect(() => {
+        if (newCard.products_json && newCard.products_json.length > 0) {
+            const total = newCard.products_json.reduce((sum, p) => sum + (p.price * p.quantity), 0);
+            const formatted = formatCurrency(total);
+            if (newCard.value !== formatted) {
+                setNewCard({ ...newCard, value: formatted });
+            }
+        }
+    }, [newCard.products_json]);
 
     return (
         <div className="flex flex-col h-full">
@@ -818,6 +850,38 @@ export default function KanbanPage() {
                                                         <select value={newCard.priority} onChange={(e) => setNewCard({ ...newCard, priority: e.target.value })} className="px-2 py-1.5 border border-border-light dark:border-border-dark rounded-lg text-sm bg-white dark:bg-slate-800">
                                                             <option>Alta</option><option>Média</option><option>Baixa</option>
                                                         </select>
+                                                    </div>
+                                                    {/* New Card Products Section */}
+                                                    <div className="border-t border-border-light/50 dark:border-border-dark/50 pt-2 mt-2">
+                                                        <p className="text-[10px] font-bold text-text-secondary-light uppercase mb-2">Produtos</p>
+                                                        <div className="flex gap-1 mb-2">
+                                                            <select value={editSelectedProductId} onChange={e => setEditSelectedProductId(e.target.value)} className="flex-1 px-2 py-1 border border-border-light dark:border-border-dark rounded-lg text-xs bg-white dark:bg-slate-800">
+                                                                <option value="">Add produto...</option>
+                                                                {availableProducts.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                                                            </select>
+                                                            <button type="button" onClick={() => {
+                                                                if (!editSelectedProductId) return;
+                                                                const p = availableProducts.find(x => x.id === editSelectedProductId);
+                                                                if (!p) return;
+                                                                const current = [...(newCard.products_json || [])];
+                                                                const existingIdx = current.findIndex(x => x.id === p.id);
+                                                                if (existingIdx >= 0) {
+                                                                    current[existingIdx] = { ...current[existingIdx], quantity: current[existingIdx].quantity + 1 };
+                                                                } else {
+                                                                    current.push({ id: p.id, name: p.name, price: p.price, quantity: 1 });
+                                                                }
+                                                                setNewCard({ ...newCard, products_json: current });
+                                                                setEditSelectedProductId("");
+                                                            }} className="bg-primary text-white px-2 rounded-lg text-xs">Add</button>
+                                                        </div>
+                                                        {(newCard.products_json || []).map((op, idx) => (
+                                                            <div key={idx} className="flex justify-between items-center text-[10px] p-1 bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded mb-1">
+                                                                <span>{op.quantity}x {op.name}</span>
+                                                                <button type="button" onClick={() => {
+                                                                    setNewCard({ ...newCard, products_json: newCard.products_json.filter((_, i) => i !== idx) });
+                                                                }} className="text-red-500 material-symbols-outlined text-[12px]">close</button>
+                                                            </div>
+                                                        ))}
                                                     </div>
                                                     <div className="flex gap-2">
                                                         <button onClick={() => addCard(stage.id)} className="flex-1 py-1.5 bg-primary text-white rounded-lg text-xs font-medium hover:bg-primary-hover">Salvar</button>
@@ -1012,7 +1076,7 @@ export default function KanbanPage() {
                                     const p = availableProducts.find(x => x.id === editSelectedProductId);
                                     if (!p) return;
 
-                                    const current = [...(editingCard.order_products || [])];
+                                    const current = [...(editingCard.products_json || [])];
                                     const existingIdx = current.findIndex(x => x.id === p.id);
                                     if (existingIdx >= 0) {
                                         current[existingIdx] = {
@@ -1022,21 +1086,21 @@ export default function KanbanPage() {
                                     } else {
                                         current.push({ id: p.id, name: p.name, price: p.price, quantity: (Number(editSelectedQuantity) || 1) });
                                     }
-                                    setEditingCard({ ...editingCard, order_products: current });
+                                    setEditingCard({ ...editingCard, products_json: current });
                                     setEditSelectedProductId("");
                                     setEditSelectedQuantity(1);
                                 }} className="bg-primary text-white px-3 border border-transparent rounded-lg text-sm font-medium hover:bg-primary-hover">Add</button>
                             </div>
-                            {(editingCard.order_products || []).length > 0 && (
+                            {(editingCard.products_json || []).length > 0 && (
                                 <div className="space-y-1 mb-3">
-                                    {(editingCard.order_products || []).map((op, idx) => (
+                                    {(editingCard.products_json || []).map((op, idx) => (
                                         <div key={idx} className="flex justify-between items-center text-sm p-2 bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 mx-1 rounded">
                                             <span>{op.quantity}x {op.name}</span>
                                             <div className="flex items-center gap-2">
                                                 <span>{new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(op.quantity * op.price)}</span>
                                                 <button type="button" onClick={() => {
-                                                    const filtered = editingCard.order_products!.filter((_, i) => i !== idx);
-                                                    setEditingCard({ ...editingCard, order_products: filtered });
+                                                    const filtered = editingCard.products_json!.filter((_, i) => i !== idx);
+                                                    setEditingCard({ ...editingCard, products_json: filtered });
                                                 }} className="text-red-500 material-symbols-outlined text-[16px]">close</button>
                                             </div>
                                         </div>
@@ -1044,18 +1108,19 @@ export default function KanbanPage() {
                                 </div>
                             )}
                         </div>
-                        <div>
-                            <label className="block text-xs font-semibold text-text-secondary-light uppercase tracking-wider mb-1">Observações</label>
-                            <textarea value={editingCard.desc || ""} onChange={(e) => setEditingCard({ ...editingCard, desc: e.target.value })} className="w-full px-3 py-2 border border-border-light dark:border-border-dark rounded-lg text-sm bg-white dark:bg-slate-800 focus:ring-1 focus:ring-primary focus:border-transparent min-h-[80px]" />
-                        </div>
-                        <div className="flex gap-2 pt-2">
-                            <button onClick={handleSaveEditCard} disabled={isSaving} className="flex-1 py-2 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
-                                {isSaving ? "Salvando..." : "Salvar Alterações"}
-                            </button>
-                            <button onClick={() => setEditingCard(null)} disabled={isSaving} className="flex-1 py-2 border border-border-light dark:border-border-dark rounded-lg text-sm font-medium hover:bg-slate-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
-                                Cancelar
-                            </button>
-                        </div>
+
+                    </div>
+                    <div>
+                        <label className="block text-xs font-semibold text-text-secondary-light uppercase tracking-wider mb-1">Observações</label>
+                        <textarea value={editingCard.desc || ""} onChange={(e) => setEditingCard({ ...editingCard, desc: e.target.value })} className="w-full px-3 py-2 border border-border-light dark:border-border-dark rounded-lg text-sm bg-white dark:bg-slate-800 focus:ring-1 focus:ring-primary focus:border-transparent min-h-[80px]" />
+                    </div>
+                    <div className="flex gap-2 pt-2">
+                        <button onClick={handleSaveEditCard} disabled={isSaving} className="flex-1 py-2 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                            {isSaving ? "Salvando..." : "Salvar Alterações"}
+                        </button>
+                        <button onClick={() => setEditingCard(null)} disabled={isSaving} className="flex-1 py-2 border border-border-light dark:border-border-dark rounded-lg text-sm font-medium hover:bg-slate-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                            Cancelar
+                        </button>
                     </div>
                 </div>
             )}
@@ -1064,28 +1129,30 @@ export default function KanbanPage() {
             {chatConfig && <WhatsAppChat leadId={chatConfig.leadId} leadName={chatConfig.leadName} onClose={() => setChatConfig(null)} />}
 
             {/* Delete Confirmation */}
-            {deleteCardId && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-                    <div className="absolute inset-0 bg-slate-900/30 backdrop-blur-sm" onClick={() => setDeleteCardId(null)} />
-                    <div className="relative bg-surface-light dark:bg-surface-dark rounded-xl shadow-2xl border border-border-light dark:border-border-dark w-full max-w-sm p-6 text-center space-y-4">
-                        <span className="material-symbols-outlined text-red-500 text-4xl">warning</span>
-                        <h3 className="text-lg font-bold">Excluir Lead?</h3>
-                        <p className="text-sm text-text-secondary-light dark:text-text-secondary-dark">
-                            Esta ação não pode ser desfeita. O lead e suas mensagens serão removidos.
-                        </p>
-                        <div className="flex gap-2 pt-2">
-                            <button onClick={handleDeleteCard} disabled={isDeleting}
-                                className="flex-1 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700 transition-colors disabled:opacity-50">
-                                {isDeleting ? 'Excluindo...' : 'Excluir'}
-                            </button>
-                            <button onClick={() => setDeleteCardId(null)} disabled={isDeleting}
-                                className="flex-1 py-2 border border-border-light dark:border-border-dark rounded-lg text-sm font-medium hover:bg-slate-50 transition-colors disabled:opacity-50">
-                                Cancelar
-                            </button>
+            {
+                deleteCardId && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+                        <div className="absolute inset-0 bg-slate-900/30 backdrop-blur-sm" onClick={() => setDeleteCardId(null)} />
+                        <div className="relative bg-surface-light dark:bg-surface-dark rounded-xl shadow-2xl border border-border-light dark:border-border-dark w-full max-w-sm p-6 text-center space-y-4">
+                            <span className="material-symbols-outlined text-red-500 text-4xl">warning</span>
+                            <h3 className="text-lg font-bold">Excluir Lead?</h3>
+                            <p className="text-sm text-text-secondary-light dark:text-text-secondary-dark">
+                                Esta ação não pode ser desfeita. O lead e suas mensagens serão removidos.
+                            </p>
+                            <div className="flex gap-2 pt-2">
+                                <button onClick={handleDeleteCard} disabled={isDeleting}
+                                    className="flex-1 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700 transition-colors disabled:opacity-50">
+                                    {isDeleting ? 'Excluindo...' : 'Excluir'}
+                                </button>
+                                <button onClick={() => setDeleteCardId(null)} disabled={isDeleting}
+                                    className="flex-1 py-2 border border-border-light dark:border-border-dark rounded-lg text-sm font-medium hover:bg-slate-50 transition-colors disabled:opacity-50">
+                                    Cancelar
+                                </button>
+                            </div>
                         </div>
                     </div>
-                </div>
-            )}
-        </div>
+                )
+            }
+        </div >
     );
 }
