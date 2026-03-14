@@ -4,6 +4,7 @@ import { useState, useRef, useEffect, useId } from "react";
 import {
     DndContext,
     closestCenter,
+    pointerWithin,
     PointerSensor,
     useSensor,
     useSensors,
@@ -537,6 +538,29 @@ export default function KanbanPage() {
         return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val);
     };
 
+    const getStageIdFromPointer = (rawEvent: unknown): string | null => {
+        if (typeof window === "undefined" || !rawEvent) return null;
+        let clientX: number | null = null;
+        let clientY: number | null = null;
+
+        const evt = rawEvent as MouseEvent & TouchEvent & PointerEvent;
+        if (typeof evt.clientX === "number" && typeof evt.clientY === "number") {
+            clientX = evt.clientX;
+            clientY = evt.clientY;
+        } else if (evt.changedTouches && evt.changedTouches.length > 0) {
+            clientX = evt.changedTouches[0].clientX;
+            clientY = evt.changedTouches[0].clientY;
+        } else if (evt.touches && evt.touches.length > 0) {
+            clientX = evt.touches[0].clientX;
+            clientY = evt.touches[0].clientY;
+        }
+
+        if (clientX === null || clientY === null) return null;
+        const target = document.elementFromPoint(clientX, clientY) as HTMLElement | null;
+        const stageEl = target?.closest?.("[data-stage-id]") as HTMLElement | null;
+        return stageEl?.dataset?.stageId || null;
+    };
+
     // DnD handlers
     function handleDragStart(event: DragStartEvent) {
         if (event.active.data.current?.type !== "card") return;
@@ -550,23 +574,26 @@ export default function KanbanPage() {
 
     function handleDragOver(event: DragOverEvent) {
         const { active, over } = event;
-        if (!over) return;
         if (active.data.current?.type !== "card") return;
         const activeCardId = active.id as string;
-        const overId = over.id as string;
         const activeCardObj = cards.find((c) => c.id === activeCardId);
         if (!activeCardObj) return;
 
+        const overId = over?.id as string | undefined;
+        const pointerStageId = getStageIdFromPointer(event.activatorEvent);
+        const resolvedOverId = pointerStageId || overId;
+        if (!resolvedOverId) return;
+
         // Dropping over a stage directly
-        const targetStage = stages.find((s) => s.id === overId);
-        if (targetStage && activeCardObj.stageId !== overId) {
-            dragTargetStageRef.current[activeCardId] = overId;
-            setCards((prev) => prev.map((c) => c.id === activeCardId ? { ...c, stageId: overId } : c));
+        const targetStage = stages.find((s) => s.id === resolvedOverId);
+        if (targetStage && activeCardObj.stageId !== resolvedOverId) {
+            dragTargetStageRef.current[activeCardId] = resolvedOverId;
+            setCards((prev) => prev.map((c) => c.id === activeCardId ? { ...c, stageId: resolvedOverId } : c));
             return;
         }
 
         // Dropping over another card
-        const overCard = cards.find((c) => c.id === overId);
+        const overCard = cards.find((c) => c.id === resolvedOverId);
         if (overCard && activeCardObj.stageId !== overCard.stageId) {
             dragTargetStageRef.current[activeCardId] = overCard.stageId;
             setCards((prev) => prev.map((c) => c.id === activeCardId ? { ...c, stageId: overCard.stageId } : c));
@@ -633,9 +660,11 @@ export default function KanbanPage() {
         // Sync stage change with backend
         if (activeCardObj) {
             const previousStageId = dragInitialStageRef.current[activeCardObj.id] || activeCardObj.stageId;
+            const pointerStageId = getStageIdFromPointer(event.activatorEvent);
             const overStage = over ? stages.find((s) => s.id === over.id) : undefined;
             const resolvedTargetStageId =
                 dragTargetStageRef.current[activeCardObj.id] ||
+                pointerStageId ||
                 (overStage ? overStage.id : undefined) ||
                 (overCardObj ? overCardObj.stageId : undefined) ||
                 activeCardObj.stageId;
@@ -961,7 +990,7 @@ export default function KanbanPage() {
                     </div>
                 </div>
             ) : viewMode === "kanban" ? (
-                <DndContext id={dndId} sensors={sensors} collisionDetection={closestCenter} onDragStart={handleDragStart} onDragOver={handleDragOver} onDragEnd={handleDragEnd}>
+                <DndContext id={dndId} sensors={sensors} collisionDetection={pointerWithin} onDragStart={handleDragStart} onDragOver={handleDragOver} onDragEnd={handleDragEnd}>
                     <div
                         className="flex-1 overflow-x-auto overflow-y-hidden p-6 cursor-grab active:cursor-grabbing"
                         ref={boardRef}
@@ -977,7 +1006,7 @@ export default function KanbanPage() {
                                 return (
                                     <SortableStageShell key={stage.id} stageId={stage.id}>
                                     {({ attributes, listeners }) => (
-                                    <div className="w-[310px] flex flex-col flex-shrink-0 bg-slate-50/50 dark:bg-slate-800/30 rounded-xl border border-border-light/60 dark:border-border-dark/60">
+                                    <div data-stage-id={stage.id} className="w-[310px] flex flex-col flex-shrink-0 bg-slate-50/50 dark:bg-slate-800/30 rounded-xl border border-border-light/60 dark:border-border-dark/60">
                                         {/* Stage header */}
                                         <div className="p-3 flex items-center justify-between border-b border-border-light/50 dark:border-border-dark/50">
                                             <div className="flex items-center gap-2 flex-1 min-w-0">
