@@ -249,6 +249,7 @@ export default function KanbanPage() {
     const [editStageName, setEditStageName] = useState("");
     const [lastReorderAttempt, setLastReorderAttempt] = useState<KanbanStage[] | null>(null);
     const dragInitialStageRef = useRef<Record<string, string>>({});
+    const dragTargetStageRef = useRef<Record<string, string>>({});
 
     // Product data state
     const [availableProducts, setAvailableProducts] = useState<{ id: string, name: string, price: number }[]>([]);
@@ -543,6 +544,7 @@ export default function KanbanPage() {
         if (card) {
             setActiveCard(card);
             dragInitialStageRef.current[card.id] = card.stageId;
+            dragTargetStageRef.current[card.id] = card.stageId;
         }
     }
 
@@ -558,6 +560,7 @@ export default function KanbanPage() {
         // Dropping over a stage directly
         const targetStage = stages.find((s) => s.id === overId);
         if (targetStage && activeCardObj.stageId !== overId) {
+            dragTargetStageRef.current[activeCardId] = overId;
             setCards((prev) => prev.map((c) => c.id === activeCardId ? { ...c, stageId: overId } : c));
             return;
         }
@@ -565,6 +568,7 @@ export default function KanbanPage() {
         // Dropping over another card
         const overCard = cards.find((c) => c.id === overId);
         if (overCard && activeCardObj.stageId !== overCard.stageId) {
+            dragTargetStageRef.current[activeCardId] = overCard.stageId;
             setCards((prev) => prev.map((c) => c.id === activeCardId ? { ...c, stageId: overCard.stageId } : c));
         }
     }
@@ -628,9 +632,20 @@ export default function KanbanPage() {
         if (activeCardObj) {
             const previousStageId = dragInitialStageRef.current[activeCardObj.id] || activeCardObj.stageId;
             const overStage = stages.find((s) => s.id === over.id);
-            const newStageId = overStage ? overStage.id : (overCardObj ? overCardObj.stageId : activeCardObj.stageId);
+            const resolvedTargetStageId =
+                dragTargetStageRef.current[activeCardObj.id] ||
+                (overStage ? overStage.id : undefined) ||
+                (overCardObj ? overCardObj.stageId : undefined) ||
+                activeCardObj.stageId;
+            const newStageId = resolvedTargetStageId;
             const targetStage = stages.find(s => s.id === newStageId);
             const newStageName = targetStage ? targetStage.title : newStageId.replace(/^s-/, '');
+
+            if (newStageId && newStageId !== activeCardObj.stageId) {
+                // Ensure local UI reflects final target before network sync.
+                setCards((prev) => prev.map((c) => c.id === activeCardObj.id ? { ...c, stageId: newStageId } : c));
+            }
+
             if (newStageName && newStageId !== previousStageId) {
                 const token = localStorage.getItem("access_token") || undefined;
                 api(`/api/leads/${activeCardObj.id}/stage`, {
@@ -644,6 +659,7 @@ export default function KanbanPage() {
                 });
             }
             delete dragInitialStageRef.current[activeCardObj.id];
+            delete dragTargetStageRef.current[activeCardObj.id];
         }
     }
 
