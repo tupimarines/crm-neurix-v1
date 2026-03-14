@@ -644,7 +644,6 @@ export default function KanbanPage() {
         if (!newStageName.trim()) return;
         const name = newStageName.trim();
         try {
-            const token = localStorage.getItem("access_token") || undefined;
             const { data: { user } } = await supabase.auth.getUser();
             if (!user) return;
             const { data: profile } = await supabase.from("profiles").select("tenant_id").eq("id", user.id).single();
@@ -663,6 +662,56 @@ export default function KanbanPage() {
             setShowNewStage(false);
         } catch (err) {
             console.error("Failed to add stage:", err);
+        }
+    }
+
+    async function deleteStage(stageId: string) {
+        if (stages.length <= 1) {
+            alert("Você precisa manter pelo menos uma etapa no Kanban.");
+            return;
+        }
+        const stageToDelete = stages.find((s) => s.id === stageId);
+        if (!stageToDelete) return;
+
+        const fallbackStage = stages.find((s) => s.id !== stageId);
+        if (!fallbackStage) return;
+
+        const stageCards = cards.filter((c) => c.stageId === stageId);
+        const confirmed = window.confirm(
+            stageCards.length > 0
+                ? `Excluir etapa "${stageToDelete.title}"? ${stageCards.length} card(s) serão movidos para "${fallbackStage.title}".`
+                : `Excluir etapa "${stageToDelete.title}"?`
+        );
+        if (!confirmed) return;
+
+        try {
+            const { data: { user } } = await supabase.auth.getUser();
+            if (!user) return;
+            const { data: profile } = await supabase.from("profiles").select("tenant_id").eq("id", user.id).single();
+            const tenantId = profile?.tenant_id || user.id;
+
+            if (stageCards.length > 0) {
+                const { error: leadsError } = await supabase
+                    .from("leads")
+                    .update({ stage: fallbackStage.title })
+                    .eq("tenant_id", tenantId)
+                    .eq("stage", stageToDelete.title);
+                if (leadsError) throw leadsError;
+            }
+
+            const { error: deleteError } = await supabase
+                .from("pipeline_stages")
+                .delete()
+                .eq("id", stageId)
+                .eq("tenant_id", tenantId);
+            if (deleteError) throw deleteError;
+
+            setCards((prev) => prev.map((c) => (c.stageId === stageId ? { ...c, stageId: fallbackStage.id } : c)));
+            setStages((prev) => prev.filter((s) => s.id !== stageId));
+            if (showNewCard === stageId) setShowNewCard(null);
+        } catch (err) {
+            console.error("Failed to delete stage:", err);
+            alert(`Erro ao excluir etapa: ${err instanceof Error ? err.message : String(err)}`);
         }
     }
 
@@ -939,6 +988,13 @@ export default function KanbanPage() {
                                             <div className="flex items-center text-xs text-text-secondary-light shrink-0 ml-2">
                                                 {isSavingStageOrder && <span className="mr-1 text-[10px]">Salvando</span>}
                                                 {formatCurrency(stageCards.reduce((acc, c) => acc + parseCurrency(c.value), 0))}
+                                                <button
+                                                    onClick={() => { void deleteStage(stage.id); }}
+                                                    className="ml-1 p-0.5 hover:bg-red-100 dark:hover:bg-red-900/20 rounded-full text-red-500"
+                                                    title="Excluir etapa"
+                                                >
+                                                    <span className="material-symbols-outlined text-lg">delete</span>
+                                                </button>
                                                 <button onClick={() => { setShowNewStage(true); }} className="ml-1 p-0.5 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-full text-primary" title="Nova etapa">
                                                     <span className="material-symbols-outlined text-lg">add</span>
                                                 </button>
