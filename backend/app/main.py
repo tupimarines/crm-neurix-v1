@@ -7,7 +7,22 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
-from app.routers import auth, leads, products, orders, dashboard, settings as settings_router, webhooks, keyword_rules, upload, whatsapp
+from app.observability import metrics
+from app.routers import (
+    auth,
+    catalog_search,
+    dashboard,
+    keyword_rules,
+    leads,
+    orders,
+    product_categories,
+    products,
+    promotions,
+    settings as settings_router,
+    upload,
+    webhooks,
+    whatsapp,
+)
 
 
 @asynccontextmanager
@@ -45,6 +60,9 @@ def create_app() -> FastAPI:
     app.include_router(auth.router, prefix="/api/auth", tags=["Autenticação"])
     app.include_router(leads.router, prefix="/api/leads", tags=["Leads / Kanban"])
     app.include_router(products.router, prefix="/api/products", tags=["Produtos"])
+    app.include_router(product_categories.router, prefix="/api/product-categories", tags=["Categorias de Produto"])
+    app.include_router(promotions.router, prefix="/api/promotions", tags=["Promoções"])
+    app.include_router(catalog_search.router, prefix="/api/catalog", tags=["Busca de Catálogo"])
     app.include_router(orders.router, prefix="/api/orders", tags=["Pedidos"])
     app.include_router(dashboard.router, prefix="/api/dashboard", tags=["Dashboard"])
     app.include_router(settings_router.router, prefix="/api/settings", tags=["Configurações"])
@@ -63,6 +81,10 @@ def create_app() -> FastAPI:
             "supabase_configured": bool(cfg.SUPABASE_URL),
             "redis_configured": bool(cfg.REDIS_HOST),
         }
+
+    @app.get("/api/metrics", tags=["Sistema"])
+    async def metrics_snapshot():
+        return {"metrics": metrics.snapshot()}
 
     return app
 

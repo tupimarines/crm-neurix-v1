@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 from datetime import datetime
 from enum import Enum
 from typing import Optional
+from uuid import UUID
 
 
 class ProductStatus(str, Enum):
@@ -16,19 +17,16 @@ class ProductStatus(str, Enum):
     RASCUNHO = "rascunho"
 
 
-class ProductCategory(str, Enum):
-    TRADICIONAL = "tradicional"
-    DIET_ZERO = "diet_zero"
-    GOURMET = "gourmet"
-    SAZONAL = "sazonal"
-
-
 class ProductBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
     price: float = Field(..., ge=0, description="Preço unitário em R$")
     weight: Optional[str] = Field(None, description="Peso (ex: 320g)")
     description: Optional[str] = Field(None, max_length=2000)
-    category: ProductCategory = ProductCategory.TRADICIONAL
+    # Legacy plain-text category kept for backward compatibility reads.
+    category: Optional[str] = Field(None, description="Categoria legada (deprecated)")
+    # New dynamic category model.
+    category_id: Optional[UUID] = None
+    category_slug: Optional[str] = None
     lot_code: Optional[str] = None
     image_url: Optional[str] = None
     is_active: bool = True
@@ -43,7 +41,9 @@ class ProductUpdate(BaseModel):
     price: Optional[float] = None
     weight: Optional[str] = None
     description: Optional[str] = None
-    category: Optional[ProductCategory] = None
+    category: Optional[str] = None
+    category_id: Optional[UUID] = None
+    category_slug: Optional[str] = None
     lot_code: Optional[str] = None
     image_url: Optional[str] = None
     is_active: Optional[bool] = None

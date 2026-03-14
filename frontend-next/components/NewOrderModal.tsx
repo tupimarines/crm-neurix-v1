@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { supabase } from "@/lib/supabase";
+import { api } from "@/lib/api";
 
 interface Lead {
     id: string;
@@ -14,6 +15,20 @@ interface Product {
     id: string;
     name: string;
     price: number;
+}
+
+interface CatalogItem {
+    id: string;
+    type: "product" | "promotion" | "category";
+    label: string;
+    subtitle: string;
+    category_id?: string;
+    product_id?: string;
+    promotion_id?: string;
+    price?: number;
+    discount_type?: "percent" | "fixed";
+    discount_value?: number;
+    is_active: boolean;
 }
 
 interface SelectedProduct {
@@ -47,6 +62,11 @@ export default function NewOrderModal({ onClose, onCreated }: NewOrderModalProps
     const [selectedProducts, setSelectedProducts] = useState<SelectedProduct[]>([]);
     const [showProductDropdown, setShowProductDropdown] = useState(false);
     const [productsLoading, setProductsLoading] = useState(false);
+    const [catalogQuery, setCatalogQuery] = useState("");
+    const [catalogResults, setCatalogResults] = useState<CatalogItem[]>([]);
+    const [catalogLoading, setCatalogLoading] = useState(false);
+    const [selectedCatalogHints, setSelectedCatalogHints] = useState<CatalogItem[]>([]);
+    const catalogTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     // Order state
     const [notes, setNotes] = useState("");
@@ -58,6 +78,13 @@ export default function NewOrderModal({ onClose, onCreated }: NewOrderModalProps
     useEffect(() => {
         loadTenantId();
         loadProducts();
+    }, []);
+
+    useEffect(() => {
+        return () => {
+            if (clientTimerRef.current) clearTimeout(clientTimerRef.current);
+            if (catalogTimerRef.current) clearTimeout(catalogTimerRef.current);
+        };
     }, []);
 
     async function loadTenantId() {
@@ -96,6 +123,49 @@ export default function NewOrderModal({ onClose, onCreated }: NewOrderModalProps
             setProductsLoading(false);
         }
     }
+
+    const searchCatalog = useCallback(async (query: string) => {
+        if (query.trim().length < 2) {
+            setCatalogResults([]);
+            setCatalogLoading(false);
+            return;
+        }
+        setCatalogLoading(true);
+        try {
+            const token = localStorage.getItem("access_token") || undefined;
+            const data = await api<{ items: CatalogItem[] }>(
+                `/api/catalog/search?q=${encodeURIComponent(query.trim())}&types=product,promotion,category&limit=20&offset=0`,
+                { method: "GET", token }
+            );
+            setCatalogResults(data.items || []);
+        } catch (err) {
+            console.error("Catalog search error:", err);
+            setCatalogResults([]);
+        } finally {
+            setCatalogLoading(false);
+        }
+    }, []);
+
+    const handleCatalogQueryChange = (value: string) => {
+        setCatalogQuery(value);
+        if (catalogTimerRef.current) clearTimeout(catalogTimerRef.current);
+        catalogTimerRef.current = setTimeout(() => searchCatalog(value), 250);
+    };
+
+    const handleSelectCatalogItem = (item: CatalogItem) => {
+        if (item.type === "product") {
+            const productId = item.product_id || item.id;
+            const available = availableProducts.find((p) => p.id === productId);
+            const prod = available || { id: productId, name: item.label, price: item.price || 0 };
+            handleAddProduct(prod);
+        } else {
+            if (!selectedCatalogHints.some((h) => h.id === item.id && h.type === item.type)) {
+                setSelectedCatalogHints((prev) => [...prev, item]);
+            }
+        }
+        setCatalogQuery("");
+        setCatalogResults([]);
+    };
 
     // Debounced client search
     const searchClients = useCallback(async (query: string) => {
@@ -219,11 +289,15 @@ export default function NewOrderModal({ onClose, onCreated }: NewOrderModalProps
                 id: p.id, name: p.name, price: p.price, qty: p.qty,
             }));
             const productSummary = selectedProducts.map(p => `${p.name} (x${p.qty})`).join(", ");
-
-            const { data, error } = await supabase
-                .from("orders")
-                .insert({
-                    tenant_id: tenantId,
+            const hintNotes = selectedCatalogHints.length
+                ? selectedCatalogHints.map((h) => `${h.type}: ${h.label}`).join(" | ")
+                : "";
+            const composedNotes = [notes.trim(), hintNotes].filter(Boolean).join("\n");
+            const token = localStorage.getItem("access_token") || undefined;
+            await api("/api/orders/", {
+                method: "POST",
+                token,
+                body: JSON.stringify({
                     lead_id: selectedClient.id,
                     client_name: selectedClient.contact_name,
                     client_company: selectedClient.company_name || null,
@@ -232,21 +306,14 @@ export default function NewOrderModal({ onClose, onCreated }: NewOrderModalProps
                     total,
                     stage: "Novo Pedido Manual",
                     payment_status: "pendente",
-                    notes: notes.trim() || null,
-                })
-                .select()
-                .single();
-
-            if (error) {
-                console.error("Create order error:", error);
-                setError("Erro ao criar pedido: " + error.message);
-            } else {
-                onCreated?.();
-                onClose();
-            }
+                    notes: composedNotes || null,
+                }),
+            });
+            onCreated?.();
+            onClose();
         } catch (err) {
             console.error("Create order error:", err);
-            setError("Erro inesperado ao criar pedido");
+            setError(`Erro ao criar pedido: ${err instanceof Error ? err.message : "erro desconhecido"}`);
         } finally {
             setSubmitting(false);
         }
@@ -388,6 +455,39 @@ export default function NewOrderModal({ onClose, onCreated }: NewOrderModalProps
                     {/* PRODUCTS SECTION */}
                     <div>
                         <label className="block text-xs font-semibold text-text-secondary-light uppercase tracking-wider mb-1.5">Produtos</label>
+                        <div className="mb-2">
+                            <input
+                                value={catalogQuery}
+                                onChange={(e) => handleCatalogQueryChange(e.target.value)}
+                                className="w-full px-3 py-2 bg-white dark:bg-slate-800 border border-border-light dark:border-border-dark rounded-lg text-sm"
+                                placeholder="Buscar produto, promoção ou categoria..."
+                            />
+                            {(catalogLoading || catalogResults.length > 0) && (
+                                <div className="mt-1 border border-border-light dark:border-border-dark rounded-lg bg-surface-light dark:bg-surface-dark max-h-40 overflow-y-auto">
+                                    {catalogLoading && <p className="px-3 py-2 text-xs text-text-secondary-light">Buscando...</p>}
+                                    {!catalogLoading && catalogResults.map((item) => (
+                                        <button
+                                            key={`${item.type}-${item.id}`}
+                                            type="button"
+                                            onClick={() => handleSelectCatalogItem(item)}
+                                            className="w-full text-left px-3 py-2 text-sm hover:bg-primary/5 flex items-center justify-between"
+                                        >
+                                            <span>{item.label}</span>
+                                            <span className="text-[10px] uppercase text-text-secondary-light">{item.type}</span>
+                                        </button>
+                                    ))}
+                                </div>
+                            )}
+                            {selectedCatalogHints.length > 0 && (
+                                <div className="mt-2 flex flex-wrap gap-1">
+                                    {selectedCatalogHints.map((hint) => (
+                                        <span key={`${hint.type}-${hint.id}`} className="text-[10px] px-2 py-1 rounded bg-blue-50 text-blue-700 border border-blue-200">
+                                            {hint.type}: {hint.label}
+                                        </span>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
                         <div className="border border-border-light dark:border-border-dark rounded-xl overflow-hidden">
                             {selectedProducts.length === 0 ? (
                                 <div className="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-800/50">

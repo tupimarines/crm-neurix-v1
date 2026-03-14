@@ -18,6 +18,26 @@ interface Product {
     tenant_id: string;
 }
 
+interface ProductCategory {
+    id: string;
+    name: string;
+    slug: string;
+    is_active: boolean;
+}
+
+interface Promotion {
+    id: string;
+    name: string;
+    slug: string;
+    discount_type: "percent" | "fixed";
+    discount_value: number;
+    priority: number;
+    is_active: boolean;
+    product_ids: string[];
+    starts_at: string;
+    ends_at?: string;
+}
+
 const STATUS_LABELS: Record<string, { label: string; color: string }> = {
     em_estoque: { label: "EM ESTOQUE", color: "green" },
     baixo_estoque: { label: "BAIXO ESTOQUE", color: "yellow" },
@@ -34,6 +54,8 @@ const CATEGORY_MAP: Record<string, string> = {
 
 export default function ProdutosPage() {
     const [products, setProducts] = useState<Product[]>([]);
+    const [categories, setCategories] = useState<ProductCategory[]>([]);
+    const [promotions, setPromotions] = useState<Promotion[]>([]);
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -43,14 +65,23 @@ export default function ProdutosPage() {
     const [searchQuery, setSearchQuery] = useState("");
     const [filterCategory, setFilterCategory] = useState("");
     const [showFilter, setShowFilter] = useState(false);
+    const [catalogTab, setCatalogTab] = useState<"products" | "categories" | "promotions">("products");
 
     const fileInputRef = useRef<HTMLInputElement>(null);
     const [previewImage, setPreviewImage] = useState<string | null>(null);
     const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
     const [newProduct, setNewProduct] = useState({
-        name: "", price: "", weight: "", category: "tradicional",
+        name: "", price: "", weight: "", category: "",
         description: "", lot_code: "",
+    });
+    const [newCategory, setNewCategory] = useState({ name: "", slug: "" });
+    const [newPromotion, setNewPromotion] = useState({
+        name: "",
+        slug: "",
+        discount_type: "percent",
+        discount_value: "",
+        priority: "0",
     });
 
     // ── Helpers ──────────────────────────────────────────────────
@@ -81,7 +112,33 @@ export default function ProdutosPage() {
         }
     }, []);
 
-    useEffect(() => { fetchProducts(); }, [fetchProducts]);
+    const fetchCategories = useCallback(async () => {
+        try {
+            const res = await fetch(`${API}/api/product-categories/`, { headers: authHeaders() });
+            if (!res.ok) throw new Error(`Erro ${res.status}`);
+            const data = await res.json();
+            setCategories(data || []);
+        } catch (e) {
+            console.error("Erro ao carregar categorias", e);
+        }
+    }, []);
+
+    const fetchPromotions = useCallback(async () => {
+        try {
+            const res = await fetch(`${API}/api/promotions/`, { headers: authHeaders() });
+            if (!res.ok) throw new Error(`Erro ${res.status}`);
+            const data = await res.json();
+            setPromotions(data || []);
+        } catch (e) {
+            console.error("Erro ao carregar promoções", e);
+        }
+    }, []);
+
+    useEffect(() => {
+        fetchProducts();
+        fetchCategories();
+        fetchPromotions();
+    }, [fetchProducts, fetchCategories, fetchPromotions]);
 
     // ── File handling ─────────────────────────────────────────────
     function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
@@ -123,6 +180,7 @@ export default function ProdutosPage() {
                 price: parseFloat(newProduct.price.replace(",", ".")),
                 weight: newProduct.weight || undefined,
                 category: newProduct.category,
+                category_slug: newProduct.category || undefined,
                 description: newProduct.description || undefined,
                 lot_code: newProduct.lot_code || undefined,
                 image_url,
@@ -143,7 +201,7 @@ export default function ProdutosPage() {
             setShowPanel(false);
             setPreviewImage(null);
             setSelectedFile(null);
-            setNewProduct({ name: "", price: "", weight: "", category: "tradicional", description: "", lot_code: "" });
+            setNewProduct({ name: "", price: "", weight: "", category: "", description: "", lot_code: "" });
         } catch (e) {
             setError(e instanceof Error ? e.message : "Erro desconhecido");
         } finally {
@@ -159,6 +217,58 @@ export default function ProdutosPage() {
             headers: authHeaders(),
         });
         await fetchProducts();
+    }
+
+    async function handleCreateCategory() {
+        if (!newCategory.name.trim() || !newCategory.slug.trim()) return;
+        await fetch(`${API}/api/product-categories/`, {
+            method: "POST",
+            headers: { ...authHeaders(), "Content-Type": "application/json" },
+            body: JSON.stringify({
+                name: newCategory.name.trim(),
+                slug: newCategory.slug.trim().toLowerCase(),
+                is_active: true,
+            }),
+        });
+        setNewCategory({ name: "", slug: "" });
+        await fetchCategories();
+    }
+
+    async function handleArchiveCategory(id: string) {
+        await fetch(`${API}/api/product-categories/${id}`, {
+            method: "DELETE",
+            headers: authHeaders(),
+        });
+        await fetchCategories();
+    }
+
+    async function handleCreatePromotion() {
+        if (!newPromotion.name.trim() || !newPromotion.slug.trim() || !newPromotion.discount_value.trim()) return;
+        const nowIso = new Date().toISOString();
+        await fetch(`${API}/api/promotions/`, {
+            method: "POST",
+            headers: { ...authHeaders(), "Content-Type": "application/json" },
+            body: JSON.stringify({
+                name: newPromotion.name.trim(),
+                slug: newPromotion.slug.trim().toLowerCase(),
+                discount_type: newPromotion.discount_type,
+                discount_value: Number(newPromotion.discount_value),
+                starts_at: nowIso,
+                priority: Number(newPromotion.priority || 0),
+                is_active: true,
+                product_ids: [],
+            }),
+        });
+        setNewPromotion({ name: "", slug: "", discount_type: "percent", discount_value: "", priority: "0" });
+        await fetchPromotions();
+    }
+
+    async function handleArchivePromotion(id: string) {
+        await fetch(`${API}/api/promotions/${id}`, {
+            method: "DELETE",
+            headers: authHeaders(),
+        });
+        await fetchPromotions();
     }
 
     // ── Filter ────────────────────────────────────────────────────
@@ -192,7 +302,7 @@ export default function ProdutosPage() {
                             placeholder="Buscar por nome, lote, categoria..."
                             type="text" />
                     </div>
-                    <button onClick={() => { setShowPanel(true); setPreviewImage(null); setSelectedFile(null); setNewProduct({ name: "", price: "", weight: "", category: "tradicional", description: "", lot_code: "" }); }}
+                    <button onClick={() => { setShowPanel(true); setPreviewImage(null); setSelectedFile(null); setNewProduct({ name: "", price: "", weight: "", category: "", description: "", lot_code: "" }); }}
                         className="bg-primary hover:bg-primary-hover text-white px-4 py-2.5 rounded-lg flex items-center gap-2 shadow-lg shadow-primary/30 transition-all active:scale-95">
                         <span className="material-symbols-outlined text-lg">add</span>
                         <span className="font-medium text-sm">Novo Produto</span>
@@ -212,6 +322,21 @@ export default function ProdutosPage() {
                 {/* Filters & View toggle */}
                 <div className="flex justify-between items-center mb-6 gap-4">
                     <div className="flex items-center gap-2">
+                        <div className="flex items-center rounded-lg border border-border-light dark:border-border-dark overflow-hidden">
+                            {[
+                                { id: "products", label: "Produtos" },
+                                { id: "categories", label: "Categorias" },
+                                { id: "promotions", label: "Promoções" },
+                            ].map((tab) => (
+                                <button
+                                    key={tab.id}
+                                    onClick={() => setCatalogTab(tab.id as "products" | "categories" | "promotions")}
+                                    className={`px-3 py-1.5 text-xs font-medium ${catalogTab === tab.id ? "bg-primary text-white" : "bg-surface-light dark:bg-surface-dark hover:bg-slate-100"}`}
+                                >
+                                    {tab.label}
+                                </button>
+                            ))}
+                        </div>
                         <div className="relative">
                             <button onClick={() => setShowFilter(!showFilter)}
                                 className="px-3 py-1.5 bg-surface-light dark:bg-surface-dark border border-border-light dark:border-border-dark rounded-lg text-sm font-medium text-text-secondary-light hover:border-primary transition-colors flex items-center gap-2 shadow-sm">
@@ -244,6 +369,57 @@ export default function ProdutosPage() {
                 {loading ? (
                     <div className="flex items-center justify-center py-20">
                         <span className="material-symbols-outlined text-primary text-4xl animate-spin">progress_activity</span>
+                    </div>
+                ) : catalogTab === "categories" ? (
+                    <div className="space-y-4">
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                            <input value={newCategory.name} onChange={(e) => setNewCategory({ ...newCategory, name: e.target.value })} className="px-3 py-2 border border-border-light dark:border-border-dark rounded-lg text-sm" placeholder="Nome da categoria" />
+                            <input value={newCategory.slug} onChange={(e) => setNewCategory({ ...newCategory, slug: e.target.value })} className="px-3 py-2 border border-border-light dark:border-border-dark rounded-lg text-sm" placeholder="slug-exemplo" />
+                            <button onClick={handleCreateCategory} className="px-3 py-2 rounded-lg bg-primary text-white text-sm">Criar categoria</button>
+                        </div>
+                        <div className="bg-surface-light dark:bg-surface-dark border border-border-light dark:border-border-dark rounded-xl overflow-hidden">
+                            {categories.map((category) => (
+                                <div key={category.id} className="flex items-center justify-between px-4 py-3 border-b border-border-light dark:border-border-dark last:border-0">
+                                    <div>
+                                        <p className="font-medium text-sm">{category.name}</p>
+                                        <p className="text-xs text-text-secondary-light">{category.slug}</p>
+                                    </div>
+                                    <button onClick={() => handleArchiveCategory(category.id)} className="text-xs text-red-600 hover:underline">
+                                        {category.is_active ? "Inativar" : "Inativa"}
+                                    </button>
+                                </div>
+                            ))}
+                            {categories.length === 0 && <p className="px-4 py-6 text-sm text-text-secondary-light">Sem categorias.</p>}
+                        </div>
+                    </div>
+                ) : catalogTab === "promotions" ? (
+                    <div className="space-y-4">
+                        <div className="grid grid-cols-1 md:grid-cols-5 gap-2">
+                            <input value={newPromotion.name} onChange={(e) => setNewPromotion({ ...newPromotion, name: e.target.value })} className="px-3 py-2 border border-border-light dark:border-border-dark rounded-lg text-sm" placeholder="Nome promoção" />
+                            <input value={newPromotion.slug} onChange={(e) => setNewPromotion({ ...newPromotion, slug: e.target.value })} className="px-3 py-2 border border-border-light dark:border-border-dark rounded-lg text-sm" placeholder="slug-promocao" />
+                            <select value={newPromotion.discount_type} onChange={(e) => setNewPromotion({ ...newPromotion, discount_type: e.target.value as "percent" | "fixed" })} className="px-3 py-2 border border-border-light dark:border-border-dark rounded-lg text-sm">
+                                <option value="percent">%</option>
+                                <option value="fixed">Valor</option>
+                            </select>
+                            <input value={newPromotion.discount_value} onChange={(e) => setNewPromotion({ ...newPromotion, discount_value: e.target.value })} className="px-3 py-2 border border-border-light dark:border-border-dark rounded-lg text-sm" placeholder="Desconto" />
+                            <button onClick={handleCreatePromotion} className="px-3 py-2 rounded-lg bg-primary text-white text-sm">Criar promoção</button>
+                        </div>
+                        <div className="bg-surface-light dark:bg-surface-dark border border-border-light dark:border-border-dark rounded-xl overflow-hidden">
+                            {promotions.map((promotion) => (
+                                <div key={promotion.id} className="flex items-center justify-between px-4 py-3 border-b border-border-light dark:border-border-dark last:border-0">
+                                    <div>
+                                        <p className="font-medium text-sm">{promotion.name}</p>
+                                        <p className="text-xs text-text-secondary-light">
+                                            {promotion.discount_type === "percent" ? `${promotion.discount_value}%` : `R$ ${promotion.discount_value}`} • prioridade {promotion.priority}
+                                        </p>
+                                    </div>
+                                    <button onClick={() => handleArchivePromotion(promotion.id)} className="text-xs text-red-600 hover:underline">
+                                        {promotion.is_active ? "Inativar" : "Inativa"}
+                                    </button>
+                                </div>
+                            ))}
+                            {promotions.length === 0 && <p className="px-4 py-6 text-sm text-text-secondary-light">Sem promoções.</p>}
+                        </div>
                     </div>
                 ) : viewMode === "grid" ? (
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
@@ -280,7 +456,7 @@ export default function ProdutosPage() {
                                 </div>
                             );
                         })}
-                        <button onClick={() => { setShowPanel(true); setPreviewImage(null); setSelectedFile(null); setNewProduct({ name: "", price: "", weight: "", category: "tradicional", description: "", lot_code: "" }); }}
+                        <button onClick={() => { setShowPanel(true); setPreviewImage(null); setSelectedFile(null); setNewProduct({ name: "", price: "", weight: "", category: "", description: "", lot_code: "" }); }}
                             className="border-2 border-dashed border-border-light dark:border-border-dark rounded-xl p-4 flex flex-col items-center justify-center text-text-secondary-light hover:text-primary hover:border-primary hover:bg-primary/5 transition-all h-full min-h-[280px] group">
                             <div className="w-12 h-12 rounded-full bg-slate-100 dark:bg-slate-800 group-hover:bg-primary-light flex items-center justify-center mb-3 transition-colors">
                                 <span className="material-symbols-outlined text-2xl group-hover:text-primary transition-colors">add</span>
@@ -394,7 +570,11 @@ export default function ProdutosPage() {
                                     <label className="block text-xs font-semibold text-text-secondary-light uppercase tracking-wider mb-1.5">Categoria</label>
                                     <select value={newProduct.category} onChange={(e) => setNewProduct({ ...newProduct, category: e.target.value })}
                                         className="w-full px-4 py-2.5 bg-white dark:bg-slate-800 border border-border-light dark:border-border-dark rounded-lg text-sm focus:ring-2 focus:ring-primary focus:border-transparent shadow-sm">
-                                        {Object.entries(CATEGORY_MAP).map(([val, label]) => (
+                                        <option value="">Sem categoria</option>
+                                        {categories.filter((c) => c.is_active).map((category) => (
+                                            <option key={category.id} value={category.slug}>{category.name}</option>
+                                        ))}
+                                        {!categories.length && Object.entries(CATEGORY_MAP).map(([val, label]) => (
                                             <option key={val} value={val}>{label}</option>
                                         ))}
                                     </select>

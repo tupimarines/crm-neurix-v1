@@ -35,6 +35,13 @@ interface OrderDetail {
     payment_status: string;
     stage: string;
     notes: string;
+    subtotal?: number;
+    discount_total?: number;
+    applied_promotions_json?: Array<{
+        product_name?: string;
+        promotion_name?: string;
+        line_discount?: number;
+    }>;
     created_at: string;
     lead_id?: string;
     tenant_id?: string;
@@ -156,6 +163,12 @@ function OrderCard({ order, onClose }: { order: OrderDetail; onClose: () => void
                     )}
                     <div className="flex items-center justify-between">
                         <div>
+                            {typeof order.subtotal === "number" && (
+                                <p className="text-xs text-text-secondary-light">Subtotal: {fmt(order.subtotal)}</p>
+                            )}
+                            {typeof order.discount_total === "number" && order.discount_total > 0 && (
+                                <p className="text-xs text-emerald-600">Desconto: -{fmt(order.discount_total)}</p>
+                            )}
                             <span className="text-xs font-semibold text-text-secondary-light uppercase">Total:</span>
                             <p className="text-xl font-bold text-green-600 mt-0.5">{fmt(order.total || 0)}</p>
                         </div>
@@ -173,6 +186,18 @@ function OrderCard({ order, onClose }: { order: OrderDetail; onClose: () => void
                         <div>
                             <span className="text-xs font-semibold text-text-secondary-light uppercase">Notas:</span>
                             <p className="text-sm mt-1 text-text-secondary-light dark:text-text-secondary-dark">{order.notes}</p>
+                        </div>
+                    )}
+                    {(order.applied_promotions_json || []).length > 0 && (
+                        <div>
+                            <span className="text-xs font-semibold text-text-secondary-light uppercase">Promoções aplicadas:</span>
+                            <div className="mt-1 space-y-1">
+                                {order.applied_promotions_json!.map((promo, idx) => (
+                                    <p key={idx} className="text-xs text-text-secondary-light dark:text-text-secondary-dark">
+                                        {(promo.product_name || "Item")} - {(promo.promotion_name || "Promoção")} ({fmt(Number(promo.line_discount || 0))})
+                                    </p>
+                                ))}
+                            </div>
                         </div>
                     )}
                     <div className="text-xs text-text-secondary-light pt-2 border-t border-border-light dark:border-border-dark">
@@ -430,7 +455,7 @@ export default function DashboardPage() {
             } else if (result.type === "order") {
                 const { data, error } = await supabase
                     .from("orders")
-                    .select("id, client_name, client_company, product_summary, total, payment_status, stage, notes, created_at")
+                    .select("id, client_name, client_company, product_summary, total, subtotal, discount_total, applied_promotions_json, payment_status, stage, notes, created_at")
                     .eq("id", result.id)
                     .single();
                 if (error) console.error("Order fetch error:", error);

@@ -63,6 +63,8 @@ class LeadResponse(LeadBase):
 
 class KanbanColumn(BaseModel):
     stage: str
+    stage_id: Optional[str] = None
+    stage_version: Optional[int] = None
     label: str
     count: int
     total_value: float

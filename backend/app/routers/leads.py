@@ -6,6 +6,8 @@ Provides the data for the Funil de Vendas Kanban board and WhatsApp chat integra
 from fastapi import APIRouter, Depends, HTTPException, status, Query, BackgroundTasks
 from supabase import Client as SupabaseClient
 from typing import Optional
+from pydantic import BaseModel, Field
+from time import perf_counter
 
 from app.dependencies import get_supabase, get_current_user
 from app.models.lead import (
@@ -13,9 +15,11 @@ from app.models.lead import (
     KanbanBoard, KanbanColumn, LeadStage,
 )
 from app.models.chat_message import SendMessagePayload
+from app.observability import get_logger, metrics
 from app.services.uazapi_service import get_uazapi_service
 
 router = APIRouter()
+logger = get_logger("leads")
 
 STAGE_LABELS = {
     LeadStage.CONTATO_INICIAL: "Contato Inicial",
@@ -25,12 +29,22 @@ STAGE_LABELS = {
 }
 
 
+class ReorderStageItem(BaseModel):
+    id: str
+    version: int = Field(..., ge=1)
+
+
+class ReorderStagesPayload(BaseModel):
+    items: list[ReorderStageItem] = Field(..., min_length=1)
+
+
 @router.get("/kanban", response_model=KanbanBoard)
 async def get_kanban_board(
     user=Depends(get_current_user),
     supabase: SupabaseClient = Depends(get_supabase),
 ):
     """Get all leads organized as a Kanban board with columns."""
+    started = perf_counter()
     # 1. Fetch Stages
     stages_response = supabase.table("pipeline_stages") \
         .select("*") \
@@ -43,10 +57,10 @@ async def get_kanban_board(
     # Default stages if none exist
     if not stages_data:
         stages_data = [
-            {"id": "s1", "name": "Contato Inicial", "order_position": 0},
-            {"id": "s2", "name": "Escolhendo Sabores", "order_position": 1},
-            {"id": "s3", "name": "Aguardando Pagamento", "order_position": 2},
-            {"id": "s4", "name": "Enviado", "order_position": 3},
+            {"id": "default-contato", "name": "Contato Inicial", "order_position": 0, "version": 1},
+            {"id": "default-escolhendo", "name": "Escolhendo Sabores", "order_position": 1, "version": 1},
+            {"id": "default-aguardando", "name": "Aguardando Pagamento", "order_position": 2, "version": 1},
+            {"id": "default-enviado", "name": "Enviado", "order_position": 3, "version": 1},
         ]
 
     # 2. Fetch Leads
@@ -83,13 +97,101 @@ async def get_kanban_board(
         stage_leads = leads_by_stage[name]
         columns.append(KanbanColumn(
             stage=name,
+            stage_id=stage_info.get("id"),
+            stage_version=int(stage_info.get("version") or 1),
             label=name,
             count=len(stage_leads),
             total_value=sum(l.value for l in stage_leads),
             leads=stage_leads,
         ))
 
+    elapsed_ms = (perf_counter() - started) * 1000.0
+    metrics.observe("kanban_board", elapsed_ms, ok=True)
     return KanbanBoard(columns=columns)
+
+
+@router.post("/stages/reorder", status_code=status.HTTP_200_OK)
+async def reorder_stages(
+    payload: ReorderStagesPayload,
+    user=Depends(get_current_user),
+    supabase: SupabaseClient = Depends(get_supabase),
+):
+    started = perf_counter()
+    ordered_ids = [item.id for item in payload.items]
+    version_by_id = {item.id: item.version for item in payload.items}
+
+    current_response = (
+        supabase.table("pipeline_stages")
+        .select("id, tenant_id, order_position, version")
+        .eq("tenant_id", user.id)
+        .order("order_position")
+        .execute()
+    )
+    current_rows = current_response.data or []
+    if not current_rows:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Nenhuma etapa encontrada para reorder.")
+
+    db_ids = [row["id"] for row in current_rows]
+    if set(db_ids) != set(ordered_ids):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Payload inválido: etapas ausentes, duplicadas ou de outro tenant.",
+        )
+
+    for stage in current_rows:
+        expected_version = version_by_id.get(stage["id"])
+        if expected_version is None:
+            raise HTTPException(status_code=400, detail="Payload inválido: versão ausente.")
+        if int(stage.get("version") or 1) != int(expected_version):
+            metrics.observe("kanban_reorder", (perf_counter() - started) * 1000.0, ok=False)
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Conflito de versão. Recarregue o Kanban.")
+
+    previous_positions = {row["id"]: row["order_position"] for row in current_rows}
+    previous_versions = {row["id"]: int(row.get("version") or 1) for row in current_rows}
+    try:
+        for idx, stage_id in enumerate(ordered_ids):
+            update_res = (
+                supabase.table("pipeline_stages")
+                .update({"order_position": idx, "version": previous_versions[stage_id] + 1})
+                .eq("id", stage_id)
+                .eq("tenant_id", user.id)
+                .eq("version", previous_versions[stage_id])
+                .execute()
+            )
+            if not update_res.data:
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Conflito de versão. Recarregue o Kanban.")
+    except HTTPException:
+        # Best-effort rollback para manter consistência visual/banco em falha parcial.
+        for stage_id, old_position in previous_positions.items():
+            supabase.table("pipeline_stages").update(
+                {"order_position": old_position, "version": previous_versions[stage_id]}
+            ).eq("id", stage_id).eq("tenant_id", user.id).execute()
+        metrics.observe("kanban_reorder", (perf_counter() - started) * 1000.0, ok=False)
+        logger.warning("kanban_reorder_conflict_or_error", extra={"tenant_id": str(user.id), "error_count": 1})
+        raise
+    except Exception as exc:
+        for stage_id, old_position in previous_positions.items():
+            supabase.table("pipeline_stages").update(
+                {"order_position": old_position, "version": previous_versions[stage_id]}
+            ).eq("id", stage_id).eq("tenant_id", user.id).execute()
+        metrics.observe("kanban_reorder", (perf_counter() - started) * 1000.0, ok=False)
+        logger.exception("kanban_reorder_failed", extra={"tenant_id": str(user.id)})
+        raise HTTPException(status_code=500, detail=f"Erro ao persistir reorder: {str(exc)}")
+
+    refreshed = (
+        supabase.table("pipeline_stages")
+        .select("id, name, order_position, version")
+        .eq("tenant_id", user.id)
+        .order("order_position")
+        .execute()
+    )
+    elapsed_ms = (perf_counter() - started) * 1000.0
+    metrics.observe("kanban_reorder", elapsed_ms, ok=True)
+    logger.info(
+        "kanban_reorder_success",
+        extra={"tenant_id": str(user.id), "result_count": len(ordered_ids), "elapsed_ms": round(elapsed_ms, 2)},
+    )
+    return {"stages": refreshed.data or []}
 
 
 @router.get("/", response_model=list[LeadResponse])

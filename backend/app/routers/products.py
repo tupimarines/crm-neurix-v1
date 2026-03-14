@@ -8,14 +8,15 @@ from supabase import Client as SupabaseClient
 from typing import Optional
 
 from app.dependencies import get_supabase, get_current_user
-from app.models.product import ProductCreate, ProductUpdate, ProductResponse, ProductCategory
+from app.models.product import ProductCreate, ProductUpdate, ProductResponse
 
 router = APIRouter()
 
 
 @router.get("/", response_model=list[ProductResponse])
 async def list_products(
-    category: Optional[ProductCategory] = None,
+    category_id: Optional[str] = None,
+    category_slug: Optional[str] = None,
     search: Optional[str] = Query(None, min_length=1),
     active_only: bool = Query(False),
     user=Depends(get_current_user),
@@ -26,8 +27,20 @@ async def list_products(
         .eq("tenant_id", user.id) \
         .order("created_at", desc=True)
 
-    if category:
-        query = query.eq("category", category.value)
+    if category_id:
+        query = query.eq("category_id", category_id)
+    elif category_slug:
+        category_response = (
+            supabase.table("product_categories")
+            .select("id")
+            .eq("tenant_id", user.id)
+            .eq("slug", category_slug)
+            .single()
+            .execute()
+        )
+        if not category_response.data:
+            return []
+        query = query.eq("category_id", category_response.data["id"])
     if active_only:
         query = query.eq("is_active", True)
     if search:
@@ -65,6 +78,39 @@ async def create_product(
     data = payload.model_dump()
     data["tenant_id"] = user.id
     data["status"] = "em_estoque"
+    category_id = data.get("category_id")
+    category_slug = data.get("category_slug")
+
+    if category_slug and not category_id:
+        category_by_slug = (
+            supabase.table("product_categories")
+            .select("id")
+            .eq("tenant_id", user.id)
+            .eq("slug", category_slug)
+            .single()
+            .execute()
+        )
+        if not category_by_slug.data:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Categoria (slug) não encontrada.")
+        category_id = category_by_slug.data["id"]
+
+    if category_id:
+        category_by_id = (
+            supabase.table("product_categories")
+            .select("id, slug")
+            .eq("tenant_id", user.id)
+            .eq("id", category_id)
+            .single()
+            .execute()
+        )
+        if not category_by_id.data:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Categoria não encontrada.")
+        data["category_id"] = category_by_id.data["id"]
+        data["category_slug"] = category_by_id.data["slug"]
+    else:
+        data["category_id"] = None
+        data["category_slug"] = None
+        data["category"] = None
 
     response = supabase.table("products").insert(data).execute()
 
@@ -85,6 +131,38 @@ async def update_product(
     update_data = payload.model_dump(exclude_unset=True)
     if not update_data:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Nenhum campo para atualizar.")
+
+    category_id = update_data.get("category_id")
+    category_slug = update_data.get("category_slug")
+    if category_slug and not category_id:
+        category_by_slug = (
+            supabase.table("product_categories")
+            .select("id")
+            .eq("tenant_id", user.id)
+            .eq("slug", category_slug)
+            .single()
+            .execute()
+        )
+        if not category_by_slug.data:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Categoria (slug) não encontrada.")
+        update_data["category_id"] = category_by_slug.data["id"]
+
+    if category_id or "category_id" in update_data:
+        if update_data.get("category_id"):
+            category_by_id = (
+                supabase.table("product_categories")
+                .select("id, slug")
+                .eq("tenant_id", user.id)
+                .eq("id", update_data["category_id"])
+                .single()
+                .execute()
+            )
+            if not category_by_id.data:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Categoria não encontrada.")
+            update_data["category_slug"] = category_by_id.data["slug"]
+        else:
+            update_data["category_slug"] = None
+            update_data["category"] = None
 
     response = supabase.table("products") \
         .update(update_data) \

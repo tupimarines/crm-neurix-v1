@@ -17,6 +17,7 @@ import {
     SortableContext,
     useSortable,
     verticalListSortingStrategy,
+    horizontalListSortingStrategy,
     arrayMove,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
@@ -41,11 +42,12 @@ interface KanbanCard {
 interface KanbanStage {
     id: string;
     title: string;
+    version: number;
 }
 
 // Sortable Card Component
 function SortableCard({ card, onOpenChat, onOpenMenu }: { card: KanbanCard; onOpenChat: (id: string) => void; onOpenMenu: (id: string) => void }) {
-    const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: card.id });
+    const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: card.id, data: { type: "card" } });
     const style = {
         transform: CSS.Transform.toString(transform),
         transition,
@@ -85,6 +87,29 @@ function SortableCard({ card, onOpenChat, onOpenMenu }: { card: KanbanCard; onOp
                     </button>
                 </div>
             </div>
+        </div>
+    );
+}
+
+function SortableStageShell({
+    stageId,
+    children,
+}: {
+    stageId: string;
+    children: (dragHandle: { attributes: any; listeners: any }) => React.ReactNode;
+}) {
+    const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+        id: stageId,
+        data: { type: "stage" },
+    });
+    const style = {
+        transform: CSS.Transform.toString(transform),
+        transition,
+        opacity: isDragging ? 0.75 : 1,
+    };
+    return (
+        <div ref={setNodeRef} style={style}>
+            {children({ attributes, listeners })}
         </div>
     );
 }
@@ -136,6 +161,8 @@ export default function KanbanPage() {
                 const data = await api<{
                     columns: Array<{
                         stage: string;
+                        stage_id?: string;
+                        stage_version?: number;
                         label: string;
                         leads: Array<{
                             id: string;
@@ -154,14 +181,15 @@ export default function KanbanPage() {
 
                 // Update stages state from columns
                 const fetchedStages: KanbanStage[] = data.columns.map((col) => ({
-                    id: `s-${col.stage}`,
-                    title: col.label
+                    id: col.stage_id || `s-${col.stage}`,
+                    title: col.label,
+                    version: col.stage_version || 1,
                 }));
                 setStages(fetchedStages);
 
                 const allCards: KanbanCard[] = [];
                 for (const col of data.columns) {
-                    const stageId = `s-${col.stage}`;
+                    const stageId = col.stage_id || `s-${col.stage}`;
                     for (const lead of col.leads) {
                         const pri = lead.priority ? PRIORITY_MAP[lead.priority] : null;
                         allCards.push({
@@ -216,8 +244,10 @@ export default function KanbanPage() {
     const [editCardMenu, setEditCardMenu] = useState<string | null>(null);
     const [editingCard, setEditingCard] = useState<KanbanCard | null>(null);
     const [isSaving, setIsSaving] = useState(false);
+    const [isSavingStageOrder, setIsSavingStageOrder] = useState(false);
     const [editStage, setEditStage] = useState<string | null>(null);
     const [editStageName, setEditStageName] = useState("");
+    const [lastReorderAttempt, setLastReorderAttempt] = useState<KanbanStage[] | null>(null);
 
     // Product data state
     const [availableProducts, setAvailableProducts] = useState<{ id: string, name: string, price: number }[]>([]);
@@ -503,6 +533,7 @@ export default function KanbanPage() {
 
     // DnD handlers
     function handleDragStart(event: DragStartEvent) {
+        if (event.active.data.current?.type !== "card") return;
         const card = cards.find((c) => c.id === event.active.id);
         if (card) setActiveCard(card);
     }
@@ -510,6 +541,7 @@ export default function KanbanPage() {
     function handleDragOver(event: DragOverEvent) {
         const { active, over } = event;
         if (!over) return;
+        if (active.data.current?.type !== "card") return;
         const activeCardId = active.id as string;
         const overId = over.id as string;
         const activeCardObj = cards.find((c) => c.id === activeCardId);
@@ -529,10 +561,47 @@ export default function KanbanPage() {
         }
     }
 
+    async function persistStageOrder(nextStages: KanbanStage[], previousStages: KanbanStage[]) {
+        setIsSavingStageOrder(true);
+        try {
+            const token = localStorage.getItem("access_token") || undefined;
+            const payload = { items: nextStages.map((s) => ({ id: s.id, version: s.version || 1 })) };
+            const response = await api<{ stages: Array<{ id: string; version: number }> }>("/api/leads/stages/reorder", {
+                method: "POST",
+                body: JSON.stringify(payload),
+                token
+            });
+            const versions = new Map((response.stages || []).map((s) => [s.id, s.version || 1]));
+            setStages(nextStages.map((s) => ({ ...s, version: versions.get(s.id) || s.version || 1 })));
+            setLastReorderAttempt(null);
+        } catch (err: any) {
+            setStages(previousStages);
+            setLastReorderAttempt(nextStages);
+            const retry = window.confirm(`Falha ao salvar ordem das etapas (${err?.message || "erro"}). Tentar novamente?`);
+            if (retry) {
+                await persistStageOrder(nextStages, previousStages);
+            }
+        } finally {
+            setIsSavingStageOrder(false);
+        }
+    }
+
     function handleDragEnd(event: DragEndEvent) {
         setActiveCard(null);
         const { active, over } = event;
         if (!over || active.id === over.id) return;
+        const activeType = active.data.current?.type;
+
+        if (activeType === "stage") {
+            const oldIndex = stages.findIndex((s) => s.id === active.id);
+            const newIndex = stages.findIndex((s) => s.id === over.id);
+            if (oldIndex < 0 || newIndex < 0 || oldIndex === newIndex) return;
+            const previous = [...stages];
+            const next = arrayMove(stages, oldIndex, newIndex);
+            setStages(next);
+            void persistStageOrder(next, previous);
+            return;
+        }
 
         const activeCardObj = cards.find((c) => c.id === active.id);
         const overCardObj = cards.find((c) => c.id === over.id);
@@ -583,7 +652,7 @@ export default function KanbanPage() {
 
             if (error) throw error;
 
-            setStages([...stages, { id: `s-${name}`, title: name }]);
+            setStages([...stages, { id: newS?.id || `s-${name}`, title: name, version: 1 }]);
             setNewStageName("");
             setShowNewStage(false);
         } catch (err) {
@@ -764,6 +833,14 @@ export default function KanbanPage() {
                     )}
                 </div>
                 <div className="flex items-center gap-3">
+                    {lastReorderAttempt && (
+                        <button
+                            onClick={() => { void persistStageOrder(lastReorderAttempt, [...stages]); }}
+                            className="text-xs px-2 py-1 rounded border border-amber-300 text-amber-700 bg-amber-50 hover:bg-amber-100"
+                        >
+                            Repetir reorder
+                        </button>
+                    )}
                     {/* View toggle */}
                     <div className="flex bg-slate-100 dark:bg-slate-800 rounded-lg p-0.5 border border-border-light dark:border-border-dark">
                         <button onClick={() => setViewMode("kanban")} className={`p-1.5 rounded-md transition-colors ${viewMode === "kanban" ? "bg-white dark:bg-slate-600 shadow-sm text-primary" : "text-text-secondary-light"}`}>
@@ -818,14 +895,26 @@ export default function KanbanPage() {
                         onMouseUp={onMouseUp}
                         onMouseLeave={onMouseUp}
                     >
+                        <SortableContext items={stages.map((s) => s.id)} strategy={horizontalListSortingStrategy}>
                         <div className="flex h-full gap-5 min-w-max pb-4">
                             {stages.map((stage) => {
                                 const stageCards = filteredCards.filter((c) => c.stageId === stage.id);
                                 return (
-                                    <div key={stage.id} className="w-[310px] flex flex-col flex-shrink-0 bg-slate-50/50 dark:bg-slate-800/30 rounded-xl border border-border-light/60 dark:border-border-dark/60">
+                                    <SortableStageShell key={stage.id} stageId={stage.id}>
+                                    {({ attributes, listeners }) => (
+                                    <div className="w-[310px] flex flex-col flex-shrink-0 bg-slate-50/50 dark:bg-slate-800/30 rounded-xl border border-border-light/60 dark:border-border-dark/60">
                                         {/* Stage header */}
                                         <div className="p-3 flex items-center justify-between border-b border-border-light/50 dark:border-border-dark/50">
                                             <div className="flex items-center gap-2 flex-1 min-w-0">
+                                                <button
+                                                    type="button"
+                                                    {...attributes}
+                                                    {...listeners}
+                                                    className="text-text-secondary-light hover:text-primary cursor-grab active:cursor-grabbing"
+                                                    title="Arrastar etapa"
+                                                >
+                                                    <span className="material-symbols-outlined text-base">drag_indicator</span>
+                                                </button>
                                                 {editStage === stage.id ? (
                                                     <form onSubmit={(e) => { e.preventDefault(); renameStage(stage.id); }} className="flex items-center gap-1 flex-1">
                                                         <input autoFocus value={editStageName} onChange={(e) => setEditStageName(e.target.value)}
@@ -842,6 +931,7 @@ export default function KanbanPage() {
                                                 </span>
                                             </div>
                                             <div className="flex items-center text-xs text-text-secondary-light shrink-0 ml-2">
+                                                {isSavingStageOrder && <span className="mr-1 text-[10px]">Salvando</span>}
                                                 {formatCurrency(stageCards.reduce((acc, c) => acc + parseCurrency(c.value), 0))}
                                                 <button onClick={() => { setShowNewStage(true); }} className="ml-1 p-0.5 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-full text-primary" title="Nova etapa">
                                                     <span className="material-symbols-outlined text-lg">add</span>
@@ -930,6 +1020,8 @@ export default function KanbanPage() {
                                             )}
                                         </div>
                                     </div>
+                                    )}
+                                    </SortableStageShell>
                                 );
                             })}
 
@@ -945,6 +1037,7 @@ export default function KanbanPage() {
                                 </div>
                             )}
                         </div>
+                        </SortableContext>
                     </div>
                     <DragOverlay>{activeCard ? <CardOverlay card={activeCard} /> : null}</DragOverlay>
                 </DndContext>
