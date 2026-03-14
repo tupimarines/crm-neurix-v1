@@ -38,6 +38,18 @@ class ReorderStagesPayload(BaseModel):
     items: list[ReorderStageItem] = Field(..., min_length=1)
 
 
+class StageCreatePayload(BaseModel):
+    name: str = Field(..., min_length=1, max_length=120)
+
+
+class StageRenamePayload(BaseModel):
+    name: str = Field(..., min_length=1, max_length=120)
+
+
+class StageDeletePayload(BaseModel):
+    fallback_stage_id: str | None = None
+
+
 @router.get("/kanban", response_model=KanbanBoard)
 async def get_kanban_board(
     user=Depends(get_current_user),
@@ -192,6 +204,98 @@ async def reorder_stages(
         extra={"tenant_id": str(user.id), "result_count": len(ordered_ids), "elapsed_ms": round(elapsed_ms, 2)},
     )
     return {"stages": refreshed.data or []}
+
+
+@router.post("/stages", status_code=status.HTTP_201_CREATED)
+async def create_stage(
+    payload: StageCreatePayload,
+    user=Depends(get_current_user),
+    supabase: SupabaseClient = Depends(get_supabase),
+):
+    existing = (
+        supabase.table("pipeline_stages")
+        .select("id, order_position")
+        .eq("tenant_id", user.id)
+        .order("order_position", desc=True)
+        .limit(1)
+        .execute()
+    ).data or []
+    next_order = int(existing[0]["order_position"]) + 1 if existing else 0
+    response = (
+        supabase.table("pipeline_stages")
+        .insert({"tenant_id": user.id, "name": payload.name.strip(), "order_position": next_order})
+        .select("id, name, order_position, version")
+        .single()
+        .execute()
+    )
+    if not response.data:
+        raise HTTPException(status_code=400, detail="Erro ao criar etapa.")
+    return response.data
+
+
+@router.patch("/stages/{stage_id}")
+async def rename_stage(
+    stage_id: str,
+    payload: StageRenamePayload,
+    user=Depends(get_current_user),
+    supabase: SupabaseClient = Depends(get_supabase),
+):
+    response = (
+        supabase.table("pipeline_stages")
+        .update({"name": payload.name.strip()})
+        .eq("id", stage_id)
+        .eq("tenant_id", user.id)
+        .select("id, name, order_position, version")
+        .single()
+        .execute()
+    )
+    if not response.data:
+        raise HTTPException(status_code=404, detail="Etapa não encontrada.")
+    return response.data
+
+
+@router.delete("/stages/{stage_id}")
+async def delete_stage(
+    stage_id: str,
+    payload: StageDeletePayload,
+    user=Depends(get_current_user),
+    supabase: SupabaseClient = Depends(get_supabase),
+):
+    stages = (
+        supabase.table("pipeline_stages")
+        .select("id, name, order_position")
+        .eq("tenant_id", user.id)
+        .order("order_position")
+        .execute()
+    ).data or []
+    target = next((s for s in stages if str(s["id"]) == str(stage_id)), None)
+    if not target:
+        raise HTTPException(status_code=404, detail="Etapa não encontrada.")
+    if len(stages) <= 1:
+        raise HTTPException(status_code=400, detail="É necessário manter pelo menos uma etapa.")
+
+    fallback = None
+    if payload.fallback_stage_id:
+        fallback = next((s for s in stages if str(s["id"]) == str(payload.fallback_stage_id) and str(s["id"]) != str(stage_id)), None)
+    if not fallback:
+        fallback = next((s for s in stages if str(s["id"]) != str(stage_id)), None)
+    if not fallback:
+        raise HTTPException(status_code=400, detail="Etapa de fallback inválida.")
+
+    # Move leads to fallback by both stage name and legacy id-in-stage field.
+    supabase.table("leads").update({"stage": fallback["name"]}).eq("tenant_id", user.id).in_("stage", [target["name"], target["id"]]).execute()
+    delete_result = supabase.table("pipeline_stages").delete().eq("id", stage_id).eq("tenant_id", user.id).execute()
+    if not delete_result.data:
+        raise HTTPException(status_code=400, detail="Erro ao excluir etapa.")
+
+    refreshed = (
+        supabase.table("pipeline_stages")
+        .select("id, name, order_position, version")
+        .eq("tenant_id", user.id)
+        .order("order_position")
+        .execute()
+    ).data or []
+    return {"fallback_stage_id": fallback["id"], "stages": refreshed}
 
 
 @router.get("/", response_model=list[LeadResponse])

@@ -652,24 +652,18 @@ export default function KanbanPage() {
         if (!newStageName.trim()) return;
         const name = newStageName.trim();
         try {
-            const { data: { user } } = await supabase.auth.getUser();
-            if (!user) return;
-            const { data: profile } = await supabase.from("profiles").select("tenant_id").eq("id", user.id).single();
-            const tenantId = profile?.tenant_id || user.id;
-
-            const { data: newS, error } = await supabase.from('pipeline_stages').insert({
-                tenant_id: tenantId,
-                name: name,
-                order_position: stages.length
-            }).select().single();
-
-            if (error) throw error;
-
-            setStages([...stages, { id: newS?.id || `s-${name}`, title: name, version: 1 }]);
+            const token = localStorage.getItem("access_token") || undefined;
+            const created = await api<{ id: string; name: string; order_position: number; version: number }>("/api/leads/stages", {
+                method: "POST",
+                body: JSON.stringify({ name }),
+                token,
+            });
+            setStages([...stages, { id: created.id, title: created.name, version: created.version || 1 }]);
             setNewStageName("");
             setShowNewStage(false);
         } catch (err) {
             console.error("Failed to add stage:", err);
+            alert(`Falha ao criar etapa: ${err instanceof Error ? err.message : String(err)}`);
         }
     }
 
@@ -693,29 +687,15 @@ export default function KanbanPage() {
         if (!confirmed) return;
 
         try {
-            const { data: { user } } = await supabase.auth.getUser();
-            if (!user) return;
-            const { data: profile } = await supabase.from("profiles").select("tenant_id").eq("id", user.id).single();
-            const tenantId = profile?.tenant_id || user.id;
+            const token = localStorage.getItem("access_token") || undefined;
+            const response = await api<{ fallback_stage_id: string; stages: Array<{ id: string; name: string; version?: number }> }>(`/api/leads/stages/${stageId}`, {
+                method: "DELETE",
+                body: JSON.stringify({ fallback_stage_id: fallbackStage.id }),
+                token,
+            });
 
-            if (stageCards.length > 0) {
-                const { error: leadsError } = await supabase
-                    .from("leads")
-                    .update({ stage: fallbackStage.title })
-                    .eq("tenant_id", tenantId)
-                    .eq("stage", stageToDelete.title);
-                if (leadsError) throw leadsError;
-            }
-
-            const { error: deleteError } = await supabase
-                .from("pipeline_stages")
-                .delete()
-                .eq("id", stageId)
-                .eq("tenant_id", tenantId);
-            if (deleteError) throw deleteError;
-
-            setCards((prev) => prev.map((c) => (c.stageId === stageId ? { ...c, stageId: fallbackStage.id } : c)));
-            setStages((prev) => prev.filter((s) => s.id !== stageId));
+            setCards((prev) => prev.map((c) => (c.stageId === stageId ? { ...c, stageId: response.fallback_stage_id } : c)));
+            setStages(response.stages.map((s) => ({ id: s.id, title: s.name, version: s.version || 1 })));
             if (showNewCard === stageId) setShowNewCard(null);
         } catch (err) {
             console.error("Failed to delete stage:", err);
@@ -776,18 +756,13 @@ export default function KanbanPage() {
         setEditStage(null);
         setEditStageName("");
         try {
-            const { data: { user } } = await supabase.auth.getUser();
-            if (!user) return;
-            const { data: profile } = await supabase.from("profiles").select("tenant_id").eq("id", user.id).single();
-            const tenantId = profile?.tenant_id || user.id;
-
-            const { error } = await supabase
-                .from("pipeline_stages")
-                .update({ name: nextName })
-                .eq("id", stageId)
-                .eq("tenant_id", tenantId);
-
-            if (error) throw error;
+            const token = localStorage.getItem("access_token") || undefined;
+            const updated = await api<{ id: string; name: string; version?: number }>(`/api/leads/stages/${stageId}`, {
+                method: "PATCH",
+                body: JSON.stringify({ name: nextName }),
+                token,
+            });
+            setStages((prev) => prev.map((s) => s.id === stageId ? { ...s, title: updated.name, version: updated.version || s.version } : s));
         } catch (err) {
             setStages(previousStages);
             alert(`Falha ao renomear etapa: ${err instanceof Error ? err.message : String(err)}`);
