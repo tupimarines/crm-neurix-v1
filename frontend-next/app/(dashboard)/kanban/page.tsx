@@ -248,6 +248,7 @@ export default function KanbanPage() {
     const [editStage, setEditStage] = useState<string | null>(null);
     const [editStageName, setEditStageName] = useState("");
     const [lastReorderAttempt, setLastReorderAttempt] = useState<KanbanStage[] | null>(null);
+    const dragInitialStageRef = useRef<Record<string, string>>({});
 
     // Product data state
     const [availableProducts, setAvailableProducts] = useState<{ id: string, name: string, price: number }[]>([]);
@@ -535,7 +536,10 @@ export default function KanbanPage() {
     function handleDragStart(event: DragStartEvent) {
         if (event.active.data.current?.type !== "card") return;
         const card = cards.find((c) => c.id === event.active.id);
-        if (card) setActiveCard(card);
+        if (card) {
+            setActiveCard(card);
+            dragInitialStageRef.current[card.id] = card.stageId;
+        }
     }
 
     function handleDragOver(event: DragOverEvent) {
@@ -618,11 +622,12 @@ export default function KanbanPage() {
 
         // Sync stage change with backend
         if (activeCardObj) {
-            const newStageId = activeCardObj.stageId;
+            const previousStageId = dragInitialStageRef.current[activeCardObj.id] || activeCardObj.stageId;
+            const overStage = stages.find((s) => s.id === over.id);
+            const newStageId = overStage ? overStage.id : (overCardObj ? overCardObj.stageId : activeCardObj.stageId);
             const targetStage = stages.find(s => s.id === newStageId);
             const newStageName = targetStage ? targetStage.title : newStageId.replace(/^s-/, '');
-
-            if (newStageName) {
+            if (newStageName && newStageId !== previousStageId) {
                 const token = localStorage.getItem("access_token") || undefined;
                 api(`/api/leads/${activeCardObj.id}/stage`, {
                     method: 'PATCH',
@@ -630,6 +635,7 @@ export default function KanbanPage() {
                     token
                 }).catch(err => console.warn("Failed to sync stage move:", err));
             }
+            delete dragInitialStageRef.current[activeCardObj.id];
         }
     }
 

@@ -29,11 +29,26 @@ export async function api<T = unknown>(
             localStorage.removeItem("access_token");
             window.location.href = "/login";
         }
-        const error = await res.json().catch(() => ({ detail: res.statusText }));
-        throw new Error(error.detail || `API Error ${res.status}`);
+        const raw = await res.text().catch(() => "");
+        let detail = res.statusText;
+        if (raw) {
+            try {
+                const parsed = JSON.parse(raw);
+                detail = parsed.detail || parsed.message || raw;
+            } catch {
+                detail = raw;
+            }
+        }
+        throw new Error(detail || `API Error ${res.status}`);
     }
-
-    return res.json();
+    if (res.status === 204) {
+        return undefined as T;
+    }
+    const raw = await res.text();
+    if (!raw) {
+        return undefined as T;
+    }
+    return JSON.parse(raw) as T;
 }
 
 // Convenience methods

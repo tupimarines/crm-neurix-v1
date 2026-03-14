@@ -84,6 +84,30 @@ export default function ProdutosPage() {
         priority: "0",
     });
 
+    const normalizeBrlInput = (value: string) => {
+        const digits = value.replace(/\D/g, "");
+        if (!digits) return "";
+        const cents = Number(digits);
+        return (cents / 100).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    };
+
+    const parseBrlToNumber = (value: string) => {
+        if (!value) return 0;
+        const normalized = value.replace(/\./g, "").replace(",", ".");
+        return Number(normalized) || 0;
+    };
+
+    async function readErrorMessage(res: Response, fallback: string) {
+        const raw = await res.text().catch(() => "");
+        if (!raw) return fallback;
+        try {
+            const parsed = JSON.parse(raw);
+            return parsed.detail || parsed.message || fallback;
+        } catch {
+            return raw || fallback;
+        }
+    }
+
     // ── Helpers ──────────────────────────────────────────────────
     const getToken = () => localStorage.getItem("access_token");
 
@@ -177,7 +201,7 @@ export default function ProdutosPage() {
 
             const body = {
                 name: newProduct.name,
-                price: parseFloat(newProduct.price.replace(",", ".")),
+                price: parseBrlToNumber(newProduct.price),
                 weight: newProduct.weight || undefined,
                 category: newProduct.category,
                 category_slug: newProduct.category || undefined,
@@ -193,8 +217,8 @@ export default function ProdutosPage() {
             });
 
             if (!res.ok) {
-                const err = await res.json();
-                throw new Error(err.detail || "Erro ao salvar produto.");
+                const message = await readErrorMessage(res, "Erro ao salvar produto.");
+                throw new Error(message);
             }
 
             await fetchProducts();
@@ -221,17 +245,26 @@ export default function ProdutosPage() {
 
     async function handleCreateCategory() {
         if (!newCategory.name.trim() || !newCategory.slug.trim()) return;
-        await fetch(`${API}/api/product-categories/`, {
-            method: "POST",
-            headers: { ...authHeaders(), "Content-Type": "application/json" },
-            body: JSON.stringify({
-                name: newCategory.name.trim(),
-                slug: newCategory.slug.trim().toLowerCase(),
-                is_active: true,
-            }),
-        });
-        setNewCategory({ name: "", slug: "" });
-        await fetchCategories();
+        setError(null);
+        try {
+            const res = await fetch(`${API}/api/product-categories/`, {
+                method: "POST",
+                headers: { ...authHeaders(), "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    name: newCategory.name.trim(),
+                    slug: newCategory.slug.trim().toLowerCase(),
+                    is_active: true,
+                }),
+            });
+            if (!res.ok) {
+                const message = await readErrorMessage(res, "Erro ao criar categoria.");
+                throw new Error(message);
+            }
+            setNewCategory({ name: "", slug: "" });
+            await fetchCategories();
+        } catch (e) {
+            setError(e instanceof Error ? e.message : "Erro ao criar categoria");
+        }
     }
 
     async function handleArchiveCategory(id: string) {
@@ -244,23 +277,32 @@ export default function ProdutosPage() {
 
     async function handleCreatePromotion() {
         if (!newPromotion.name.trim() || !newPromotion.slug.trim() || !newPromotion.discount_value.trim()) return;
-        const nowIso = new Date().toISOString();
-        await fetch(`${API}/api/promotions/`, {
-            method: "POST",
-            headers: { ...authHeaders(), "Content-Type": "application/json" },
-            body: JSON.stringify({
-                name: newPromotion.name.trim(),
-                slug: newPromotion.slug.trim().toLowerCase(),
-                discount_type: newPromotion.discount_type,
-                discount_value: Number(newPromotion.discount_value),
-                starts_at: nowIso,
-                priority: Number(newPromotion.priority || 0),
-                is_active: true,
-                product_ids: [],
-            }),
-        });
-        setNewPromotion({ name: "", slug: "", discount_type: "percent", discount_value: "", priority: "0" });
-        await fetchPromotions();
+        setError(null);
+        try {
+            const nowIso = new Date().toISOString();
+            const res = await fetch(`${API}/api/promotions/`, {
+                method: "POST",
+                headers: { ...authHeaders(), "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    name: newPromotion.name.trim(),
+                    slug: newPromotion.slug.trim().toLowerCase(),
+                    discount_type: newPromotion.discount_type,
+                    discount_value: Number(newPromotion.discount_value),
+                    starts_at: nowIso,
+                    priority: Number(newPromotion.priority || 0),
+                    is_active: true,
+                    product_ids: [],
+                }),
+            });
+            if (!res.ok) {
+                const message = await readErrorMessage(res, "Erro ao criar promoção.");
+                throw new Error(message);
+            }
+            setNewPromotion({ name: "", slug: "", discount_type: "percent", discount_value: "", priority: "0" });
+            await fetchPromotions();
+        } catch (e) {
+            setError(e instanceof Error ? e.message : "Erro ao criar promoção");
+        }
     }
 
     async function handleArchivePromotion(id: string) {
@@ -549,7 +591,7 @@ export default function ProdutosPage() {
                                 <div className="grid grid-cols-2 gap-4">
                                     <div>
                                         <label className="block text-xs font-semibold text-text-secondary-light uppercase tracking-wider mb-1.5">Preço (R$) *</label>
-                                        <input value={newProduct.price} onChange={(e) => setNewProduct({ ...newProduct, price: e.target.value })}
+                                        <input value={newProduct.price} onChange={(e) => setNewProduct({ ...newProduct, price: normalizeBrlInput(e.target.value) })}
                                             className="w-full px-4 py-2.5 bg-white dark:bg-slate-800 border border-border-light dark:border-border-dark rounded-lg text-sm focus:ring-2 focus:ring-primary focus:border-transparent shadow-sm"
                                             placeholder="0,00" inputMode="decimal" />
                                     </div>
