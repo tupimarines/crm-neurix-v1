@@ -273,8 +273,30 @@ async def move_lead_stage(
     supabase: SupabaseClient = Depends(get_supabase),
 ):
     """Move a lead to a different Kanban column/stage."""
+    # Canonicalize stage with tenant pipeline_stages to avoid case/label drift.
+    stages = (
+        supabase.table("pipeline_stages")
+        .select("id, name")
+        .eq("tenant_id", user.id)
+        .execute()
+    ).data or []
+
+    canonical_stage = payload.stage
+    if stages:
+        if payload.stage_id:
+            matched = next((s for s in stages if str(s.get("id")) == str(payload.stage_id)), None)
+            if not matched:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Etapa inválida para este tenant.")
+            canonical_stage = matched["name"]
+        else:
+            target = payload.stage.strip().lower()
+            matched = next((s for s in stages if str(s.get("name", "")).strip().lower() == target), None)
+            if not matched:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Etapa inválida para este tenant.")
+            canonical_stage = matched["name"]
+
     response = supabase.table("leads") \
-        .update({"stage": payload.stage}) \
+        .update({"stage": canonical_stage}) \
         .eq("id", lead_id) \
         .eq("tenant_id", user.id) \
         .execute()

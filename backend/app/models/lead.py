@@ -50,6 +50,7 @@ class LeadUpdate(BaseModel):
 
 class LeadMoveStage(BaseModel):
     stage: str
+    stage_id: Optional[str] = None
 
 
 class LeadResponse(LeadBase):

@@ -631,9 +631,13 @@ export default function KanbanPage() {
                 const token = localStorage.getItem("access_token") || undefined;
                 api(`/api/leads/${activeCardObj.id}/stage`, {
                     method: 'PATCH',
-                    body: JSON.stringify({ stage: newStageName }),
+                    body: JSON.stringify({ stage: newStageName, stage_id: newStageId }),
                     token
-                }).catch(err => console.warn("Failed to sync stage move:", err));
+                }).catch(err => {
+                    console.warn("Failed to sync stage move:", err);
+                    setCards((prev) => prev.map((c) => c.id === activeCardObj.id ? { ...c, stageId: previousStageId } : c));
+                    alert(`Falha ao mover card: ${err instanceof Error ? err.message : String(err)}`);
+                });
             }
             delete dragInitialStageRef.current[activeCardObj.id];
         }
@@ -760,11 +764,30 @@ export default function KanbanPage() {
         setShowNewCard(null);
     }
 
-    function renameStage(stageId: string) {
+    async function renameStage(stageId: string) {
         if (!editStageName.trim()) return;
-        setStages(stages.map((s) => s.id === stageId ? { ...s, title: editStageName.trim() } : s));
+        const nextName = editStageName.trim();
+        const previousStages = [...stages];
+        setStages(stages.map((s) => s.id === stageId ? { ...s, title: nextName } : s));
         setEditStage(null);
         setEditStageName("");
+        try {
+            const { data: { user } } = await supabase.auth.getUser();
+            if (!user) return;
+            const { data: profile } = await supabase.from("profiles").select("tenant_id").eq("id", user.id).single();
+            const tenantId = profile?.tenant_id || user.id;
+
+            const { error } = await supabase
+                .from("pipeline_stages")
+                .update({ name: nextName })
+                .eq("id", stageId)
+                .eq("tenant_id", tenantId);
+
+            if (error) throw error;
+        } catch (err) {
+            setStages(previousStages);
+            alert(`Falha ao renomear etapa: ${err instanceof Error ? err.message : String(err)}`);
+        }
     }
 
     async function handleSaveEditCard() {
@@ -971,10 +994,10 @@ export default function KanbanPage() {
                                                     <span className="material-symbols-outlined text-base">drag_indicator</span>
                                                 </button>
                                                 {editStage === stage.id ? (
-                                                    <form onSubmit={(e) => { e.preventDefault(); renameStage(stage.id); }} className="flex items-center gap-1 flex-1">
+                                                    <form onSubmit={(e) => { e.preventDefault(); void renameStage(stage.id); }} className="flex items-center gap-1 flex-1">
                                                         <input autoFocus value={editStageName} onChange={(e) => setEditStageName(e.target.value)}
                                                             className="text-sm font-semibold border border-primary rounded-lg px-2 py-1 bg-white dark:bg-surface-dark flex-1 focus:outline-none focus:ring-1 focus:ring-primary"
-                                                            onBlur={() => renameStage(stage.id)} />
+                                                            onBlur={() => { void renameStage(stage.id); }} />
                                                     </form>
                                                 ) : (
                                                     <button onClick={() => { setEditStage(stage.id); setEditStageName(stage.title); }} className="text-sm font-semibold truncate hover:text-primary transition-colors">
