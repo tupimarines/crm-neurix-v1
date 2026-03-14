@@ -7,6 +7,10 @@ This bypasses RLS — the backend is responsible for enforcing tenant isolation
 by filtering queries on tenant_id after validating the user's JWT.
 """
 
+import json
+from datetime import datetime, timezone
+from pathlib import Path
+
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import redis.asyncio as aioredis
@@ -21,6 +25,27 @@ security = HTTPBearer()
 _supabase_client: SupabaseClient | None = None
 
 
+# region agent log
+def _debug_log(hypothesis_id: str, location: str, message: str, data: dict) -> None:
+    try:
+        payload = {
+            "sessionId": "25dc31",
+            "runId": "initial-debug",
+            "hypothesisId": hypothesis_id,
+            "location": location,
+            "message": message,
+            "data": data,
+            "timestamp": int(datetime.now(timezone.utc).timestamp() * 1000),
+        }
+        with Path("debug-25dc31.log").open("a", encoding="utf-8") as fp:
+            fp.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
+
+# endregion
+
+
 def get_supabase(settings: Settings = Depends(get_settings)) -> SupabaseClient:
     """Returns a Supabase client with SERVICE ROLE key (bypasses RLS).
     The backend validates auth via get_current_user() and enforces
@@ -28,12 +53,38 @@ def get_supabase(settings: Settings = Depends(get_settings)) -> SupabaseClient:
     global _supabase_client
     if _supabase_client is None:
         key = settings.SUPABASE_SERVICE_ROLE_KEY or settings.SUPABASE_ANON_KEY
+        # region agent log
+        _debug_log(
+            "H5",
+            "backend/app/dependencies.py:get_supabase",
+            "Initializing Supabase client",
+            {
+                "has_supabase_url": bool(settings.SUPABASE_URL),
+                "key_mode": "service_role" if bool(settings.SUPABASE_SERVICE_ROLE_KEY) else "anon_fallback",
+                "has_key": bool(key),
+            },
+        )
+        # endregion
         if not settings.SUPABASE_URL or not key:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Supabase not configured. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.",
             )
-        _supabase_client = create_client(settings.SUPABASE_URL, key)
+        try:
+            _supabase_client = create_client(settings.SUPABASE_URL, key)
+        except Exception as exc:
+            # region agent log
+            _debug_log(
+                "H5",
+                "backend/app/dependencies.py:get_supabase",
+                "Failed to create Supabase client",
+                {
+                    "error_type": type(exc).__name__,
+                    "error": str(exc),
+                },
+            )
+            # endregion
+            raise
     return _supabase_client
 
 

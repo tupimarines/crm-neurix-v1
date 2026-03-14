@@ -2,6 +2,10 @@
 Router for dynamic product categories.
 """
 
+import json
+from datetime import datetime, timezone
+from pathlib import Path
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from supabase import Client as SupabaseClient
 
@@ -15,6 +19,27 @@ from app.models.catalog import (
 router = APIRouter()
 
 
+# region agent log
+def _debug_log(hypothesis_id: str, location: str, message: str, data: dict) -> None:
+    try:
+        payload = {
+            "sessionId": "25dc31",
+            "runId": "initial-debug",
+            "hypothesisId": hypothesis_id,
+            "location": location,
+            "message": message,
+            "data": data,
+            "timestamp": int(datetime.now(timezone.utc).timestamp() * 1000),
+        }
+        with Path("debug-25dc31.log").open("a", encoding="utf-8") as fp:
+            fp.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
+
+# endregion
+
+
 @router.get("/", response_model=list[ProductCategoryResponse])
 async def list_categories(
     search: str | None = Query(None, min_length=1),
@@ -22,18 +47,44 @@ async def list_categories(
     user=Depends(get_current_user),
     supabase: SupabaseClient = Depends(get_supabase),
 ):
-    query = (
-        supabase.table("product_categories")
-        .select("*")
-        .eq("tenant_id", user.id)
-        .order("name", desc=False)
+    # region agent log
+    _debug_log(
+        "H3",
+        "backend/app/routers/product_categories.py:list_categories",
+        "Entering list_categories",
+        {
+            "user_id": str(user.id),
+            "active_only": active_only,
+            "has_search": bool(search),
+        },
     )
-    if active_only:
-        query = query.eq("is_active", True)
-    if search:
-        query = query.ilike("name", f"%{search.strip()}%")
-    response = query.execute()
-    return [ProductCategoryResponse(**row) for row in (response.data or [])]
+    # endregion
+    try:
+        query = (
+            supabase.table("product_categories")
+            .select("*")
+            .eq("tenant_id", user.id)
+            .order("name", desc=False)
+        )
+        if active_only:
+            query = query.eq("is_active", True)
+        if search:
+            query = query.ilike("name", f"%{search.strip()}%")
+        response = query.execute()
+        return [ProductCategoryResponse(**row) for row in (response.data or [])]
+    except Exception as exc:
+        # region agent log
+        _debug_log(
+            "H1",
+            "backend/app/routers/product_categories.py:list_categories",
+            "list_categories failed",
+            {
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+            },
+        )
+        # endregion
+        raise
 
 
 @router.post("/", response_model=ProductCategoryResponse, status_code=status.HTTP_201_CREATED)
@@ -42,12 +93,39 @@ async def create_category(
     user=Depends(get_current_user),
     supabase: SupabaseClient = Depends(get_supabase),
 ):
-    data = payload.model_dump()
-    data["tenant_id"] = user.id
-    created = supabase.table("product_categories").insert(data).execute()
-    if not created.data:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Erro ao criar categoria.")
-    return ProductCategoryResponse(**created.data[0])
+    # region agent log
+    _debug_log(
+        "H4",
+        "backend/app/routers/product_categories.py:create_category",
+        "Attempting category insert",
+        {
+            "user_id": str(user.id),
+            "slug": payload.slug,
+            "has_description": bool(payload.description),
+            "is_active": payload.is_active,
+        },
+    )
+    # endregion
+    try:
+        data = payload.model_dump()
+        data["tenant_id"] = user.id
+        created = supabase.table("product_categories").insert(data).execute()
+        if not created.data:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Erro ao criar categoria.")
+        return ProductCategoryResponse(**created.data[0])
+    except Exception as exc:
+        # region agent log
+        _debug_log(
+            "H1",
+            "backend/app/routers/product_categories.py:create_category",
+            "create_category failed",
+            {
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+            },
+        )
+        # endregion
+        raise
 
 
 @router.patch("/{category_id}", response_model=ProductCategoryResponse)

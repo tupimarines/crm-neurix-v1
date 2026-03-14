@@ -2,7 +2,9 @@
 Router for promotions and promotion-product links.
 """
 
+import json
 from datetime import datetime, timezone
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from supabase import Client as SupabaseClient
@@ -16,6 +18,27 @@ from app.models.catalog import (
 )
 
 router = APIRouter()
+
+
+# region agent log
+def _debug_log(hypothesis_id: str, location: str, message: str, data: dict) -> None:
+    try:
+        payload = {
+            "sessionId": "25dc31",
+            "runId": "initial-debug",
+            "hypothesisId": hypothesis_id,
+            "location": location,
+            "message": message,
+            "data": data,
+            "timestamp": int(datetime.now(timezone.utc).timestamp() * 1000),
+        }
+        with Path("debug-25dc31.log").open("a", encoding="utf-8") as fp:
+            fp.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
+
+# endregion
 
 
 def _validate_period(starts_at: datetime, ends_at: datetime | None) -> None:
@@ -54,29 +77,43 @@ async def list_promotions(
     user=Depends(get_current_user),
     supabase: SupabaseClient = Depends(get_supabase),
 ):
-    query = supabase.table("promotions").select("*").eq("tenant_id", user.id).order("created_at", desc=True)
-    if active_only:
-        query = query.eq("is_active", True)
-    if search:
-        query = query.ilike("name", f"%{search.strip()}%")
-    response = query.execute()
-    rows = response.data or []
-    if not rows:
-        return []
+    try:
+        query = supabase.table("promotions").select("*").eq("tenant_id", user.id).order("created_at", desc=True)
+        if active_only:
+            query = query.eq("is_active", True)
+        if search:
+            query = query.ilike("name", f"%{search.strip()}%")
+        response = query.execute()
+        rows = response.data or []
+        if not rows:
+            return []
 
-    ids = [r["id"] for r in rows]
-    link_rows = (
-        supabase.table("promotion_products")
-        .select("promotion_id, product_id")
-        .eq("tenant_id", user.id)
-        .in_("promotion_id", ids)
-        .execute()
-    ).data or []
-    links: dict[str, list[str]] = {}
-    for link in link_rows:
-        links.setdefault(link["promotion_id"], []).append(link["product_id"])
+        ids = [r["id"] for r in rows]
+        link_rows = (
+            supabase.table("promotion_products")
+            .select("promotion_id, product_id")
+            .eq("tenant_id", user.id)
+            .in_("promotion_id", ids)
+            .execute()
+        ).data or []
+        links: dict[str, list[str]] = {}
+        for link in link_rows:
+            links.setdefault(link["promotion_id"], []).append(link["product_id"])
 
-    return [_serialize_response(r, links.get(r["id"], [])) for r in rows]
+        return [_serialize_response(r, links.get(r["id"], [])) for r in rows]
+    except Exception as exc:
+        # region agent log
+        _debug_log(
+            "H1",
+            "backend/app/routers/promotions.py:list_promotions",
+            "list_promotions failed",
+            {
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+            },
+        )
+        # endregion
+        raise
 
 
 @router.post("/", response_model=PromotionResponse, status_code=status.HTTP_201_CREATED)
@@ -86,24 +123,53 @@ async def create_promotion(
     supabase: SupabaseClient = Depends(get_supabase),
 ):
     _validate_period(payload.starts_at, payload.ends_at)
-    data = payload.model_dump(exclude={"product_ids"})
-    data["tenant_id"] = user.id
-    created = supabase.table("promotions").insert(data).execute()
-    if not created.data:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Erro ao criar promoção.")
-    promotion = created.data[0]
+    # region agent log
+    _debug_log(
+        "H4",
+        "backend/app/routers/promotions.py:create_promotion",
+        "Attempting promotion insert",
+        {
+            "user_id": str(user.id),
+            "slug": payload.slug,
+            "discount_type": payload.discount_type,
+            "discount_value": payload.discount_value,
+            "has_ends_at": payload.ends_at is not None,
+            "product_ids_count": len(payload.product_ids),
+        },
+    )
+    # endregion
+    try:
+        data = payload.model_dump(exclude={"product_ids"})
+        data["tenant_id"] = user.id
+        created = supabase.table("promotions").insert(data).execute()
+        if not created.data:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Erro ao criar promoção.")
+        promotion = created.data[0]
 
-    if payload.product_ids:
-        link_payload = [
+        if payload.product_ids:
+            link_payload = [
+                {
+                    "tenant_id": user.id,
+                    "promotion_id": promotion["id"],
+                    "product_id": str(product_id),
+                }
+                for product_id in payload.product_ids
+            ]
+            supabase.table("promotion_products").insert(link_payload).execute()
+        return _serialize_response(promotion, [str(pid) for pid in payload.product_ids])
+    except Exception as exc:
+        # region agent log
+        _debug_log(
+            "H1",
+            "backend/app/routers/promotions.py:create_promotion",
+            "create_promotion failed",
             {
-                "tenant_id": user.id,
-                "promotion_id": promotion["id"],
-                "product_id": str(product_id),
-            }
-            for product_id in payload.product_ids
-        ]
-        supabase.table("promotion_products").insert(link_payload).execute()
-    return _serialize_response(promotion, [str(pid) for pid in payload.product_ids])
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+            },
+        )
+        # endregion
+        raise
 
 
 @router.patch("/{promotion_id}", response_model=PromotionResponse)
