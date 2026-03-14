@@ -246,6 +246,7 @@ export default function KanbanPage() {
     const [editingCard, setEditingCard] = useState<KanbanCard | null>(null);
     const [isSaving, setIsSaving] = useState(false);
     const [isSavingStageOrder, setIsSavingStageOrder] = useState(false);
+    const [isSavingCardMove, setIsSavingCardMove] = useState(false);
     const [editStage, setEditStage] = useState<string | null>(null);
     const [editStageName, setEditStageName] = useState("");
     const [lastReorderAttempt, setLastReorderAttempt] = useState<KanbanStage[] | null>(null);
@@ -625,6 +626,26 @@ export default function KanbanPage() {
         }
     }
 
+    async function persistCardStageMove(cardId: string, previousStageId: string, newStageId: string, newStageName: string) {
+        setIsSavingCardMove(true);
+        try {
+            const token = localStorage.getItem("access_token") || undefined;
+            await api(`/api/leads/${cardId}/stage`, {
+                method: "PATCH",
+                body: JSON.stringify({ stage: newStageName, stage_id: newStageId }),
+                token,
+                // Helps the PATCH complete if the user refreshes quickly.
+                keepalive: true,
+            });
+        } catch (err) {
+            console.warn("Failed to sync stage move:", err);
+            setCards((prev) => prev.map((c) => c.id === cardId ? { ...c, stageId: previousStageId } : c));
+            alert(`Falha ao mover card: ${err instanceof Error ? err.message : String(err)}`);
+        } finally {
+            setIsSavingCardMove(false);
+        }
+    }
+
     function handleDragEnd(event: DragEndEvent) {
         setActiveCard(null);
         const { active, over } = event;
@@ -678,16 +699,7 @@ export default function KanbanPage() {
             }
 
             if (newStageName && newStageId !== previousStageId) {
-                const token = localStorage.getItem("access_token") || undefined;
-                api(`/api/leads/${activeCardObj.id}/stage`, {
-                    method: 'PATCH',
-                    body: JSON.stringify({ stage: newStageName, stage_id: newStageId }),
-                    token
-                }).catch(err => {
-                    console.warn("Failed to sync stage move:", err);
-                    setCards((prev) => prev.map((c) => c.id === activeCardObj.id ? { ...c, stageId: previousStageId } : c));
-                    alert(`Falha ao mover card: ${err instanceof Error ? err.message : String(err)}`);
-                });
+                void persistCardStageMove(activeCardObj.id, previousStageId, newStageId, newStageName);
             }
             delete dragInitialStageRef.current[activeCardObj.id];
             delete dragTargetStageRef.current[activeCardObj.id];
@@ -1036,6 +1048,7 @@ export default function KanbanPage() {
                                             </div>
                                             <div className="flex items-center text-xs text-text-secondary-light shrink-0 ml-2">
                                                 {isSavingStageOrder && <span className="mr-1 text-[10px]">Salvando</span>}
+                                                {isSavingCardMove && <span className="mr-1 text-[10px]">Movendo</span>}
                                                 {formatCurrency(stageCards.reduce((acc, c) => acc + parseCurrency(c.value), 0))}
                                                 <button
                                                     onClick={() => { void deleteStage(stage.id); }}
