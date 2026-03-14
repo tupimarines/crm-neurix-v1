@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useId } from "react";
+import { useState, useRef, useEffect, useId, useCallback } from "react";
 import {
     DndContext,
     closestCenter,
@@ -145,6 +145,7 @@ const PRIORITY_MAP: Record<string, { label: string; color: string }> = {
 
 export default function KanbanPage() {
     const dndId = useId();
+    const isFetchingKanbanRef = useRef(false);
 
     // State
     const [isMounted, setIsMounted] = useState(false);
@@ -152,70 +153,88 @@ export default function KanbanPage() {
     const [stages, setStages] = useState<KanbanStage[]>([]);
     const [cards, setCards] = useState<KanbanCard[]>([]);
 
-    // Fetch real leads and stages from API on mount
+    const fetchKanban = useCallback(async ({ silent = false }: { silent?: boolean } = {}) => {
+        if (isFetchingKanbanRef.current) return;
+        isFetchingKanbanRef.current = true;
+        if (!silent) setIsLoading(true);
+        try {
+            const token = localStorage.getItem("access_token") || undefined;
+            const data = await api<{
+                columns: Array<{
+                    stage: string;
+                    stage_id?: string;
+                    stage_version?: number;
+                    label: string;
+                    leads: Array<{
+                        id: string;
+                        company_name: string;
+                        contact_name: string;
+                        phone?: string | null;
+                        value: number;
+                        priority: string | null;
+                        notes: string | null;
+                        stage: string;
+                        whatsapp_chat_id: string | null;
+                        products_json?: any[];
+                    }>;
+                }>
+            }>("/api/leads/kanban", { method: "GET", token });
+
+            // Update stages state from columns
+            const fetchedStages: KanbanStage[] = data.columns.map((col) => ({
+                id: col.stage_id || `s-${col.stage}`,
+                title: col.label,
+                version: col.stage_version || 1,
+            }));
+            setStages(fetchedStages);
+
+            const allCards: KanbanCard[] = [];
+            for (const col of data.columns) {
+                const stageId = col.stage_id || `s-${col.stage}`;
+                for (const lead of col.leads) {
+                    const pri = lead.priority ? PRIORITY_MAP[lead.priority] : null;
+                    allCards.push({
+                        id: lead.id,
+                        stageId,
+                        name: lead.company_name,
+                        contact: lead.contact_name,
+                        phone: lead.phone || "",
+                        value: new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(lead.value || 0),
+                        priority: pri?.label || "",
+                        priorityColor: pri?.color || "",
+                        desc: lead.notes || "",
+                        products_json: lead.products_json || [],
+                    });
+                }
+            }
+            setCards(allCards);
+        } catch (err) {
+            console.error("Failed to fetch kanban data:", err);
+        } finally {
+            isFetchingKanbanRef.current = false;
+            if (!silent) setIsLoading(false);
+        }
+    }, []);
+
+    // Initial fetch + automatic refresh to keep new conversations updated
     useEffect(() => {
         setIsMounted(true);
-        async function fetchKanban() {
-            setIsLoading(true);
-            try {
-                const token = localStorage.getItem("access_token") || undefined;
-                const data = await api<{
-                    columns: Array<{
-                        stage: string;
-                        stage_id?: string;
-                        stage_version?: number;
-                        label: string;
-                        leads: Array<{
-                            id: string;
-                            company_name: string;
-                            contact_name: string;
-                            phone?: string | null;
-                            value: number;
-                            priority: string | null;
-                            notes: string | null;
-                            stage: string;
-                            whatsapp_chat_id: string | null;
-                            products_json?: any[];
-                        }>;
-                    }>
-                }>("/api/leads/kanban", { method: "GET", token });
+        void fetchKanban();
 
-                // Update stages state from columns
-                const fetchedStages: KanbanStage[] = data.columns.map((col) => ({
-                    id: col.stage_id || `s-${col.stage}`,
-                    title: col.label,
-                    version: col.stage_version || 1,
-                }));
-                setStages(fetchedStages);
+        const refreshInterval = window.setInterval(() => {
+            void fetchKanban({ silent: true });
+        }, 5000);
 
-                const allCards: KanbanCard[] = [];
-                for (const col of data.columns) {
-                    const stageId = col.stage_id || `s-${col.stage}`;
-                    for (const lead of col.leads) {
-                        const pri = lead.priority ? PRIORITY_MAP[lead.priority] : null;
-                        allCards.push({
-                            id: lead.id,
-                            stageId,
-                            name: lead.company_name,
-                            contact: lead.contact_name,
-                            phone: lead.phone || "",
-                            value: new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(lead.value || 0),
-                            priority: pri?.label || "",
-                            priorityColor: pri?.color || "",
-                            desc: lead.notes || "",
-                            products_json: lead.products_json || [],
-                        });
-                    }
-                }
-                setCards(allCards);
-            } catch (err) {
-                console.error("Failed to fetch kanban data:", err);
-            } finally {
-                setIsLoading(false);
-            }
-        }
-        fetchKanban();
-    }, []);
+        const handleWindowFocus = () => {
+            void fetchKanban({ silent: true });
+        };
+        window.addEventListener("focus", handleWindowFocus);
+
+        return () => {
+            window.clearInterval(refreshInterval);
+            window.removeEventListener("focus", handleWindowFocus);
+        };
+    }, [fetchKanban]);
 
     // Removed localStorage sync — data now comes from API
 
