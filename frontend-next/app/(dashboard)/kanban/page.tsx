@@ -646,7 +646,7 @@ export default function KanbanPage() {
         if (activeCardObj && overCardObj && activeCardObj.stageId === overCardObj.stageId) {
             const stageCards = cards.filter((c) => c.stageId === activeCardObj.stageId);
             const oldIdx = stageCards.findIndex((c) => c.id === active.id);
-            const newIdx = stageCards.findIndex((c) => c.id === over.id);
+            const newIdx = stageCards.findIndex((c) => c.id === overCardObj.id);
             const reordered = arrayMove(stageCards, oldIdx, newIdx);
             setCards((prev) => {
                 const others = prev.filter((c) => c.stageId !== activeCardObj.stageId);
