@@ -601,10 +601,10 @@ export default function KanbanPage() {
     function handleDragEnd(event: DragEndEvent) {
         setActiveCard(null);
         const { active, over } = event;
-        if (!over || active.id === over.id) return;
         const activeType = active.data.current?.type;
 
         if (activeType === "stage") {
+            if (!over || active.id === over.id) return;
             const oldIndex = stages.findIndex((s) => s.id === active.id);
             const newIndex = stages.findIndex((s) => s.id === over.id);
             if (oldIndex < 0 || newIndex < 0 || oldIndex === newIndex) return;
@@ -616,7 +616,9 @@ export default function KanbanPage() {
         }
 
         const activeCardObj = cards.find((c) => c.id === active.id);
-        const overCardObj = cards.find((c) => c.id === over.id);
+        if (!activeCardObj) return;
+
+        const overCardObj = over ? cards.find((c) => c.id === over.id) : undefined;
         if (activeCardObj && overCardObj && activeCardObj.stageId === overCardObj.stageId) {
             const stageCards = cards.filter((c) => c.stageId === activeCardObj.stageId);
             const oldIdx = stageCards.findIndex((c) => c.id === active.id);
@@ -631,7 +633,7 @@ export default function KanbanPage() {
         // Sync stage change with backend
         if (activeCardObj) {
             const previousStageId = dragInitialStageRef.current[activeCardObj.id] || activeCardObj.stageId;
-            const overStage = stages.find((s) => s.id === over.id);
+            const overStage = over ? stages.find((s) => s.id === over.id) : undefined;
             const resolvedTargetStageId =
                 dragTargetStageRef.current[activeCardObj.id] ||
                 (overStage ? overStage.id : undefined) ||
