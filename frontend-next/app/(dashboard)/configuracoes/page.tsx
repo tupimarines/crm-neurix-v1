@@ -72,7 +72,7 @@ export default function ConfiguracoesPage() {
         setIsLoadingWhatsapp(true);
         try {
             const token = localStorage.getItem("access_token") || undefined;
-            await initWhatsappInstance(instanceNameInput, token);
+            await initWhatsappInstance(instanceNameInput.trim(), token);
             await fetchStatus();
         } catch (error: any) {
             console.error(error);
@@ -82,29 +82,51 @@ export default function ConfiguracoesPage() {
         }
     };
 
+    const applyQrResponse = (res: any) => {
+        const qrString = res.data?.base64 || res.data?.qrcode || res.data?.instance?.qrcode;
+
+        if (qrString) {
+            setQrCodeBase64(qrString);
+            setIsPolling(true);
+            setWhatsappStatus("connecting");
+            return;
+        }
+
+        if (res.data?.instance?.state === "open" || res.data?.instance?.state === "connected") {
+            setWhatsappStatus("open");
+            setShowWhatsappModal(false);
+            return;
+        }
+
+        if (res.data?.instance?.state === "connecting" || res.data?.state === "connecting") {
+            setWhatsappStatus("connecting");
+            setIsPolling(true);
+        }
+    };
+
     const handleGenerateQR = async () => {
         setIsLoadingWhatsapp(true);
         try {
             const token = localStorage.getItem("access_token") || undefined;
-            const res = await connectWhatsappInstance(token);
-            // the response could have base64 in res.data.base64 or res.data.qrcode
-            const qrString = res.data?.base64 || res.data?.qrcode || res.data?.instance?.qrcode;
+            try {
+                const res = await connectWhatsappInstance(token);
+                applyQrResponse(res);
+            } catch (error: any) {
+                const msg = error instanceof Error ? error.message : String(error || "");
+                const needsInit = /nenhum token configurado|crie uma instância/i.test(msg);
+                if (!needsInit) throw error;
 
-            if (qrString) {
-                setQrCodeBase64(qrString);
-                setIsPolling(true);
-                setWhatsappStatus("connecting");
-            } else if (res.data?.instance?.state === "open" || res.data?.instance?.state === "connected") {
-                setWhatsappStatus("open");
-                setShowWhatsappModal(false);
-            } else if (res.data?.instance?.state === "connecting" || res.data?.state === "connecting") {
-                // If it's connecting but no QR yet, poll it
-                setWhatsappStatus("connecting");
-                setIsPolling(true);
+                if (!instanceNameInput.trim()) {
+                    throw new Error("Informe um nome de instância e clique em Criar Instância antes de gerar o QR.");
+                }
+
+                await initWhatsappInstance(instanceNameInput.trim(), token);
+                const res = await connectWhatsappInstance(token);
+                applyQrResponse(res);
             }
-        } catch (error) {
+        } catch (error: any) {
             console.error(error);
-            alert("Erro ao gerar QR Code");
+            alert(error?.message || "Erro ao gerar QR Code");
         } finally {
             setIsLoadingWhatsapp(false);
         }
@@ -257,6 +279,20 @@ export default function ConfiguracoesPage() {
                             <button onClick={() => setShowWhatsappModal(true)} className="w-full mt-2 py-2 px-3 text-sm font-medium border border-border-light dark:border-border-dark rounded-lg hover:border-primary hover:text-primary transition-colors">
                                 Configurar Conexão
                             </button>
+                            <div className="grid grid-cols-2 gap-2">
+                                <button
+                                    onClick={() => { setWhatsappModalTab("qr"); setShowWhatsappModal(true); }}
+                                    className="w-full py-2 px-3 text-xs font-semibold rounded-lg bg-primary/10 text-primary hover:bg-primary/20 transition-colors"
+                                >
+                                    Criar Instância
+                                </button>
+                                <button
+                                    onClick={() => { setWhatsappModalTab("qr"); setShowWhatsappModal(true); }}
+                                    className="w-full py-2 px-3 text-xs font-semibold rounded-lg border border-border-light dark:border-border-dark hover:border-primary hover:text-primary transition-colors"
+                                >
+                                    Gerar QR Code
+                                </button>
+                            </div>
                             {/* AI Agent toggle */}
                             <div className="p-3 bg-slate-50 dark:bg-slate-800/50 rounded-lg border border-border-light dark:border-border-dark">
                                 <div className="flex items-center justify-between mb-3">
@@ -531,16 +567,14 @@ export default function ConfiguracoesPage() {
                                         </div>
                                     )}
 
-                                    {!isConnected && (
-                                        <button
-                                            onClick={handleGenerateQR}
-                                            disabled={isLoadingWhatsapp}
-                                            className="px-6 py-2.5 bg-primary text-white rounded-lg font-medium hover:bg-primary-hover disabled:opacity-50 transition-all flex items-center gap-2"
-                                        >
-                                            {isLoadingWhatsapp ? <span className="material-symbols-outlined animate-spin">refresh</span> : <span className="material-symbols-outlined">sync</span>}
-                                            Gerar Novo QR Code
-                                        </button>
-                                    )}
+                                    <button
+                                        onClick={handleGenerateQR}
+                                        disabled={isLoadingWhatsapp}
+                                        className="px-6 py-2.5 bg-primary text-white rounded-lg font-medium hover:bg-primary-hover disabled:opacity-50 transition-all flex items-center gap-2"
+                                    >
+                                        {isLoadingWhatsapp ? <span className="material-symbols-outlined animate-spin">refresh</span> : <span className="material-symbols-outlined">sync</span>}
+                                        {isConnected ? "Gerar QR Code novamente" : "Gerar Novo QR Code"}
+                                    </button>
                                 </div>
                             )}
 
