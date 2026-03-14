@@ -539,29 +539,6 @@ export default function KanbanPage() {
         return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val);
     };
 
-    const getStageIdFromPointer = (rawEvent: unknown): string | null => {
-        if (typeof window === "undefined" || !rawEvent) return null;
-        let clientX: number | null = null;
-        let clientY: number | null = null;
-
-        const evt = rawEvent as MouseEvent & TouchEvent & PointerEvent;
-        if (typeof evt.clientX === "number" && typeof evt.clientY === "number") {
-            clientX = evt.clientX;
-            clientY = evt.clientY;
-        } else if (evt.changedTouches && evt.changedTouches.length > 0) {
-            clientX = evt.changedTouches[0].clientX;
-            clientY = evt.changedTouches[0].clientY;
-        } else if (evt.touches && evt.touches.length > 0) {
-            clientX = evt.touches[0].clientX;
-            clientY = evt.touches[0].clientY;
-        }
-
-        if (clientX === null || clientY === null) return null;
-        const target = document.elementFromPoint(clientX, clientY) as HTMLElement | null;
-        const stageEl = target?.closest?.("[data-stage-id]") as HTMLElement | null;
-        return stageEl?.dataset?.stageId || null;
-    };
-
     // DnD handlers
     function handleDragStart(event: DragStartEvent) {
         if (event.active.data.current?.type !== "card") return;
@@ -581,8 +558,7 @@ export default function KanbanPage() {
         if (!activeCardObj) return;
 
         const overId = over?.id as string | undefined;
-        const pointerStageId = getStageIdFromPointer(event.activatorEvent);
-        const resolvedOverId = pointerStageId || overId;
+        const resolvedOverId = overId;
         if (!resolvedOverId) return;
 
         // Dropping over a stage directly
@@ -681,11 +657,9 @@ export default function KanbanPage() {
         // Sync stage change with backend
         if (activeCardObj) {
             const previousStageId = dragInitialStageRef.current[activeCardObj.id] || activeCardObj.stageId;
-            const pointerStageId = getStageIdFromPointer(event.activatorEvent);
             const overStage = over ? stages.find((s) => s.id === over.id) : undefined;
             const resolvedTargetStageId =
                 dragTargetStageRef.current[activeCardObj.id] ||
-                pointerStageId ||
                 (overStage ? overStage.id : undefined) ||
                 (overCardObj ? overCardObj.stageId : undefined) ||
                 activeCardObj.stageId;
