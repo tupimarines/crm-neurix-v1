@@ -344,6 +344,11 @@ export default function KanbanPage() {
                     .replace(/[_-]+/g, " ")
                     .replace(/\s+/g, " ")
                     .trim();
+            const parseCardCurrency = (val: string) => {
+                if (!val) return 0;
+                const cleanObj = val.replace(/[^\d,-]/g, '').replace(',', '.');
+                return parseFloat(cleanObj) || 0;
+            };
 
             const { data: { user } } = await supabase.auth.getUser();
             if (!user) return;
@@ -363,14 +368,6 @@ export default function KanbanPage() {
 
             if (stagesError) throw stagesError;
 
-            const { data: leadsData, error: leadsError } = await supabase
-                .from('leads')
-                .select('stage, value, archived, deleted')
-                .eq('tenant_id', tenantId)
-                .gte('created_at', startOfMonth);
-
-            if (leadsError) throw leadsError;
-
             // Only fetch orders created this month and paid
             const { data: ordersData, error: ordersError } = await supabase
                 .from('orders')
@@ -381,23 +378,23 @@ export default function KanbanPage() {
 
             if (ordersError) throw ordersError;
 
-            // Use database stages if available, otherwise fallback to UI stages state
-            let sData = stagesData && stagesData.length > 0 ? stagesData : stages.map(s => ({ id: s.id, name: s.title, order_position: 0 }));
-            const allLeadsThisMonth = leadsData || [];
-            // For metrics like "Pipeline Value" and "Active Deals", we only want non-deleted, non-archived leads
-            const activeLeadsThisMonth = allLeadsThisMonth.filter((l: any) => !l.archived && !l.deleted);
+            // Report should reflect current Kanban cards/values shown in UI.
+            // Prefer current UI stage order and labels; fallback to DB stage list if needed.
+            const uiStages = stages.map((s, index) => ({ id: s.id, name: s.title, order_position: index }));
+            const sData = uiStages.length > 0
+                ? uiStages
+                : (stagesData || []).map((s: any, index: number) => ({
+                    id: s.id,
+                    name: s.name,
+                    order_position: typeof s.order_position === "number" ? s.order_position : index,
+                }));
 
             const report = sData.map((s: any) => {
-                const stageKey = normalizeStageKey(s.name);
-                const leadsInStage = activeLeadsThisMonth.filter((l: any) => {
-                    const leadStageKey = normalizeStageKey(l.stage);
-                    return leadStageKey === stageKey;
-                });
-
+                const leadsInStage = cards.filter((c) => c.stageId === s.id);
                 return {
                     stage: s.name,
                     count: leadsInStage.length,
-                    total: leadsInStage.reduce((a: number, l: any) => a + (Number(l.value) || 0), 0)
+                    total: leadsInStage.reduce((a: number, l: any) => a + parseCardCurrency(l.value), 0)
                 };
             });
 
@@ -407,25 +404,26 @@ export default function KanbanPage() {
                 normalizeStageKey(s.name).includes('pagamento confirmado')
             );
 
-            const initialCount = allLeadsThisMonth.length > 0 ? allLeadsThisMonth.length : 0;
-            const confirmedCount = allLeadsThisMonth.filter((l: any) => {
-                const lStage = normalizeStageKey(l.stage);
-
-                // If we found the explicit "Pagamento confirmado" stage in the sorted list
-                if (confirmedStageIndex !== -1) {
-                    const successfulStages = sortedStages.slice(confirmedStageIndex).map(s => normalizeStageKey(s.name));
-                    return successfulStages.includes(lStage);
-                }
-
-                // Fallback: specifically include "confirmado" but exclude "aguardando"
-                return (lStage.includes('confirmado') || lStage === 'enviado') &&
-                    !lStage.includes('aguardando');
-            }).length;
+            const initialCount = cards.length;
+            const confirmedCount = confirmedStageIndex !== -1
+                ? sortedStages
+                    .slice(confirmedStageIndex)
+                    .reduce((sum: number, stage: any) => {
+                        const stageReport = report.find((r: any) => r.stage === stage.name);
+                        return sum + (stageReport?.count || 0);
+                    }, 0)
+                : report
+                    .filter((r: any) => {
+                        const stageKey = normalizeStageKey(r.stage);
+                        return (stageKey.includes('confirmado') || stageKey === 'enviado') &&
+                            !stageKey.includes('aguardando');
+                    })
+                    .reduce((sum: number, r: any) => sum + r.count, 0);
 
             const conversionRate = initialCount > 0 ? ((confirmedCount / initialCount) * 100).toFixed(1) + '%' : '0%';
 
-            const totalLeads = allLeadsThisMonth.length;
-            const activeLeads = activeLeadsThisMonth.length;
+            const totalLeads = cards.length;
+            const activeLeads = cards.length;
             const totalValue = report.reduce((a: number, s: any) => a + s.total, 0);
 
             // Product sales aggregation
