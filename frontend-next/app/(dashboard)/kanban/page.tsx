@@ -314,6 +314,15 @@ export default function KanbanPage() {
         setShowReport(true);
         setIsLoadingReport(true);
         try {
+            const normalizeStageKey = (value: string | null | undefined) =>
+                (value || "")
+                    .normalize("NFD")
+                    .replace(/[\u0300-\u036f]/g, "")
+                    .toLowerCase()
+                    .replace(/[_-]+/g, " ")
+                    .replace(/\s+/g, " ")
+                    .trim();
+
             const { data: { user } } = await supabase.auth.getUser();
             if (!user) return;
             const { data: profile } = await supabase.from("profiles").select("tenant_id").eq("id", user.id).single();
@@ -357,13 +366,10 @@ export default function KanbanPage() {
             const activeLeadsThisMonth = allLeadsThisMonth.filter((l: any) => !l.archived && !l.deleted);
 
             const report = sData.map((s: any) => {
+                const stageKey = normalizeStageKey(s.name);
                 const leadsInStage = activeLeadsThisMonth.filter((l: any) => {
-                    const lStage = l.stage?.toLowerCase();
-                    const sName = s.name?.toLowerCase();
-                    // Match by name, normalized slug, or ID
-                    return lStage === sName ||
-                        lStage === sName?.replace(/\s+/g, '_') ||
-                        lStage === s.name;
+                    const leadStageKey = normalizeStageKey(l.stage);
+                    return leadStageKey === stageKey;
                 });
 
                 return {
@@ -376,19 +382,17 @@ export default function KanbanPage() {
             // Calculate conversion rate
             const sortedStages = [...sData].sort((a: any, b: any) => a.order_position - b.order_position);
             const confirmedStageIndex = sortedStages.findIndex(s =>
-                s.name?.toLowerCase().includes('pagamento confirmado') ||
-                s.name?.toLowerCase() === 'pagamento confirmado'
+                normalizeStageKey(s.name).includes('pagamento confirmado')
             );
 
             const initialCount = allLeadsThisMonth.length > 0 ? allLeadsThisMonth.length : 0;
             const confirmedCount = allLeadsThisMonth.filter((l: any) => {
-                const lStage = l.stage?.toLowerCase() || '';
+                const lStage = normalizeStageKey(l.stage);
 
                 // If we found the explicit "Pagamento confirmado" stage in the sorted list
                 if (confirmedStageIndex !== -1) {
-                    const successfulStages = sortedStages.slice(confirmedStageIndex).map(s => s.name?.toLowerCase());
-                    return successfulStages.includes(lStage) ||
-                        successfulStages.includes(lStage.replace(/\s+/g, '_'));
+                    const successfulStages = sortedStages.slice(confirmedStageIndex).map(s => normalizeStageKey(s.name));
+                    return successfulStages.includes(lStage);
                 }
 
                 // Fallback: specifically include "confirmado" but exclude "aguardando"
