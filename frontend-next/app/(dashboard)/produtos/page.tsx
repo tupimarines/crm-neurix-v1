@@ -80,6 +80,7 @@ export default function ProdutosPage() {
     const [error, setError] = useState<string | null>(null);
 
     const [showPanel, setShowPanel] = useState(false);
+    const [editingProductId, setEditingProductId] = useState<string | null>(null);
     const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
     const [searchQuery, setSearchQuery] = useState("");
     const [filterCategory, setFilterCategory] = useState("");
@@ -92,7 +93,7 @@ export default function ProdutosPage() {
 
     const [newProduct, setNewProduct] = useState({
         name: "", price: "", weight: "", category: "",
-        description: "", lot_code: "", stock_quantity: "0",
+        description: "", lot_code: "", stock_quantity: "0", promotion_id: "",
     });
     const [newCategory, setNewCategory] = useState({ name: "", slug: "" });
     const [newPromotion, setNewPromotion] = useState({
@@ -116,11 +117,75 @@ export default function ProdutosPage() {
         return Number(normalized) || 0;
     };
 
+    const toBrlInput = (value: number) => {
+        if (!Number.isFinite(value)) return "";
+        return value.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    };
+
     const formatWeight = (raw?: string) => {
         const value = (raw || "").trim();
         if (!value) return "";
         return /g$/i.test(value) ? value : `${value}g`;
     };
+
+    function resetProductForm() {
+        setEditingProductId(null);
+        setPreviewImage(null);
+        setSelectedFile(null);
+        setNewProduct({ name: "", price: "", weight: "", category: "", description: "", lot_code: "", stock_quantity: "0", promotion_id: "" });
+    }
+
+    function openCreatePanel() {
+        resetProductForm();
+        setShowPanel(true);
+    }
+
+    function openEditPanel(product: Product) {
+        const linkedPromotion = promotions.find((p) => (p.product_ids || []).includes(product.id));
+        setEditingProductId(product.id);
+        setPreviewImage(product.image_url || null);
+        setSelectedFile(null);
+        setNewProduct({
+            name: product.name || "",
+            price: toBrlInput(Number(product.price || 0)),
+            weight: product.weight || "",
+            category: product.category || "",
+            description: product.description || "",
+            lot_code: product.lot_code || "",
+            stock_quantity: String(product.stock_quantity ?? 0),
+            promotion_id: linkedPromotion?.id || "",
+        });
+        setShowPanel(true);
+    }
+
+    async function syncProductPromotion(productId: string, selectedPromotionId: string) {
+        const currentPromotion = promotions.find((p) => (p.product_ids || []).includes(productId));
+        if (currentPromotion && currentPromotion.id !== selectedPromotionId) {
+            const filtered = (currentPromotion.product_ids || []).filter((id) => id !== productId);
+            await fetch(`${API}/api/promotions/${currentPromotion.id}/products`, {
+                method: "PUT",
+                headers: { ...authHeaders(), "Content-Type": "application/json" },
+                body: JSON.stringify({ product_ids: filtered }),
+            });
+        }
+
+        if (selectedPromotionId) {
+            const target = promotions.find((p) => p.id === selectedPromotionId);
+            const nextIds = Array.from(new Set([...(target?.product_ids || []), productId]));
+            await fetch(`${API}/api/promotions/${selectedPromotionId}/products`, {
+                method: "PUT",
+                headers: { ...authHeaders(), "Content-Type": "application/json" },
+                body: JSON.stringify({ product_ids: nextIds }),
+            });
+        } else if (currentPromotion) {
+            const filtered = (currentPromotion.product_ids || []).filter((id) => id !== productId);
+            await fetch(`${API}/api/promotions/${currentPromotion.id}/products`, {
+                method: "PUT",
+                headers: { ...authHeaders(), "Content-Type": "application/json" },
+                body: JSON.stringify({ product_ids: filtered }),
+            });
+        }
+    }
 
     async function readErrorMessage(res: Response, fallback: string) {
         const raw = await res.text().catch(() => "");
@@ -236,8 +301,12 @@ export default function ProdutosPage() {
                 image_url,
             };
 
-            const res = await fetch(`${API}/api/products/`, {
-                method: "POST",
+            const isEditing = Boolean(editingProductId);
+            const endpoint = isEditing ? `${API}/api/products/${editingProductId}` : `${API}/api/products/`;
+            const method = isEditing ? "PATCH" : "POST";
+
+            const res = await fetch(endpoint, {
+                method,
                 headers: { ...authHeaders(), "Content-Type": "application/json" },
                 body: JSON.stringify(body),
             });
@@ -247,11 +316,16 @@ export default function ProdutosPage() {
                 throw new Error(message);
             }
 
+            const saved = await res.json().catch(() => null);
+            const productId = String(saved?.id || editingProductId || "");
+            if (productId) {
+                await syncProductPromotion(productId, newProduct.promotion_id || "");
+            }
+
             await fetchProducts();
+            await fetchPromotions();
             setShowPanel(false);
-            setPreviewImage(null);
-            setSelectedFile(null);
-            setNewProduct({ name: "", price: "", weight: "", category: "", description: "", lot_code: "", stock_quantity: "0" });
+            resetProductForm();
         } catch (e) {
             setError(e instanceof Error ? e.message : "Erro desconhecido");
         } finally {
@@ -425,7 +499,7 @@ export default function ProdutosPage() {
                             placeholder="Buscar por nome, lote, categoria..."
                             type="text" />
                     </div>
-                    <button onClick={() => { setShowPanel(true); setPreviewImage(null); setSelectedFile(null); setNewProduct({ name: "", price: "", weight: "", category: "", description: "", lot_code: "", stock_quantity: "0" }); }}
+                    <button onClick={openCreatePanel}
                         className="bg-primary hover:bg-primary-hover text-white px-4 py-2.5 rounded-lg flex items-center gap-2 shadow-lg shadow-primary/30 transition-all active:scale-95">
                         <span className="material-symbols-outlined text-lg">add</span>
                         <span className="font-medium text-sm">Novo Produto</span>
@@ -555,6 +629,9 @@ export default function ProdutosPage() {
                                 <div key={product.id} className={`bg-surface-light dark:bg-surface-dark rounded-xl border border-border-light dark:border-border-dark shadow-sm hover:shadow-md transition-all group overflow-hidden ${!product.is_active ? "opacity-60 hover:opacity-100" : ""}`}>
                                     <div className="h-32 bg-gradient-to-br from-primary/5 to-primary/10 flex items-center justify-center p-4 relative overflow-hidden">
                                         <div className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity">
+                                            <button onClick={() => openEditPanel(product)} className="p-1.5 mr-1 bg-white/90 dark:bg-slate-800/90 text-slate-500 hover:text-primary rounded-full shadow-sm backdrop-blur-sm">
+                                                <span className="material-symbols-outlined text-sm">edit</span>
+                                            </button>
                                             <button onClick={() => handleDelete(product.id)} className="p-1.5 bg-white/90 dark:bg-slate-800/90 text-red-400 hover:text-red-600 rounded-full shadow-sm backdrop-blur-sm">
                                                 <span className="material-symbols-outlined text-sm">delete</span>
                                             </button>
@@ -576,7 +653,7 @@ export default function ProdutosPage() {
                                                 {st.label}
                                             </span>
                                             <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-100 dark:bg-blue-900/30 text-blue-700">
-                                                Estoque: {product.stock_quantity ?? 0}
+                                                {product.stock_quantity ?? 0} unidades
                                             </span>
                                         </div>
                                         <span className="text-lg font-bold">R$ {product.price.toFixed(2).replace(".", ",")}</span>
@@ -585,7 +662,7 @@ export default function ProdutosPage() {
                                 </div>
                             );
                         })}
-                        <button onClick={() => { setShowPanel(true); setPreviewImage(null); setSelectedFile(null); setNewProduct({ name: "", price: "", weight: "", category: "", description: "", lot_code: "", stock_quantity: "0" }); }}
+                        <button onClick={openCreatePanel}
                             className="border-2 border-dashed border-border-light dark:border-border-dark rounded-xl p-4 flex flex-col items-center justify-center text-text-secondary-light hover:text-primary hover:border-primary hover:bg-primary/5 transition-all h-full min-h-[280px] group">
                             <div className="w-12 h-12 rounded-full bg-slate-100 dark:bg-slate-800 group-hover:bg-primary-light flex items-center justify-center mb-3 transition-colors">
                                 <span className="material-symbols-outlined text-2xl group-hover:text-primary transition-colors">add</span>
@@ -616,13 +693,14 @@ export default function ProdutosPage() {
                                             <td className="px-6 py-3"><span className="bg-primary-light dark:bg-primary/20 text-primary text-xs px-2 py-0.5 rounded-full">{CATEGORY_MAP[p.category] || p.category}</span></td>
                                             <td className="px-6 py-3">
                                                 <span className={`text-xs font-bold px-2 py-0.5 rounded ${st.color === "green" ? "bg-green-100 text-green-700" : st.color === "yellow" ? "bg-yellow-100 text-yellow-700" : "bg-slate-100 text-slate-500"}`}>{st.label}</span>
-                                                <span className="ml-2 text-xs text-blue-700">Estoque: {p.stock_quantity ?? 0}</span>
+                                                <span className="ml-2 text-xs text-blue-700">{p.stock_quantity ?? 0} unidades</span>
                                             </td>
                                             <td className="px-6 py-3 font-bold">
                                                 R$ {p.price.toFixed(2).replace(".", ",")}
                                                 {p.weight && <span className="ml-2 text-xs font-medium text-text-secondary-light">{formatWeight(p.weight)}</span>}
                                             </td>
                                             <td className="px-6 py-3 text-right">
+                                                <button onClick={() => openEditPanel(p)} className="text-slate-500 hover:text-primary mr-2"><span className="material-symbols-outlined">edit</span></button>
                                                 <button onClick={() => handleDelete(p.id)} className="text-red-400 hover:text-red-600"><span className="material-symbols-outlined">delete</span></button>
                                             </td>
                                         </tr>
@@ -647,7 +725,7 @@ export default function ProdutosPage() {
                     <div className="fixed inset-0 bg-slate-900/20 dark:bg-slate-900/50 z-40 backdrop-blur-[1px]" onClick={() => setShowPanel(false)} />
                     <div className="absolute inset-y-0 right-0 w-[420px] bg-surface-light dark:bg-surface-dark shadow-2xl border-l border-border-light dark:border-border-dark flex flex-col z-50">
                         <div className="h-16 flex items-center justify-between px-6 border-b border-border-light dark:border-border-dark bg-slate-50/50 dark:bg-slate-900/50">
-                            <h3 className="font-bold text-lg">Novo Produto</h3>
+                            <h3 className="font-bold text-lg">{editingProductId ? "Editar Produto" : "Novo Produto"}</h3>
                             <button onClick={() => setShowPanel(false)} className="text-text-secondary-light hover:text-text-main-light"><span className="material-symbols-outlined">close</span></button>
                         </div>
                         <div className="flex-1 overflow-y-auto p-6 space-y-5">
@@ -722,6 +800,21 @@ export default function ProdutosPage() {
                                         ))}
                                     </select>
                                 </div>
+                                <div>
+                                    <label className="block text-xs font-semibold text-text-secondary-light uppercase tracking-wider mb-1.5">Promoção Vigente</label>
+                                    <select
+                                        value={newProduct.promotion_id}
+                                        onChange={(e) => setNewProduct({ ...newProduct, promotion_id: e.target.value })}
+                                        className="w-full px-4 py-2.5 bg-white dark:bg-slate-800 border border-border-light dark:border-border-dark rounded-lg text-sm focus:ring-2 focus:ring-primary focus:border-transparent shadow-sm"
+                                    >
+                                        <option value="">Sem promoção</option>
+                                        {promotions.filter((p) => p.is_active).map((promotion) => (
+                                            <option key={promotion.id} value={promotion.id}>
+                                                {promotion.name} ({promotion.discount_type === "percent" ? `${promotion.discount_value}%` : `R$ ${promotion.discount_value}`})
+                                            </option>
+                                        ))}
+                                    </select>
+                                </div>
                             </div>
 
                             {error && (
@@ -735,7 +828,7 @@ export default function ProdutosPage() {
                                 <button onClick={() => setShowPanel(false)} className="flex-1 px-4 py-2.5 border border-border-light dark:border-border-dark rounded-lg font-medium hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors">Cancelar</button>
                                 <button onClick={handleSave} disabled={saving || !newProduct.name || !newProduct.price}
                                     className="flex-1 px-4 py-2.5 bg-primary text-white rounded-lg hover:bg-primary-hover shadow-lg shadow-primary/30 font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
-                                    {saving ? <><span className="material-symbols-outlined text-lg animate-spin">progress_activity</span> Salvando...</> : "Salvar Produto"}
+                                    {saving ? <><span className="material-symbols-outlined text-lg animate-spin">progress_activity</span> Salvando...</> : editingProductId ? "Salvar Alterações" : "Salvar Produto"}
                                 </button>
                             </div>
                         </div>
