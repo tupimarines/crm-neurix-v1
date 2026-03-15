@@ -4,6 +4,24 @@ import { useState, useRef, useEffect, useCallback } from "react";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
+// #region agent log
+function debugLog(hypothesisId: string, location: string, message: string, data: Record<string, unknown>) {
+    fetch("http://127.0.0.1:7636/ingest/c3ef2f3c-17a1-4c42-bba6-b27c2da5e6a4", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "25dc31" },
+        body: JSON.stringify({
+            sessionId: "25dc31",
+            runId: "initial-debug-frontend",
+            hypothesisId,
+            location,
+            message,
+            data,
+            timestamp: Date.now(),
+        }),
+    }).catch(() => { });
+}
+// #endregion
+
 interface Product {
     id: string;
     name: string;
@@ -247,6 +265,13 @@ export default function ProdutosPage() {
         if (!newCategory.name.trim() || !newCategory.slug.trim()) return;
         setError(null);
         try {
+            // #region agent log
+            debugLog("H6", "frontend-next/app/(dashboard)/produtos/page.tsx:handleCreateCategory", "Submitting category create request", {
+                apiBase: API,
+                slug: newCategory.slug.trim().toLowerCase(),
+                hasToken: Boolean(getToken()),
+            });
+            // #endregion
             const res = await fetch(`${API}/api/product-categories/`, {
                 method: "POST",
                 headers: { ...authHeaders(), "Content-Type": "application/json" },
@@ -257,7 +282,23 @@ export default function ProdutosPage() {
                 }),
             });
             if (!res.ok) {
-                const message = await readErrorMessage(res, "Erro ao criar categoria.");
+                const raw = await res.text().catch(() => "");
+                // #region agent log
+                debugLog("H7", "frontend-next/app/(dashboard)/produtos/page.tsx:handleCreateCategory", "Category create request failed", {
+                    status: res.status,
+                    statusText: res.statusText,
+                    responseBody: raw.slice(0, 1000),
+                });
+                // #endregion
+                let message = "Erro ao criar categoria.";
+                if (raw) {
+                    try {
+                        const parsed = JSON.parse(raw);
+                        message = parsed.detail || parsed.message || raw;
+                    } catch {
+                        message = raw;
+                    }
+                }
                 throw new Error(message);
             }
             setNewCategory({ name: "", slug: "" });
@@ -267,11 +308,18 @@ export default function ProdutosPage() {
         }
     }
 
-    async function handleArchiveCategory(id: string) {
-        await fetch(`${API}/api/product-categories/${id}`, {
-            method: "DELETE",
-            headers: authHeaders(),
+    async function handleToggleCategory(id: string, isActive: boolean) {
+        setError(null);
+        const endpoint = `${API}/api/product-categories/${id}`;
+        const res = await fetch(endpoint, {
+            method: isActive ? "DELETE" : "PATCH",
+            headers: { ...authHeaders(), "Content-Type": "application/json" },
+            body: isActive ? undefined : JSON.stringify({ is_active: true }),
         });
+        if (!res.ok) {
+            const message = await readErrorMessage(res, isActive ? "Erro ao inativar categoria." : "Erro ao ativar categoria.");
+            throw new Error(message);
+        }
         await fetchCategories();
     }
 
@@ -280,6 +328,15 @@ export default function ProdutosPage() {
         setError(null);
         try {
             const nowIso = new Date().toISOString();
+            // #region agent log
+            debugLog("H8", "frontend-next/app/(dashboard)/produtos/page.tsx:handleCreatePromotion", "Submitting promotion create request", {
+                apiBase: API,
+                slug: newPromotion.slug.trim().toLowerCase(),
+                discountType: newPromotion.discount_type,
+                discountValue: Number(newPromotion.discount_value),
+                hasToken: Boolean(getToken()),
+            });
+            // #endregion
             const res = await fetch(`${API}/api/promotions/`, {
                 method: "POST",
                 headers: { ...authHeaders(), "Content-Type": "application/json" },
@@ -295,7 +352,23 @@ export default function ProdutosPage() {
                 }),
             });
             if (!res.ok) {
-                const message = await readErrorMessage(res, "Erro ao criar promoção.");
+                const raw = await res.text().catch(() => "");
+                // #region agent log
+                debugLog("H9", "frontend-next/app/(dashboard)/produtos/page.tsx:handleCreatePromotion", "Promotion create request failed", {
+                    status: res.status,
+                    statusText: res.statusText,
+                    responseBody: raw.slice(0, 1000),
+                });
+                // #endregion
+                let message = "Erro ao criar promoção.";
+                if (raw) {
+                    try {
+                        const parsed = JSON.parse(raw);
+                        message = parsed.detail || parsed.message || raw;
+                    } catch {
+                        message = raw;
+                    }
+                }
                 throw new Error(message);
             }
             setNewPromotion({ name: "", slug: "", discount_type: "percent", discount_value: "", priority: "0" });
@@ -426,8 +499,11 @@ export default function ProdutosPage() {
                                         <p className="font-medium text-sm">{category.name}</p>
                                         <p className="text-xs text-text-secondary-light">{category.slug}</p>
                                     </div>
-                                    <button onClick={() => handleArchiveCategory(category.id)} className="text-xs text-red-600 hover:underline">
-                                        {category.is_active ? "Inativar" : "Inativa"}
+                                    <button
+                                        onClick={() => handleToggleCategory(category.id, category.is_active).catch((e) => setError(e instanceof Error ? e.message : "Erro ao atualizar categoria"))}
+                                        className={`text-xs hover:underline ${category.is_active ? "text-red-600" : "text-emerald-600"}`}
+                                    >
+                                        {category.is_active ? "Inativar" : "Ativar"}
                                     </button>
                                 </div>
                             ))}

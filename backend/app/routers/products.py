@@ -11,6 +11,7 @@ from app.dependencies import get_supabase, get_current_user
 from app.models.product import ProductCreate, ProductUpdate, ProductResponse
 
 router = APIRouter()
+LEGACY_CATEGORIES = {"tradicional", "diet_zero", "gourmet", "sazonal"}
 
 
 def _db_error_detail(exc: Exception) -> str:
@@ -29,6 +30,13 @@ def _is_missing_column_error(detail: str, column_name: str) -> bool:
 def _is_missing_table_error(detail: str, table_name: str) -> bool:
     lowered = detail.lower()
     return "relation" in lowered and table_name.lower() in lowered and "does not exist" in lowered
+
+
+def _legacy_category_or_none(slug_or_category: str | None) -> str | None:
+    if not slug_or_category:
+        return None
+    normalized = str(slug_or_category).strip().lower()
+    return normalized if normalized in LEGACY_CATEGORIES else None
 
 
 def _insert_product_with_fallback(supabase: SupabaseClient, data: dict):
@@ -145,7 +153,8 @@ async def create_product(
     category_slug = payload.category_slug or payload.category
 
     if category_slug:
-        data["category"] = category_slug
+        # Keep legacy enum column safe for old schemas with check constraint.
+        data["category"] = _legacy_category_or_none(category_slug)
 
     if category_slug and not category_id:
         try:
@@ -180,7 +189,7 @@ async def create_product(
             if not category_by_id.data:
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Categoria não encontrada.")
             data["category_id"] = category_by_id.data["id"]
-            data["category"] = category_by_id.data["slug"]
+            data["category"] = _legacy_category_or_none(category_by_id.data["slug"])
         except HTTPException:
             raise
         except Exception as exc:
@@ -221,6 +230,8 @@ async def update_product(
     update_data.pop("category_slug", None)  # products table does not store this field directly
     category_id = update_data.get("category_id")
     category_slug = payload.category_slug if "category_slug" in payload.model_fields_set else update_data.get("category")
+    if category_slug:
+        update_data["category"] = _legacy_category_or_none(category_slug)
     if category_slug and not category_id:
         try:
             category_by_slug = (
@@ -256,7 +267,7 @@ async def update_product(
                 )
                 if not category_by_id.data:
                     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Categoria não encontrada.")
-                update_data["category"] = category_by_id.data["slug"]
+                update_data["category"] = _legacy_category_or_none(category_by_id.data["slug"])
             except HTTPException:
                 raise
             except Exception as exc:

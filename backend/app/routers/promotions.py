@@ -42,6 +42,11 @@ def _is_schema_cache_column_error(detail: str, table_name: str, column_name: str
     )
 
 
+def _is_schema_cache_table_error(detail: str, table_name: str) -> bool:
+    lowered = detail.lower()
+    return "schema cache" in lowered and table_name.lower() in lowered
+
+
 def _raise_catalog_error(exc: Exception, operation: str) -> None:
     if isinstance(exc, HTTPException):
         raise exc
@@ -49,6 +54,7 @@ def _raise_catalog_error(exc: Exception, operation: str) -> None:
     if (
         _is_missing_table_error(detail, "promotions")
         or _is_missing_table_error(detail, "promotion_products")
+        or _is_schema_cache_table_error(detail, "promotions")
         or _is_schema_cache_column_error(detail, "promotions", "slug")
     ):
         raise HTTPException(
