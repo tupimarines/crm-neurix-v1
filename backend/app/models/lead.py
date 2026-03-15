@@ -32,6 +32,8 @@ class LeadBase(BaseModel):
     notes: Optional[str] = Field(None, max_length=1000, description="Observações sobre o lead")
     whatsapp_chat_id: Optional[str] = None
     products_json: Optional[list[dict]] = Field(None, description="Produtos e quantidades selecionados")
+    stock_reserved_json: Optional[list[dict]] = Field(None, description="Reserva de estoque ativa por produto")
+    purchase_history_json: Optional[list[dict]] = Field(None, description="Histórico de compras fechadas do lead")
 
 
 class LeadCreate(LeadBase):
@@ -46,6 +48,8 @@ class LeadUpdate(BaseModel):
     value: Optional[float] = None
     notes: Optional[str] = None
     products_json: Optional[list[dict]] = None
+    stock_reserved_json: Optional[list[dict]] = None
+    purchase_history_json: Optional[list[dict]] = None
 
 
 class LeadMoveStage(BaseModel):

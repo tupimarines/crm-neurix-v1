@@ -29,6 +29,7 @@ class ProductBase(BaseModel):
     category_slug: Optional[str] = None
     lot_code: Optional[str] = None
     image_url: Optional[str] = None
+    stock_quantity: int = Field(default=0, ge=0, description="Quantidade atual em estoque")
     is_active: bool = True
 
 
@@ -46,6 +47,7 @@ class ProductUpdate(BaseModel):
     category_slug: Optional[str] = None
     lot_code: Optional[str] = None
     image_url: Optional[str] = None
+    stock_quantity: Optional[int] = Field(default=None, ge=0)
     is_active: Optional[bool] = None
 
 

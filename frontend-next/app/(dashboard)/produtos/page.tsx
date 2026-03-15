@@ -34,6 +34,7 @@ interface Product {
     image_url?: string;
     is_active: boolean;
     tenant_id: string;
+    stock_quantity?: number;
 }
 
 interface ProductCategory {
@@ -91,7 +92,7 @@ export default function ProdutosPage() {
 
     const [newProduct, setNewProduct] = useState({
         name: "", price: "", weight: "", category: "",
-        description: "", lot_code: "",
+        description: "", lot_code: "", stock_quantity: "0",
     });
     const [newCategory, setNewCategory] = useState({ name: "", slug: "" });
     const [newPromotion, setNewPromotion] = useState({
@@ -113,6 +114,12 @@ export default function ProdutosPage() {
         if (!value) return 0;
         const normalized = value.replace(/\./g, "").replace(",", ".");
         return Number(normalized) || 0;
+    };
+
+    const formatWeight = (raw?: string) => {
+        const value = (raw || "").trim();
+        if (!value) return "";
+        return /g$/i.test(value) ? value : `${value}g`;
     };
 
     async function readErrorMessage(res: Response, fallback: string) {
@@ -221,6 +228,7 @@ export default function ProdutosPage() {
                 name: newProduct.name,
                 price: parseBrlToNumber(newProduct.price),
                 weight: newProduct.weight || undefined,
+                stock_quantity: Number(newProduct.stock_quantity || 0),
                 category: newProduct.category,
                 category_slug: newProduct.category || undefined,
                 description: newProduct.description || undefined,
@@ -243,7 +251,7 @@ export default function ProdutosPage() {
             setShowPanel(false);
             setPreviewImage(null);
             setSelectedFile(null);
-            setNewProduct({ name: "", price: "", weight: "", category: "", description: "", lot_code: "" });
+            setNewProduct({ name: "", price: "", weight: "", category: "", description: "", lot_code: "", stock_quantity: "0" });
         } catch (e) {
             setError(e instanceof Error ? e.message : "Erro desconhecido");
         } finally {
@@ -417,7 +425,7 @@ export default function ProdutosPage() {
                             placeholder="Buscar por nome, lote, categoria..."
                             type="text" />
                     </div>
-                    <button onClick={() => { setShowPanel(true); setPreviewImage(null); setSelectedFile(null); setNewProduct({ name: "", price: "", weight: "", category: "", description: "", lot_code: "" }); }}
+                    <button onClick={() => { setShowPanel(true); setPreviewImage(null); setSelectedFile(null); setNewProduct({ name: "", price: "", weight: "", category: "", description: "", lot_code: "", stock_quantity: "0" }); }}
                         className="bg-primary hover:bg-primary-hover text-white px-4 py-2.5 rounded-lg flex items-center gap-2 shadow-lg shadow-primary/30 transition-all active:scale-95">
                         <span className="material-symbols-outlined text-lg">add</span>
                         <span className="font-medium text-sm">Novo Produto</span>
@@ -567,14 +575,17 @@ export default function ProdutosPage() {
                                             <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${st.color === "green" ? "bg-green-100 dark:bg-green-900/30 text-green-700" : st.color === "yellow" ? "bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700" : "bg-slate-100 dark:bg-slate-800 text-slate-500"}`}>
                                                 {st.label}
                                             </span>
-                                            {product.weight && <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 dark:bg-slate-800 text-text-secondary-light">{product.weight}</span>}
+                                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-100 dark:bg-blue-900/30 text-blue-700">
+                                                Estoque: {product.stock_quantity ?? 0}
+                                            </span>
                                         </div>
                                         <span className="text-lg font-bold">R$ {product.price.toFixed(2).replace(".", ",")}</span>
+                                        {product.weight && <span className="ml-2 text-sm font-medium text-text-secondary-light">{formatWeight(product.weight)}</span>}
                                     </div>
                                 </div>
                             );
                         })}
-                        <button onClick={() => { setShowPanel(true); setPreviewImage(null); setSelectedFile(null); setNewProduct({ name: "", price: "", weight: "", category: "", description: "", lot_code: "" }); }}
+                        <button onClick={() => { setShowPanel(true); setPreviewImage(null); setSelectedFile(null); setNewProduct({ name: "", price: "", weight: "", category: "", description: "", lot_code: "", stock_quantity: "0" }); }}
                             className="border-2 border-dashed border-border-light dark:border-border-dark rounded-xl p-4 flex flex-col items-center justify-center text-text-secondary-light hover:text-primary hover:border-primary hover:bg-primary/5 transition-all h-full min-h-[280px] group">
                             <div className="w-12 h-12 rounded-full bg-slate-100 dark:bg-slate-800 group-hover:bg-primary-light flex items-center justify-center mb-3 transition-colors">
                                 <span className="material-symbols-outlined text-2xl group-hover:text-primary transition-colors">add</span>
@@ -605,8 +616,12 @@ export default function ProdutosPage() {
                                             <td className="px-6 py-3"><span className="bg-primary-light dark:bg-primary/20 text-primary text-xs px-2 py-0.5 rounded-full">{CATEGORY_MAP[p.category] || p.category}</span></td>
                                             <td className="px-6 py-3">
                                                 <span className={`text-xs font-bold px-2 py-0.5 rounded ${st.color === "green" ? "bg-green-100 text-green-700" : st.color === "yellow" ? "bg-yellow-100 text-yellow-700" : "bg-slate-100 text-slate-500"}`}>{st.label}</span>
+                                                <span className="ml-2 text-xs text-blue-700">Estoque: {p.stock_quantity ?? 0}</span>
                                             </td>
-                                            <td className="px-6 py-3 font-bold">R$ {p.price.toFixed(2).replace(".", ",")}</td>
+                                            <td className="px-6 py-3 font-bold">
+                                                R$ {p.price.toFixed(2).replace(".", ",")}
+                                                {p.weight && <span className="ml-2 text-xs font-medium text-text-secondary-light">{formatWeight(p.weight)}</span>}
+                                            </td>
                                             <td className="px-6 py-3 text-right">
                                                 <button onClick={() => handleDelete(p.id)} className="text-red-400 hover:text-red-600"><span className="material-symbols-outlined">delete</span></button>
                                             </td>
@@ -676,6 +691,16 @@ export default function ProdutosPage() {
                                         <input value={newProduct.weight} onChange={(e) => setNewProduct({ ...newProduct, weight: e.target.value })}
                                             className="w-full px-4 py-2.5 bg-white dark:bg-slate-800 border border-border-light dark:border-border-dark rounded-lg text-sm focus:ring-2 focus:ring-primary focus:border-transparent shadow-sm"
                                             placeholder="320g" />
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-semibold text-text-secondary-light uppercase tracking-wider mb-1.5">Quantidade em Estoque</label>
+                                        <input
+                                            value={newProduct.stock_quantity}
+                                            onChange={(e) => setNewProduct({ ...newProduct, stock_quantity: e.target.value.replace(/\D/g, "") })}
+                                            className="w-full px-4 py-2.5 bg-white dark:bg-slate-800 border border-border-light dark:border-border-dark rounded-lg text-sm focus:ring-2 focus:ring-primary focus:border-transparent shadow-sm"
+                                            placeholder="0"
+                                            inputMode="numeric"
+                                        />
                                     </div>
                                 </div>
                                 <div>

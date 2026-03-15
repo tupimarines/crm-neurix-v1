@@ -47,6 +47,11 @@ def _is_schema_cache_table_error(detail: str, table_name: str) -> bool:
     return "schema cache" in lowered and table_name.lower() in lowered
 
 
+def _is_not_null_column_error(detail: str, column_name: str) -> bool:
+    lowered = detail.lower()
+    return "null value in column" in lowered and column_name.lower() in lowered and "not-null constraint" in lowered
+
+
 def _raise_catalog_error(exc: Exception, operation: str) -> None:
     if isinstance(exc, HTTPException):
         raise exc
@@ -62,6 +67,19 @@ def _raise_catalog_error(exc: Exception, operation: str) -> None:
             detail="Catálogo comercial indisponível: schema incompleto/desatualizado no Supabase (rode a migration e recarregue o schema cache).",
         )
     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"{operation}: {detail}")
+
+
+def _insert_promotion_with_fallback(supabase: SupabaseClient, data: dict):
+    try:
+        return supabase.table("promotions").insert(data).execute()
+    except Exception as exc:
+        detail = _db_error_detail(exc)
+        # Legacy schema compatibility: some environments still require `value`.
+        if _is_not_null_column_error(detail, "value"):
+            fallback = dict(data)
+            fallback["value"] = float(data.get("discount_value") or 0)
+            return supabase.table("promotions").insert(fallback).execute()
+        raise
 
 
 # region agent log
@@ -185,7 +203,7 @@ async def create_promotion(
     try:
         data = payload.model_dump(mode="json", exclude={"product_ids"})
         data["tenant_id"] = user.id
-        created = supabase.table("promotions").insert(data).execute()
+        created = _insert_promotion_with_fallback(supabase, data)
         if not created.data:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Erro ao criar promoção.")
         promotion = created.data[0]

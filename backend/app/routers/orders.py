@@ -18,6 +18,95 @@ router = APIRouter()
 logger = get_logger("orders")
 
 
+def _to_positive_int(value, default: int = 0) -> int:
+    try:
+        parsed = int(value)
+        return parsed if parsed > 0 else default
+    except Exception:
+        return default
+
+
+def _aggregate_quantities(items: list[dict]) -> dict[str, int]:
+    aggregated: dict[str, int] = {}
+    for item in items or []:
+        product_id = str(item.get("product_id") or item.get("id") or "").strip()
+        if not product_id:
+            continue
+        quantity = _to_positive_int(item.get("quantity") or item.get("qty") or 0, default=0)
+        if quantity <= 0:
+            continue
+        aggregated[product_id] = aggregated.get(product_id, 0) + quantity
+    return aggregated
+
+
+def _normalize_reserved_items(items: list[dict] | None) -> list[dict]:
+    normalized: list[dict] = []
+    for item in items or []:
+        product_id = str(item.get("product_id") or item.get("id") or "").strip()
+        if not product_id:
+            continue
+        quantity = _to_positive_int(item.get("quantity") or item.get("qty") or 0, default=0)
+        if quantity <= 0:
+            continue
+        normalized.append({"product_id": product_id, "quantity": quantity})
+    return normalized
+
+
+def _subtract_products_json(items: list[dict] | None, consumed_by_product: dict[str, int]) -> list[dict]:
+    remaining: list[dict] = []
+    tracker = dict(consumed_by_product)
+    for item in items or []:
+        product_id = str(item.get("id") or item.get("product_id") or "").strip()
+        if not product_id:
+            continue
+        current_qty = _to_positive_int(item.get("quantity") or item.get("qty") or 0, default=0)
+        if current_qty <= 0:
+            continue
+        consume = min(current_qty, _to_positive_int(tracker.get(product_id), default=0))
+        next_qty = current_qty - consume
+        tracker[product_id] = _to_positive_int(tracker.get(product_id), default=0) - consume
+        if next_qty <= 0:
+            continue
+        next_item = dict(item)
+        if "quantity" in next_item:
+            next_item["quantity"] = next_qty
+        else:
+            next_item["qty"] = next_qty
+        remaining.append(next_item)
+    return remaining
+
+
+def _apply_stock_consumption(*, supabase: SupabaseClient, tenant_id: str, consumption_by_product: dict[str, int]) -> None:
+    if not consumption_by_product:
+        return
+    product_ids = list(consumption_by_product.keys())
+    products = (
+        supabase.table("products")
+        .select("id, name, stock_quantity")
+        .eq("tenant_id", tenant_id)
+        .in_("id", product_ids)
+        .execute()
+    ).data or []
+    by_id = {str(row["id"]): row for row in products}
+    missing = [pid for pid in product_ids if pid not in by_id]
+    if missing:
+        raise HTTPException(status_code=400, detail=f"Produtos não encontrados para estoque: {', '.join(missing)}")
+
+    for product_id, qty in consumption_by_product.items():
+        current_stock = int(by_id[product_id].get("stock_quantity") or 0)
+        new_stock = current_stock - int(qty)
+        if new_stock < 0:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Estoque insuficiente para '{by_id[product_id].get('name') or product_id}'. Disponível: {current_stock}, solicitado: {qty}.",
+            )
+
+    for product_id, qty in consumption_by_product.items():
+        current_stock = int(by_id[product_id].get("stock_quantity") or 0)
+        new_stock = current_stock - int(qty)
+        supabase.table("products").update({"stock_quantity": new_stock}).eq("id", product_id).eq("tenant_id", tenant_id).execute()
+
+
 @router.get("/", response_model=list[OrderResponse])
 async def list_orders(
     payment_status: Optional[PaymentStatus] = None,
@@ -181,10 +270,113 @@ async def create_order(
     data["discount_total"] = discount_total
     data["total"] = total
 
-    response = supabase.table("orders").insert(data).execute()
+    order_quantities = _aggregate_quantities(normalized_items)
+    stock_consumption = dict(order_quantities)
+    lead_row = None
+    reserved_consumed: dict[str, int] = {}
+    if data.get("lead_id"):
+        lead_lookup = (
+            supabase.table("leads")
+            .select("id, products_json, stock_reserved_json, purchase_history_json")
+            .eq("id", data["lead_id"])
+            .eq("tenant_id", user.id)
+            .single()
+            .execute()
+        )
+        lead_row = lead_lookup.data
+        if lead_row:
+            reserved_by_product = _aggregate_quantities(
+                lead_row.get("stock_reserved_json") or lead_row.get("products_json") or []
+            )
+            stock_consumption = {}
+            for product_id, ordered_qty in order_quantities.items():
+                reserved_qty = reserved_by_product.get(product_id, 0)
+                covered_by_reservation = min(reserved_qty, ordered_qty)
+                if covered_by_reservation > 0:
+                    reserved_consumed[product_id] = covered_by_reservation
+                remaining_to_consume = ordered_qty - covered_by_reservation
+                if remaining_to_consume > 0:
+                    stock_consumption[product_id] = remaining_to_consume
+
+    if stock_consumption:
+        _apply_stock_consumption(
+            supabase=supabase,
+            tenant_id=user.id,
+            consumption_by_product=stock_consumption,
+        )
+
+    try:
+        response = supabase.table("orders").insert(data).execute()
+    except Exception:
+        if stock_consumption:
+            try:
+                rollback_map = {pid: -qty for pid, qty in stock_consumption.items()}
+                _apply_stock_consumption(
+                    supabase=supabase,
+                    tenant_id=user.id,
+                    consumption_by_product=rollback_map,
+                )
+            except Exception:
+                logger.exception("order_create_stock_rollback_failed", extra={"tenant_id": str(user.id)})
+        raise
     if not response.data:
+        if stock_consumption:
+            try:
+                rollback_map = {pid: -qty for pid, qty in stock_consumption.items()}
+                _apply_stock_consumption(
+                    supabase=supabase,
+                    tenant_id=user.id,
+                    consumption_by_product=rollback_map,
+                )
+            except Exception:
+                logger.exception("order_create_stock_rollback_failed", extra={"tenant_id": str(user.id)})
         metrics.observe("orders_create", (perf_counter() - started) * 1000.0, ok=False)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Erro ao criar pedido.")
+
+    if lead_row:
+        try:
+            reserved_before = _aggregate_quantities(
+                lead_row.get("stock_reserved_json") or lead_row.get("products_json") or []
+            )
+            reserved_after_map: dict[str, int] = {}
+            for product_id, reserved_qty in reserved_before.items():
+                consumed_qty = reserved_consumed.get(product_id, 0)
+                remaining_qty = reserved_qty - consumed_qty
+                if remaining_qty > 0:
+                    reserved_after_map[product_id] = remaining_qty
+
+            reserved_after = [
+                {"product_id": pid, "quantity": qty}
+                for pid, qty in reserved_after_map.items()
+            ]
+            purchase_history = list(lead_row.get("purchase_history_json") or [])
+            purchase_history.append(
+                {
+                    "order_id": response.data[0]["id"],
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "products": resolved_lines,
+                    "total": total,
+                    "subtotal": subtotal,
+                    "discount_total": discount_total,
+                    "payment_status": data.get("payment_status"),
+                }
+            )
+            remaining_products_json = _subtract_products_json(
+                lead_row.get("products_json") or [],
+                order_quantities,
+            )
+            supabase.table("leads").update(
+                {
+                    "stock_reserved_json": reserved_after,
+                    "products_json": remaining_products_json,
+                    "purchase_history_json": purchase_history,
+                }
+            ).eq("id", lead_row["id"]).eq("tenant_id", user.id).execute()
+        except Exception:
+            logger.exception(
+                "order_create_lead_history_update_failed",
+                extra={"tenant_id": str(user.id), "lead_id": str(lead_row.get("id"))},
+            )
 
     elapsed_ms = (perf_counter() - started) * 1000.0
     metrics.observe("orders_create", elapsed_ms, ok=True)
