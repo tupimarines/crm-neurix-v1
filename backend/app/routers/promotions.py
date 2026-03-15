@@ -20,6 +20,44 @@ from app.models.catalog import (
 router = APIRouter()
 
 
+def _db_error_detail(exc: Exception) -> str:
+    text = str(exc)
+    details = getattr(exc, "details", None)
+    if isinstance(details, str) and details.strip():
+        return details
+    return text or "Erro inesperado no banco."
+
+
+def _is_missing_table_error(detail: str, table_name: str) -> bool:
+    lowered = detail.lower()
+    return "relation" in lowered and table_name.lower() in lowered and "does not exist" in lowered
+
+
+def _is_schema_cache_column_error(detail: str, table_name: str, column_name: str) -> bool:
+    lowered = detail.lower()
+    return (
+        "schema cache" in lowered
+        and table_name.lower() in lowered
+        and column_name.lower() in lowered
+    )
+
+
+def _raise_catalog_error(exc: Exception, operation: str) -> None:
+    if isinstance(exc, HTTPException):
+        raise exc
+    detail = _db_error_detail(exc)
+    if (
+        _is_missing_table_error(detail, "promotions")
+        or _is_missing_table_error(detail, "promotion_products")
+        or _is_schema_cache_column_error(detail, "promotions", "slug")
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Catálogo comercial indisponível: schema incompleto/desatualizado no Supabase (rode a migration e recarregue o schema cache).",
+        )
+    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"{operation}: {detail}")
+
+
 # region agent log
 def _debug_log(hypothesis_id: str, location: str, message: str, data: dict) -> None:
     try:
@@ -113,7 +151,7 @@ async def list_promotions(
             },
         )
         # endregion
-        raise
+        _raise_catalog_error(exc, "Erro ao listar promoções")
 
 
 @router.post("/", response_model=PromotionResponse, status_code=status.HTTP_201_CREATED)
@@ -139,7 +177,7 @@ async def create_promotion(
     )
     # endregion
     try:
-        data = payload.model_dump(exclude={"product_ids"})
+        data = payload.model_dump(mode="json", exclude={"product_ids"})
         data["tenant_id"] = user.id
         created = supabase.table("promotions").insert(data).execute()
         if not created.data:
@@ -169,7 +207,7 @@ async def create_promotion(
             },
         )
         # endregion
-        raise
+        _raise_catalog_error(exc, "Erro ao criar promoção")
 
 
 @router.patch("/{promotion_id}", response_model=PromotionResponse)
@@ -179,42 +217,48 @@ async def update_promotion(
     user=Depends(get_current_user),
     supabase: SupabaseClient = Depends(get_supabase),
 ):
-    update_data = payload.model_dump(exclude_unset=True)
+    update_data = payload.model_dump(mode="json", exclude_unset=True)
     if not update_data:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Nenhum campo para atualizar.")
 
     starts_at = update_data.get("starts_at")
     ends_at = update_data.get("ends_at")
-    if starts_at or ends_at:
-        current = (
+    try:
+        if starts_at or ends_at:
+            current = (
+                supabase.table("promotions")
+                .select("starts_at, ends_at")
+                .eq("id", promotion_id)
+                .eq("tenant_id", user.id)
+                .single()
+                .execute()
+            )
+            if not current.data:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Promoção não encontrada.")
+            _validate_period(starts_at or current.data["starts_at"], ends_at if ends_at is not None else current.data["ends_at"])
+
+        response = (
             supabase.table("promotions")
-            .select("starts_at, ends_at")
+            .update(update_data)
             .eq("id", promotion_id)
             .eq("tenant_id", user.id)
-            .single()
             .execute()
         )
-        if not current.data:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Promoção não encontrada.")
-        _validate_period(starts_at or current.data["starts_at"], ends_at if ends_at is not None else current.data["ends_at"])
-
-    response = (
-        supabase.table("promotions")
-        .update(update_data)
-        .eq("id", promotion_id)
-        .eq("tenant_id", user.id)
-        .execute()
-    )
+    except Exception as exc:
+        _raise_catalog_error(exc, "Erro ao atualizar promoção")
     if not response.data:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Promoção não encontrada.")
     row = response.data[0]
-    link_rows = (
-        supabase.table("promotion_products")
-        .select("product_id")
-        .eq("tenant_id", user.id)
-        .eq("promotion_id", promotion_id)
-        .execute()
-    ).data or []
+    try:
+        link_rows = (
+            supabase.table("promotion_products")
+            .select("product_id")
+            .eq("tenant_id", user.id)
+            .eq("promotion_id", promotion_id)
+            .execute()
+        ).data or []
+    except Exception as exc:
+        _raise_catalog_error(exc, "Erro ao buscar vínculos da promoção")
     return _serialize_response(row, [r["product_id"] for r in link_rows])
 
 
@@ -224,13 +268,16 @@ async def delete_promotion(
     user=Depends(get_current_user),
     supabase: SupabaseClient = Depends(get_supabase),
 ):
-    response = (
-        supabase.table("promotions")
-        .update({"is_active": False})
-        .eq("id", promotion_id)
-        .eq("tenant_id", user.id)
-        .execute()
-    )
+    try:
+        response = (
+            supabase.table("promotions")
+            .update({"is_active": False})
+            .eq("id", promotion_id)
+            .eq("tenant_id", user.id)
+            .execute()
+        )
+    except Exception as exc:
+        _raise_catalog_error(exc, "Erro ao inativar promoção")
     if not response.data:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Promoção não encontrada.")
 
@@ -242,18 +289,24 @@ async def set_promotion_products(
     user=Depends(get_current_user),
     supabase: SupabaseClient = Depends(get_supabase),
 ):
-    promotion = (
-        supabase.table("promotions")
-        .select("*")
-        .eq("id", promotion_id)
-        .eq("tenant_id", user.id)
-        .single()
-        .execute()
-    )
+    try:
+        promotion = (
+            supabase.table("promotions")
+            .select("*")
+            .eq("id", promotion_id)
+            .eq("tenant_id", user.id)
+            .single()
+            .execute()
+        )
+    except Exception as exc:
+        _raise_catalog_error(exc, "Erro ao buscar promoção")
     if not promotion.data:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Promoção não encontrada.")
 
-    supabase.table("promotion_products").delete().eq("promotion_id", promotion_id).eq("tenant_id", user.id).execute()
+    try:
+        supabase.table("promotion_products").delete().eq("promotion_id", promotion_id).eq("tenant_id", user.id).execute()
+    except Exception as exc:
+        _raise_catalog_error(exc, "Erro ao limpar produtos da promoção")
 
     normalized = [str(pid) for pid in payload.product_ids]
     if normalized:
@@ -261,7 +314,10 @@ async def set_promotion_products(
             {"tenant_id": user.id, "promotion_id": promotion_id, "product_id": product_id}
             for product_id in normalized
         ]
-        supabase.table("promotion_products").insert(link_payload).execute()
+        try:
+            supabase.table("promotion_products").insert(link_payload).execute()
+        except Exception as exc:
+            _raise_catalog_error(exc, "Erro ao vincular produtos na promoção")
 
     return _serialize_response(promotion.data, normalized)
 
@@ -274,38 +330,47 @@ async def list_eligible_promotions_for_product(
 ):
     # Endpoint auxiliar para UI validar promoções ativas.
     now_utc = datetime.now(timezone.utc).isoformat()
-    product = (
-        supabase.table("products")
-        .select("id, category_id")
-        .eq("id", product_id)
-        .eq("tenant_id", user.id)
-        .single()
-        .execute()
-    )
+    try:
+        product = (
+            supabase.table("products")
+            .select("id, category_id")
+            .eq("id", product_id)
+            .eq("tenant_id", user.id)
+            .single()
+            .execute()
+        )
+    except Exception as exc:
+        _raise_catalog_error(exc, "Erro ao buscar produto")
     if not product.data:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Produto não encontrado.")
 
-    base_promotions = (
-        supabase.table("promotions")
-        .select("*")
-        .eq("tenant_id", user.id)
-        .eq("is_active", True)
-        .lte("starts_at", now_utc)
-        .or_(f"ends_at.is.null,ends_at.gte.{now_utc}")
-        .order("priority", desc=True)
-        .order("created_at", desc=True)
-        .execute()
-    ).data or []
+    try:
+        base_promotions = (
+            supabase.table("promotions")
+            .select("*")
+            .eq("tenant_id", user.id)
+            .eq("is_active", True)
+            .lte("starts_at", now_utc)
+            .or_(f"ends_at.is.null,ends_at.gte.{now_utc}")
+            .order("priority", desc=True)
+            .order("created_at", desc=True)
+            .execute()
+        ).data or []
+    except Exception as exc:
+        _raise_catalog_error(exc, "Erro ao listar promoções elegíveis")
     if not base_promotions:
         return {"items": []}
 
-    link_rows = (
-        supabase.table("promotion_products")
-        .select("promotion_id")
-        .eq("tenant_id", user.id)
-        .eq("product_id", product_id)
-        .execute()
-    ).data or []
+    try:
+        link_rows = (
+            supabase.table("promotion_products")
+            .select("promotion_id")
+            .eq("tenant_id", user.id)
+            .eq("product_id", product_id)
+            .execute()
+        ).data or []
+    except Exception as exc:
+        _raise_catalog_error(exc, "Erro ao listar vínculos de promoção")
     linked_ids = {row["promotion_id"] for row in link_rows}
 
     category_id = product.data.get("category_id")

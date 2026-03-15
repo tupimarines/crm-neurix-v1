@@ -19,6 +19,43 @@ from app.models.catalog import (
 router = APIRouter()
 
 
+def _db_error_detail(exc: Exception) -> str:
+    text = str(exc)
+    details = getattr(exc, "details", None)
+    if isinstance(details, str) and details.strip():
+        return details
+    return text or "Erro inesperado no banco."
+
+
+def _is_missing_table_error(detail: str, table_name: str) -> bool:
+    lowered = detail.lower()
+    return "relation" in lowered and table_name.lower() in lowered and "does not exist" in lowered
+
+
+def _is_schema_cache_column_error(detail: str, table_name: str, column_name: str) -> bool:
+    lowered = detail.lower()
+    return (
+        "schema cache" in lowered
+        and table_name.lower() in lowered
+        and column_name.lower() in lowered
+    )
+
+
+def _raise_catalog_error(exc: Exception, operation: str) -> None:
+    if isinstance(exc, HTTPException):
+        raise exc
+    detail = _db_error_detail(exc)
+    if (
+        _is_missing_table_error(detail, "product_categories")
+        or _is_schema_cache_column_error(detail, "product_categories", "slug")
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Catálogo comercial indisponível: schema incompleto/desatualizado no Supabase (rode a migration e recarregue o schema cache).",
+        )
+    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"{operation}: {detail}")
+
+
 # region agent log
 def _debug_log(hypothesis_id: str, location: str, message: str, data: dict) -> None:
     try:
@@ -84,7 +121,7 @@ async def list_categories(
             },
         )
         # endregion
-        raise
+        _raise_catalog_error(exc, "Erro ao listar categorias")
 
 
 @router.post("/", response_model=ProductCategoryResponse, status_code=status.HTTP_201_CREATED)
@@ -125,7 +162,7 @@ async def create_category(
             },
         )
         # endregion
-        raise
+        _raise_catalog_error(exc, "Erro ao criar categoria")
 
 
 @router.patch("/{category_id}", response_model=ProductCategoryResponse)
@@ -139,13 +176,16 @@ async def update_category(
     if not update_data:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Nenhum campo para atualizar.")
 
-    response = (
-        supabase.table("product_categories")
-        .update(update_data)
-        .eq("id", category_id)
-        .eq("tenant_id", user.id)
-        .execute()
-    )
+    try:
+        response = (
+            supabase.table("product_categories")
+            .update(update_data)
+            .eq("id", category_id)
+            .eq("tenant_id", user.id)
+            .execute()
+        )
+    except Exception as exc:
+        _raise_catalog_error(exc, "Erro ao atualizar categoria")
     if not response.data:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Categoria não encontrada.")
     return ProductCategoryResponse(**response.data[0])
@@ -158,12 +198,15 @@ async def delete_category(
     supabase: SupabaseClient = Depends(get_supabase),
 ):
     # Soft-delete to preserve history in orders
-    response = (
-        supabase.table("product_categories")
-        .update({"is_active": False})
-        .eq("id", category_id)
-        .eq("tenant_id", user.id)
-        .execute()
-    )
+    try:
+        response = (
+            supabase.table("product_categories")
+            .update({"is_active": False})
+            .eq("id", category_id)
+            .eq("tenant_id", user.id)
+            .execute()
+        )
+    except Exception as exc:
+        _raise_catalog_error(exc, "Erro ao inativar categoria")
     if not response.data:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Categoria não encontrada.")

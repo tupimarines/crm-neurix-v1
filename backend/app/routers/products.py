@@ -13,6 +13,60 @@ from app.models.product import ProductCreate, ProductUpdate, ProductResponse
 router = APIRouter()
 
 
+def _db_error_detail(exc: Exception) -> str:
+    text = str(exc)
+    details = getattr(exc, "details", None)
+    if isinstance(details, str) and details.strip():
+        return details
+    return text or "Erro inesperado no banco."
+
+
+def _is_missing_column_error(detail: str, column_name: str) -> bool:
+    lowered = detail.lower()
+    return "column" in lowered and column_name.lower() in lowered and "does not exist" in lowered
+
+
+def _is_missing_table_error(detail: str, table_name: str) -> bool:
+    lowered = detail.lower()
+    return "relation" in lowered and table_name.lower() in lowered and "does not exist" in lowered
+
+
+def _insert_product_with_fallback(supabase: SupabaseClient, data: dict):
+    try:
+        return supabase.table("products").insert(data).execute()
+    except Exception as exc:
+        detail = _db_error_detail(exc)
+        if _is_missing_column_error(detail, "category_id"):
+            fallback = dict(data)
+            fallback.pop("category_id", None)
+            return supabase.table("products").insert(fallback).execute()
+        raise
+
+
+def _update_product_with_fallback(supabase: SupabaseClient, product_id: str, tenant_id: str, update_data: dict):
+    try:
+        return (
+            supabase.table("products")
+            .update(update_data)
+            .eq("id", product_id)
+            .eq("tenant_id", tenant_id)
+            .execute()
+        )
+    except Exception as exc:
+        detail = _db_error_detail(exc)
+        if _is_missing_column_error(detail, "category_id"):
+            fallback = dict(update_data)
+            fallback.pop("category_id", None)
+            return (
+                supabase.table("products")
+                .update(fallback)
+                .eq("id", product_id)
+                .eq("tenant_id", tenant_id)
+                .execute()
+            )
+        raise
+
+
 @router.get("/", response_model=list[ProductResponse])
 async def list_products(
     category_id: Optional[str] = None,
@@ -30,17 +84,25 @@ async def list_products(
     if category_id:
         query = query.eq("category_id", category_id)
     elif category_slug:
-        category_response = (
-            supabase.table("product_categories")
-            .select("id")
-            .eq("tenant_id", user.id)
-            .eq("slug", category_slug)
-            .single()
-            .execute()
-        )
-        if not category_response.data:
-            return []
-        query = query.eq("category_id", category_response.data["id"])
+        try:
+            category_response = (
+                supabase.table("product_categories")
+                .select("id")
+                .eq("tenant_id", user.id)
+                .eq("slug", category_slug)
+                .single()
+                .execute()
+            )
+            if not category_response.data:
+                return []
+            query = query.eq("category_id", category_response.data["id"])
+        except Exception as exc:
+            detail = _db_error_detail(exc)
+            # Compat mode for environments without the catalog migration.
+            if _is_missing_table_error(detail, "product_categories"):
+                query = query.eq("category", category_slug)
+            else:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Erro ao filtrar por categoria: {detail}")
     if active_only:
         query = query.eq("is_active", True)
     if search:
@@ -78,41 +140,65 @@ async def create_product(
     data = payload.model_dump()
     data["tenant_id"] = user.id
     data["status"] = "em_estoque"
+    data.pop("category_slug", None)  # products table does not store this field directly
     category_id = data.get("category_id")
-    category_slug = data.get("category_slug")
+    category_slug = payload.category_slug or payload.category
+
+    if category_slug:
+        data["category"] = category_slug
 
     if category_slug and not category_id:
-        category_by_slug = (
-            supabase.table("product_categories")
-            .select("id")
-            .eq("tenant_id", user.id)
-            .eq("slug", category_slug)
-            .single()
-            .execute()
-        )
-        if not category_by_slug.data:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Categoria (slug) não encontrada.")
-        category_id = category_by_slug.data["id"]
+        try:
+            category_by_slug = (
+                supabase.table("product_categories")
+                .select("id")
+                .eq("tenant_id", user.id)
+                .eq("slug", category_slug)
+                .single()
+                .execute()
+            )
+            if not category_by_slug.data:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Categoria (slug) não encontrada.")
+            category_id = category_by_slug.data["id"]
+        except HTTPException:
+            raise
+        except Exception as exc:
+            detail = _db_error_detail(exc)
+            if not _is_missing_table_error(detail, "product_categories"):
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Erro ao validar categoria: {detail}")
 
     if category_id:
-        category_by_id = (
-            supabase.table("product_categories")
-            .select("id, slug")
-            .eq("tenant_id", user.id)
-            .eq("id", category_id)
-            .single()
-            .execute()
-        )
-        if not category_by_id.data:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Categoria não encontrada.")
-        data["category_id"] = category_by_id.data["id"]
-        data["category_slug"] = category_by_id.data["slug"]
+        try:
+            category_by_id = (
+                supabase.table("product_categories")
+                .select("id, slug")
+                .eq("tenant_id", user.id)
+                .eq("id", category_id)
+                .single()
+                .execute()
+            )
+            if not category_by_id.data:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Categoria não encontrada.")
+            data["category_id"] = category_by_id.data["id"]
+            data["category"] = category_by_id.data["slug"]
+        except HTTPException:
+            raise
+        except Exception as exc:
+            detail = _db_error_detail(exc)
+            if _is_missing_table_error(detail, "product_categories"):
+                data.pop("category_id", None)
+            else:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Erro ao validar categoria: {detail}")
     else:
-        data["category_id"] = None
-        data["category_slug"] = None
-        data["category"] = None
+        data.pop("category_id", None)
+        if not category_slug:
+            data["category"] = None
 
-    response = supabase.table("products").insert(data).execute()
+    try:
+        response = _insert_product_with_fallback(supabase, data)
+    except Exception as exc:
+        detail = _db_error_detail(exc)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Erro ao criar produto: {detail}")
 
     if not response.data:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Erro ao criar produto.")
@@ -132,43 +218,61 @@ async def update_product(
     if not update_data:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Nenhum campo para atualizar.")
 
+    update_data.pop("category_slug", None)  # products table does not store this field directly
     category_id = update_data.get("category_id")
-    category_slug = update_data.get("category_slug")
+    category_slug = payload.category_slug if "category_slug" in payload.model_fields_set else update_data.get("category")
     if category_slug and not category_id:
-        category_by_slug = (
-            supabase.table("product_categories")
-            .select("id")
-            .eq("tenant_id", user.id)
-            .eq("slug", category_slug)
-            .single()
-            .execute()
-        )
-        if not category_by_slug.data:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Categoria (slug) não encontrada.")
-        update_data["category_id"] = category_by_slug.data["id"]
-
-    if category_id or "category_id" in update_data:
-        if update_data.get("category_id"):
-            category_by_id = (
+        try:
+            category_by_slug = (
                 supabase.table("product_categories")
-                .select("id, slug")
+                .select("id")
                 .eq("tenant_id", user.id)
-                .eq("id", update_data["category_id"])
+                .eq("slug", category_slug)
                 .single()
                 .execute()
             )
-            if not category_by_id.data:
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Categoria não encontrada.")
-            update_data["category_slug"] = category_by_id.data["slug"]
+            if not category_by_slug.data:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Categoria (slug) não encontrada.")
+            update_data["category_id"] = category_by_slug.data["id"]
+        except HTTPException:
+            raise
+        except Exception as exc:
+            detail = _db_error_detail(exc)
+            if _is_missing_table_error(detail, "product_categories"):
+                update_data.pop("category_id", None)
+            else:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Erro ao validar categoria: {detail}")
+
+    if category_id or "category_id" in update_data:
+        if update_data.get("category_id"):
+            try:
+                category_by_id = (
+                    supabase.table("product_categories")
+                    .select("id, slug")
+                    .eq("tenant_id", user.id)
+                    .eq("id", update_data["category_id"])
+                    .single()
+                    .execute()
+                )
+                if not category_by_id.data:
+                    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Categoria não encontrada.")
+                update_data["category"] = category_by_id.data["slug"]
+            except HTTPException:
+                raise
+            except Exception as exc:
+                detail = _db_error_detail(exc)
+                if _is_missing_table_error(detail, "product_categories"):
+                    update_data.pop("category_id", None)
+                else:
+                    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Erro ao validar categoria: {detail}")
         else:
-            update_data["category_slug"] = None
             update_data["category"] = None
 
-    response = supabase.table("products") \
-        .update(update_data) \
-        .eq("id", product_id) \
-        .eq("tenant_id", user.id) \
-        .execute()
+    try:
+        response = _update_product_with_fallback(supabase, product_id, user.id, update_data)
+    except Exception as exc:
+        detail = _db_error_detail(exc)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Erro ao atualizar produto: {detail}")
 
     if not response.data:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Produto não encontrado.")
