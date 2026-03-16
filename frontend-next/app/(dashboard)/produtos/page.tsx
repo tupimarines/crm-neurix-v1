@@ -1,8 +1,9 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
+import { getApiBase } from "@/lib/api";
 
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API = getApiBase();
 
 // #region agent log
 function debugLog(hypothesisId: string, location: string, message: string, data: Record<string, unknown>) {

@@ -1,4 +1,10 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+export function getApiBase(): string {
+    const base = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+    if (typeof window !== "undefined" && base.startsWith("http://") && window.location.protocol === "https:") {
+        return base.replace("http://", "https://");
+    }
+    return base;
+}
 
 interface ApiOptions extends RequestInit {
     token?: string;
@@ -19,7 +25,7 @@ export async function api<T = unknown>(
         headers["Authorization"] = `Bearer ${token}`;
     }
 
-    const res = await fetch(`${API_BASE}${endpoint}`, {
+    const res = await fetch(`${getApiBase()}${endpoint}`, {
         headers,
         ...rest,
     });
