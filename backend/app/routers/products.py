@@ -39,6 +39,51 @@ def _legacy_category_or_none(slug_or_category: str | None) -> str | None:
     return normalized if normalized in LEGACY_CATEGORIES else None
 
 
+def _normalize_optional_text(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = str(value).strip()
+    return normalized if normalized else None
+
+
+def _hydrate_legacy_category_from_category_id(
+    supabase: SupabaseClient,
+    tenant_id: str,
+    rows: list[dict] | None,
+) -> list[dict]:
+    rows = rows or []
+    category_ids = sorted({str(row.get("category_id")) for row in rows if row.get("category_id")})
+    if not category_ids:
+        return rows
+    try:
+        categories = (
+            supabase.table("product_categories")
+            .select("id, slug")
+            .eq("tenant_id", tenant_id)
+            .in_("id", category_ids)
+            .execute()
+        ).data or []
+    except Exception as exc:
+        detail = _db_error_detail(exc)
+        if _is_missing_table_error(detail, "product_categories"):
+            return rows
+        raise
+
+    slug_by_id = {str(row["id"]): str(row.get("slug") or "").strip().lower() for row in categories}
+    for row in rows:
+        raw_category = _normalize_optional_text(row.get("category"))
+        legacy_category = _legacy_category_or_none(raw_category)
+        if legacy_category:
+            row["category"] = legacy_category
+            continue
+        category_id = str(row.get("category_id")) if row.get("category_id") else None
+        if category_id and slug_by_id.get(category_id):
+            row["category"] = slug_by_id[category_id]
+        else:
+            row["category"] = None
+    return rows
+
+
 def _insert_product_with_fallback(supabase: SupabaseClient, data: dict):
     try:
         return supabase.table("products").insert(data).execute()
@@ -117,7 +162,8 @@ async def list_products(
         query = query.ilike("name", f"%{search}%")
 
     response = query.execute()
-    return [ProductResponse(**row) for row in response.data]
+    rows = _hydrate_legacy_category_from_category_id(supabase, str(user.id), response.data or [])
+    return [ProductResponse(**row) for row in rows]
 
 
 @router.get("/{product_id}", response_model=ProductResponse)
@@ -135,7 +181,8 @@ async def get_product(
     if not response.data:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Produto não encontrado.")
 
-    return ProductResponse(**response.data)
+    rows = _hydrate_legacy_category_from_category_id(supabase, str(user.id), [response.data])
+    return ProductResponse(**rows[0])
 
 
 @router.post("/", response_model=ProductResponse, status_code=status.HTTP_201_CREATED)
@@ -150,7 +197,11 @@ async def create_product(
     data["status"] = "em_estoque"
     data.pop("category_slug", None)  # products table does not store this field directly
     category_id = data.get("category_id")
-    category_slug = payload.category_slug or payload.category
+    raw_category = _normalize_optional_text(data.get("category"))
+    category_slug = _normalize_optional_text(payload.category_slug) or raw_category
+
+    # Always sanitize legacy column to satisfy old check constraints.
+    data["category"] = _legacy_category_or_none(raw_category)
 
     if category_slug:
         # Keep legacy enum column safe for old schemas with check constraint.
@@ -229,7 +280,10 @@ async def update_product(
 
     update_data.pop("category_slug", None)  # products table does not store this field directly
     category_id = update_data.get("category_id")
-    category_slug = payload.category_slug if "category_slug" in payload.model_fields_set else update_data.get("category")
+    raw_category = _normalize_optional_text(update_data.get("category")) if "category" in update_data else None
+    category_slug = _normalize_optional_text(payload.category_slug) if "category_slug" in payload.model_fields_set else raw_category
+    if "category" in update_data:
+        update_data["category"] = _legacy_category_or_none(raw_category)
     if category_slug:
         update_data["category"] = _legacy_category_or_none(category_slug)
     if category_slug and not category_id:
@@ -253,6 +307,10 @@ async def update_product(
                 update_data.pop("category_id", None)
             else:
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Erro ao validar categoria: {detail}")
+
+    if "category" in update_data and raw_category is None and "category_id" not in update_data:
+        # Explicit "Sem categoria" from UI must clear dynamic category relation too.
+        update_data["category_id"] = None
 
     if category_id or "category_id" in update_data:
         if update_data.get("category_id"):

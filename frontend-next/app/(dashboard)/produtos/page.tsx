@@ -29,7 +29,8 @@ interface Product {
     status: string;
     weight?: string;
     price: number;
-    category: string;
+    category: string | null;
+    category_id?: string | null;
     description?: string;
     image_url?: string;
     is_active: boolean;
@@ -122,6 +123,16 @@ export default function ProdutosPage() {
         return value.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     };
 
+    const resolveProductCategorySlug = useCallback((product: Product) => {
+        const raw = (product.category || "").trim().toLowerCase();
+        if (raw) return raw;
+        if (product.category_id) {
+            const dynamic = categories.find((category) => category.id === product.category_id);
+            if (dynamic?.slug) return dynamic.slug;
+        }
+        return "";
+    }, [categories]);
+
     const formatWeight = (raw?: string) => {
         const value = (raw || "").trim();
         if (!value) return "";
@@ -149,7 +160,7 @@ export default function ProdutosPage() {
             name: product.name || "",
             price: toBrlInput(Number(product.price || 0)),
             weight: product.weight || "",
-            category: product.category || "",
+            category: resolveProductCategorySlug(product),
             description: product.description || "",
             lot_code: product.lot_code || "",
             stock_quantity: String(product.stock_quantity ?? 0),
@@ -294,8 +305,8 @@ export default function ProdutosPage() {
                 price: parseBrlToNumber(newProduct.price),
                 weight: newProduct.weight || undefined,
                 stock_quantity: Number(newProduct.stock_quantity || 0),
-                category: newProduct.category,
-                category_slug: newProduct.category || undefined,
+                category: newProduct.category.trim().toLowerCase() || undefined,
+                category_slug: newProduct.category.trim().toLowerCase() || undefined,
                 description: newProduct.description || undefined,
                 lot_code: newProduct.lot_code || undefined,
                 image_url,
@@ -470,15 +481,22 @@ export default function ProdutosPage() {
 
     // ── Filter ────────────────────────────────────────────────────
     const filtered = products.filter((p) => {
-        if (filterCategory && p.category !== filterCategory) return false;
+        const categorySlug = resolveProductCategorySlug(p);
+        if (filterCategory && categorySlug !== filterCategory) return false;
         if (searchQuery) {
             const q = searchQuery.toLowerCase();
             return p.name.toLowerCase().includes(q)
                 || (p.lot_code || "").toLowerCase().includes(q)
-                || p.category.toLowerCase().includes(q);
+                || categorySlug.includes(q);
         }
         return true;
     });
+
+    const filterCategoryOptions = Array.from(new Set([
+        "",
+        ...categories.filter((category) => category.is_active).map((category) => category.slug),
+        ...Object.keys(CATEGORY_MAP),
+    ]));
 
     // ── Render ────────────────────────────────────────────────────
     return (
@@ -542,10 +560,10 @@ export default function ProdutosPage() {
                             {showFilter && (
                                 <div className="absolute top-full left-0 mt-1 w-48 bg-surface-light dark:bg-surface-dark rounded-xl shadow-2xl border border-border-light dark:border-border-dark z-50 p-3 space-y-1">
                                     <p className="text-[10px] font-semibold text-text-secondary-light uppercase tracking-wider mb-2">Categoria</p>
-                                    {["", ...Object.keys(CATEGORY_MAP)].map((c) => (
+                                    {filterCategoryOptions.map((c) => (
                                         <button key={c || "all"} onClick={() => { setFilterCategory(c); setShowFilter(false); }}
                                             className={`block w-full text-left px-2 py-1.5 text-sm rounded-lg ${filterCategory === c ? "bg-primary/10 text-primary font-medium" : "hover:bg-slate-50 dark:hover:bg-slate-800"}`}>
-                                            {c ? CATEGORY_MAP[c] : "Todas"}
+                                            {c ? (categories.find((cat) => cat.slug === c)?.name || CATEGORY_MAP[c] || c) : "Todas"}
                                         </button>
                                     ))}
                                 </div>
@@ -647,7 +665,12 @@ export default function ProdutosPage() {
                                     <div className="p-4">
                                         <h3 className="font-bold truncate">{product.name}</h3>
                                         {product.lot_code && <p className="text-xs text-text-secondary-light mt-0.5">Lote: {product.lot_code}</p>}
-                                        <p className="text-xs text-text-secondary-light mt-0.5">{CATEGORY_MAP[product.category] || product.category}</p>
+                                        <p className="text-xs text-text-secondary-light mt-0.5">
+                                            {(() => {
+                                                const slug = resolveProductCategorySlug(product);
+                                                return categories.find((cat) => cat.slug === slug)?.name || CATEGORY_MAP[slug] || slug || "Sem categoria";
+                                            })()}
+                                        </p>
                                         <div className="flex items-center gap-1.5 mb-3 mt-2">
                                             <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${st.color === "green" ? "bg-green-100 dark:bg-green-900/30 text-green-700" : st.color === "yellow" ? "bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700" : "bg-slate-100 dark:bg-slate-800 text-slate-500"}`}>
                                                 {st.label}
@@ -690,7 +713,14 @@ export default function ProdutosPage() {
                                         <tr key={p.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors">
                                             <td className="px-6 py-3 font-medium">{p.name}</td>
                                             <td className="px-6 py-3 text-text-secondary-light">{p.lot_code || "—"}</td>
-                                            <td className="px-6 py-3"><span className="bg-primary-light dark:bg-primary/20 text-primary text-xs px-2 py-0.5 rounded-full">{CATEGORY_MAP[p.category] || p.category}</span></td>
+                                            <td className="px-6 py-3">
+                                                <span className="bg-primary-light dark:bg-primary/20 text-primary text-xs px-2 py-0.5 rounded-full">
+                                                    {(() => {
+                                                        const slug = resolveProductCategorySlug(p);
+                                                        return categories.find((cat) => cat.slug === slug)?.name || CATEGORY_MAP[slug] || slug || "Sem categoria";
+                                                    })()}
+                                                </span>
+                                            </td>
                                             <td className="px-6 py-3">
                                                 <span className={`text-xs font-bold px-2 py-0.5 rounded ${st.color === "green" ? "bg-green-100 text-green-700" : st.color === "yellow" ? "bg-yellow-100 text-yellow-700" : "bg-slate-100 text-slate-500"}`}>{st.label}</span>
                                                 <span className="ml-2 text-xs text-blue-700">{p.stock_quantity ?? 0} unidades</span>
