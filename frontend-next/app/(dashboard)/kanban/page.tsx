@@ -1071,18 +1071,23 @@ export default function KanbanPage() {
                                                     <span className="material-symbols-outlined text-base">drag_indicator</span>
                                                 </button>
                                                 {editStage === stage.id ? (
-                                                    <form onSubmit={(e) => { e.preventDefault(); void renameStage(stage.id); }} className="flex items-center gap-1 flex-1">
+                                                    <form onSubmit={(e) => { e.preventDefault(); void renameStage(stage.id); }} className="flex items-center gap-2 flex-1 min-w-0">
                                                         <input autoFocus value={editStageName} onChange={(e) => setEditStageName(e.target.value)}
-                                                            className="text-sm font-semibold border border-primary rounded-lg px-2 py-1 bg-white dark:bg-surface-dark flex-1 focus:outline-none focus:ring-1 focus:ring-primary"
+                                                            className="text-sm font-semibold border border-primary rounded-lg px-2 py-1 bg-white dark:bg-surface-dark flex-1 min-w-0 focus:outline-none focus:ring-1 focus:ring-primary"
                                                             onBlur={() => { void renameStage(stage.id); }} />
+                                                        {stage.isConversion && (
+                                                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 font-semibold uppercase tracking-wide shrink-0">
+                                                                Conversão
+                                                            </span>
+                                                        )}
                                                     </form>
                                                 ) : (
-                                                    <div className="flex items-center gap-2 min-w-0">
-                                                        <button onClick={() => { setEditStage(stage.id); setEditStageName(stage.title); }} className="text-sm font-semibold truncate hover:text-primary transition-colors">
+                                                    <div className="flex items-center gap-2 min-w-0 flex-1">
+                                                        <button onClick={() => { setEditStage(stage.id); setEditStageName(stage.title); }} className="text-sm font-semibold truncate hover:text-primary transition-colors text-left min-w-0 flex-1">
                                                             {stage.title}
                                                         </button>
                                                         {stage.isConversion && (
-                                                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 font-semibold uppercase tracking-wide">
+                                                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 font-semibold uppercase tracking-wide shrink-0">
                                                                 Conversão
                                                             </span>
                                                         )}
