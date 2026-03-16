@@ -6,6 +6,24 @@ export function getApiBase(): string {
     return base;
 }
 
+/** URL para chamadas à API. Usa path relativo quando mesmo host (evita Mixed Content). */
+export function getApiUrl(path: string): string {
+    const pathNorm = path.startsWith("/") ? path : `/${path}`;
+    if (typeof window !== "undefined") {
+        try {
+            const base = getApiBase();
+            const url = new URL(base);
+            if (url.host === window.location.host) {
+                return pathNorm;
+            }
+        } catch {
+            /* fallback para full URL */
+        }
+    }
+    const base = getApiBase().replace(/\/$/, "");
+    return base + pathNorm;
+}
+
 interface ApiOptions extends RequestInit {
     token?: string;
 }

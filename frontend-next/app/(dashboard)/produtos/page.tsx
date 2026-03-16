@@ -1,9 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { getApiBase } from "@/lib/api";
-
-const API = getApiBase();
+import { getApiUrl } from "@/lib/api";
 
 // #region agent log
 function debugLog(hypothesisId: string, location: string, message: string, data: Record<string, unknown>) {
@@ -174,7 +172,7 @@ export default function ProdutosPage() {
         const currentPromotion = promotions.find((p) => (p.product_ids || []).includes(productId));
         if (currentPromotion && currentPromotion.id !== selectedPromotionId) {
             const filtered = (currentPromotion.product_ids || []).filter((id) => id !== productId);
-            await fetch(`${API}/api/promotions/${currentPromotion.id}/products`, {
+            await fetch(getApiUrl(`/api/promotions/${currentPromotion.id}/products`), {
                 method: "PUT",
                 headers: { ...authHeaders(), "Content-Type": "application/json" },
                 body: JSON.stringify({ product_ids: filtered }),
@@ -184,14 +182,14 @@ export default function ProdutosPage() {
         if (selectedPromotionId) {
             const target = promotions.find((p) => p.id === selectedPromotionId);
             const nextIds = Array.from(new Set([...(target?.product_ids || []), productId]));
-            await fetch(`${API}/api/promotions/${selectedPromotionId}/products`, {
+            await fetch(getApiUrl(`/api/promotions/${selectedPromotionId}/products`), {
                 method: "PUT",
                 headers: { ...authHeaders(), "Content-Type": "application/json" },
                 body: JSON.stringify({ product_ids: nextIds }),
             });
         } else if (currentPromotion) {
             const filtered = (currentPromotion.product_ids || []).filter((id) => id !== productId);
-            await fetch(`${API}/api/promotions/${currentPromotion.id}/products`, {
+            await fetch(getApiUrl(`/api/promotions/${currentPromotion.id}/products`), {
                 method: "PUT",
                 headers: { ...authHeaders(), "Content-Type": "application/json" },
                 body: JSON.stringify({ product_ids: filtered }),
@@ -222,7 +220,7 @@ export default function ProdutosPage() {
         setLoading(true);
         setError(null);
         try {
-            const res = await fetch(`${API}/api/products/`, {
+            const res = await fetch(getApiUrl("/api/products/"), {
                 headers: authHeaders(),
             });
             if (!res.ok) {
@@ -240,7 +238,7 @@ export default function ProdutosPage() {
 
     const fetchCategories = useCallback(async () => {
         try {
-            const res = await fetch(`${API}/api/product-categories/`, { headers: authHeaders() });
+            const res = await fetch(getApiUrl("/api/product-categories/"), { headers: authHeaders() });
             if (!res.ok) throw new Error(`Erro ${res.status}`);
             const data = await res.json();
             setCategories(data || []);
@@ -251,7 +249,7 @@ export default function ProdutosPage() {
 
     const fetchPromotions = useCallback(async () => {
         try {
-            const res = await fetch(`${API}/api/promotions/`, { headers: authHeaders() });
+            const res = await fetch(getApiUrl("/api/promotions/"), { headers: authHeaders() });
             if (!res.ok) throw new Error(`Erro ${res.status}`);
             const data = await res.json();
             setPromotions(data || []);
@@ -290,7 +288,7 @@ export default function ProdutosPage() {
             if (selectedFile) {
                 const formData = new FormData();
                 formData.append("file", selectedFile);
-                const upRes = await fetch(`${API}/api/upload/product-image`, {
+                const upRes = await fetch(getApiUrl("/api/upload/product-image"), {
                     method: "POST",
                     headers: authHeaders(),
                     body: formData,
@@ -314,7 +312,7 @@ export default function ProdutosPage() {
             };
 
             const isEditing = Boolean(editingProductId);
-            const endpoint = isEditing ? `${API}/api/products/${editingProductId}` : `${API}/api/products/`;
+            const endpoint = isEditing ? getApiUrl(`/api/products/${editingProductId}`) : getApiUrl("/api/products/");
             const method = isEditing ? "PATCH" : "POST";
 
             const res = await fetch(endpoint, {
@@ -348,7 +346,7 @@ export default function ProdutosPage() {
     // ── Delete product ────────────────────────────────────────────
     async function handleDelete(id: string) {
         if (!confirm("Deletar produto?")) return;
-        await fetch(`${API}/api/products/${id}/`, {
+        await fetch(getApiUrl(`/api/products/${id}`), {
             method: "DELETE",
             headers: authHeaders(),
         });
@@ -361,12 +359,12 @@ export default function ProdutosPage() {
         try {
             // #region agent log
             debugLog("H6", "frontend-next/app/(dashboard)/produtos/page.tsx:handleCreateCategory", "Submitting category create request", {
-                apiBase: API,
+                apiBase: getApiUrl("/api/products/"),
                 slug: newCategory.slug.trim().toLowerCase(),
                 hasToken: Boolean(getToken()),
             });
             // #endregion
-            const res = await fetch(`${API}/api/product-categories/`, {
+            const res = await fetch(getApiUrl("/api/product-categories/"), {
                 method: "POST",
                 headers: { ...authHeaders(), "Content-Type": "application/json" },
                 body: JSON.stringify({
@@ -404,7 +402,7 @@ export default function ProdutosPage() {
 
     async function handleToggleCategory(id: string, isActive: boolean) {
         setError(null);
-        const endpoint = `${API}/api/product-categories/${id}`;
+        const endpoint = getApiUrl(`/api/product-categories/${id}`);
         const res = await fetch(endpoint, {
             method: isActive ? "DELETE" : "PATCH",
             headers: { ...authHeaders(), "Content-Type": "application/json" },
@@ -424,14 +422,14 @@ export default function ProdutosPage() {
             const nowIso = new Date().toISOString();
             // #region agent log
             debugLog("H8", "frontend-next/app/(dashboard)/produtos/page.tsx:handleCreatePromotion", "Submitting promotion create request", {
-                apiBase: API,
+                apiBase: getApiUrl("/api/products/"),
                 slug: newPromotion.slug.trim().toLowerCase(),
                 discountType: newPromotion.discount_type,
                 discountValue: Number(newPromotion.discount_value),
                 hasToken: Boolean(getToken()),
             });
             // #endregion
-            const res = await fetch(`${API}/api/promotions/`, {
+            const res = await fetch(getApiUrl("/api/promotions/"), {
                 method: "POST",
                 headers: { ...authHeaders(), "Content-Type": "application/json" },
                 body: JSON.stringify({
@@ -473,7 +471,7 @@ export default function ProdutosPage() {
     }
 
     async function handleArchivePromotion(id: string) {
-        await fetch(`${API}/api/promotions/${id}`, {
+        await fetch(getApiUrl(`/api/promotions/${id}`), {
             method: "DELETE",
             headers: authHeaders(),
         });
