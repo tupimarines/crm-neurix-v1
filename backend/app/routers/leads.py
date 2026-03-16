@@ -31,6 +31,20 @@ STAGE_LABELS = {
 }
 
 
+def _db_error_detail(exc: Exception) -> str:
+    for attr in ("details", "message", "msg"):
+        val = getattr(exc, attr, None)
+        if isinstance(val, str) and val.strip():
+            return val
+    text = str(exc)
+    return text or "Erro inesperado no banco."
+
+
+def _is_missing_column_error(detail: str, column_name: str) -> bool:
+    lowered = detail.lower()
+    return "column" in lowered and column_name.lower() in lowered and ("does not exist" in lowered or "não existe" in lowered)
+
+
 def _to_positive_int(value, default: int = 0) -> int:
     try:
         parsed = int(value)
@@ -477,17 +491,18 @@ async def create_stage(
     user=Depends(get_current_user),
     supabase: SupabaseClient = Depends(get_supabase),
 ):
+    tenant_id = str(user.id)
     existing = (
         supabase.table("pipeline_stages")
         .select("id, order_position")
-        .eq("tenant_id", user.id)
+        .eq("tenant_id", tenant_id)
         .order("order_position", desc=True)
         .limit(1)
         .execute()
     ).data or []
     next_order = int(existing[0]["order_position"]) + 1 if existing else 0
     insert_payload = {
-        "tenant_id": user.id,
+        "tenant_id": tenant_id,
         "name": payload.name.strip(),
         "order_position": next_order,
         "is_conversion": bool(payload.is_conversion),
@@ -500,21 +515,35 @@ async def create_stage(
             .single()
             .execute()
         )
-    except Exception:
-        # Legacy compatibility in case is_conversion migration hasn't been applied yet.
-        response = (
-            supabase.table("pipeline_stages")
-            .insert(
-                {
-                    "tenant_id": user.id,
-                    "name": payload.name.strip(),
-                    "order_position": next_order,
-                }
-            )
-            .select("id, name, order_position, version")
-            .single()
-            .execute()
-        )
+    except Exception as exc:
+        detail = _db_error_detail(exc)
+        if _is_missing_column_error(detail, "is_conversion"):
+            logger.info("create_stage_fallback", extra={"reason": "is_conversion column missing", "tenant_id": tenant_id})
+            try:
+                response = (
+                    supabase.table("pipeline_stages")
+                    .insert(
+                        {
+                            "tenant_id": tenant_id,
+                            "name": payload.name.strip(),
+                            "order_position": next_order,
+                        }
+                    )
+                    .select("id, name, order_position, version")
+                    .single()
+                    .execute()
+                )
+                if response.data:
+                    response.data["is_conversion"] = False
+            except Exception as fallback_exc:
+                logger.exception("create_stage_fallback_failed", extra={"tenant_id": tenant_id})
+                raise HTTPException(
+                    status_code=500,
+                    detail="Erro ao criar etapa. Execute a migration 005_pipeline_stage_conversion_flag.sql no Supabase.",
+                ) from fallback_exc
+        else:
+            logger.exception("create_stage_failed", extra={"tenant_id": tenant_id, "detail": detail})
+            raise HTTPException(status_code=500, detail=f"Erro ao criar etapa: {detail}")
     if not response.data:
         raise HTTPException(status_code=400, detail="Erro ao criar etapa.")
     return response.data
