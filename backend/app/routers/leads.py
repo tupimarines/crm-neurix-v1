@@ -508,13 +508,7 @@ async def create_stage(
         "is_conversion": bool(payload.is_conversion),
     }
     try:
-        response = (
-            supabase.table("pipeline_stages")
-            .insert(insert_payload)
-            .select("id, name, order_position, version, is_conversion")
-            .single()
-            .execute()
-        )
+        response = supabase.table("pipeline_stages").insert(insert_payload).execute()
     except Exception as exc:
         detail = _db_error_detail(exc)
         if _is_missing_column_error(detail, "is_conversion"):
@@ -529,12 +523,10 @@ async def create_stage(
                             "order_position": next_order,
                         }
                     )
-                    .select("id, name, order_position, version")
-                    .single()
                     .execute()
                 )
-                if response.data:
-                    response.data["is_conversion"] = False
+                if response.data and len(response.data) > 0:
+                    response.data[0]["is_conversion"] = False
             except Exception as fallback_exc:
                 logger.exception("create_stage_fallback_failed", extra={"tenant_id": tenant_id})
                 raise HTTPException(
@@ -544,9 +536,10 @@ async def create_stage(
         else:
             logger.exception("create_stage_failed", extra={"tenant_id": tenant_id, "detail": detail})
             raise HTTPException(status_code=500, detail=f"Erro ao criar etapa: {detail}")
-    if not response.data:
+    rows = response.data or []
+    if not rows:
         raise HTTPException(status_code=400, detail="Erro ao criar etapa.")
-    return response.data
+    return rows[0]
 
 
 @router.patch("/stages/{stage_id}")
