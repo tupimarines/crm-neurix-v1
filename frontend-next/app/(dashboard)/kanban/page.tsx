@@ -1082,10 +1082,14 @@ export default function KanbanPage() {
                                                         )}
                                                     </form>
                                                 ) : (
-                                                    <div className="flex items-center gap-2 min-w-0 flex-1">
-                                                        <button onClick={() => { setEditStage(stage.id); setEditStageName(stage.title); }} className="text-sm font-semibold truncate hover:text-primary transition-colors text-left min-w-0 flex-1">
+                                                    <div className="flex items-center gap-2 min-w-0 flex-1 overflow-hidden">
+                                                        <span
+                                                            onClick={() => { setEditStage(stage.id); setEditStageName(stage.title); }}
+                                                            className="text-sm font-semibold truncate hover:text-primary transition-colors cursor-pointer block min-w-0 flex-1"
+                                                            title={stage.title}
+                                                        >
                                                             {stage.title}
-                                                        </button>
+                                                        </span>
                                                         {stage.isConversion && (
                                                             <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 font-semibold uppercase tracking-wide shrink-0">
                                                                 Conversão
@@ -1093,11 +1097,11 @@ export default function KanbanPage() {
                                                         )}
                                                     </div>
                                                 )}
-                                                <span className="bg-primary-light dark:bg-primary/20 text-primary text-xs font-medium px-2 py-0.5 rounded-full shrink-0">
+                                            </div>
+                                            <div className="flex items-center gap-2 text-xs text-text-secondary-light shrink-0 ml-2">
+                                                <span className="bg-primary-light dark:bg-primary/20 text-primary font-medium px-2 py-0.5 rounded-full">
                                                     {stageCards.length}
                                                 </span>
-                                            </div>
-                                            <div className="flex items-center text-xs text-text-secondary-light shrink-0 ml-2">
                                                 {isSavingStageOrder && <span className="mr-1 text-[10px]">Salvando</span>}
                                                 {isSavingCardMove && <span className="mr-1 text-[10px]">Movendo</span>}
                                                 {formatCurrency(stageCards.reduce((acc, c) => acc + parseCurrency(c.value), 0))}
