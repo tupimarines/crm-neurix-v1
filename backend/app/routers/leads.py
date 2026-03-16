@@ -129,15 +129,15 @@ def _normalize_product_items(items: list[dict] | None) -> list[dict]:
     return normalized
 
 
-def _calculate_lead_value_with_promotions(
+def _price_lead_products_with_promotions(
     *,
     supabase: SupabaseClient,
     tenant_id: str,
     products_json: list[dict] | None,
-) -> float:
+) -> tuple[float, list[dict]]:
     normalized_items = _normalize_product_items(products_json)
     if not normalized_items:
-        return 0.0
+        return 0.0, []
 
     product_ids = list({item["product_id"] for item in normalized_items})
     product_rows = (
@@ -153,9 +153,28 @@ def _calculate_lead_value_with_promotions(
         raise HTTPException(status_code=400, detail=f"Produtos não encontrados: {', '.join(missing_ids)}")
 
     subtotal = 0.0
+    fallback_lines: list[dict] = []
     for item in normalized_items:
         product = products_map[item["product_id"]]
-        subtotal += round_money(float(product.get("price") or 0.0) * int(item["quantity"]))
+        quantity = int(item["quantity"])
+        unit_price = float(product.get("price") or 0.0)
+        line_subtotal = round_money(unit_price * quantity)
+        subtotal += line_subtotal
+        fallback_lines.append(
+            {
+                "id": str(product["id"]),
+                "product_id": str(product["id"]),
+                "name": product.get("name") or "",
+                "price": unit_price,
+                "quantity": quantity,
+                "qty": quantity,
+                "category_id": str(product.get("category_id")) if product.get("category_id") else None,
+                "line_subtotal": line_subtotal,
+                "line_discount": 0.0,
+                "line_total": line_subtotal,
+                "applied_promotion_name": None,
+            }
+        )
     subtotal = round_money(subtotal)
 
     # Compatibility safety: if promotions schema isn't available, keep subtotal.
@@ -167,10 +186,10 @@ def _calculate_lead_value_with_promotions(
             .execute()
         ).data or []
     except Exception:
-        return subtotal
+        return subtotal, fallback_lines
 
     if not promotions_rows:
-        return subtotal
+        return subtotal, fallback_lines
 
     promotion_ids = [row["id"] for row in promotions_rows]
     category_ids = list(
@@ -212,6 +231,7 @@ def _calculate_lead_value_with_promotions(
 
     now_utc = datetime.now(timezone.utc)
     discount_total = 0.0
+    resolved_lines: list[dict] = []
     for item in normalized_items:
         product = products_map[item["product_id"]]
         unit_price = float(product.get("price") or 0.0)
@@ -230,10 +250,31 @@ def _calculate_lead_value_with_promotions(
             candidate_promotions=candidates,
             now_utc=now_utc,
         )
-        discount_total += apply_promotion_discount(line_subtotal, selected)
+        line_discount = round_money(apply_promotion_discount(line_subtotal, selected))
+        line_total = round_money(max(line_subtotal - line_discount, 0.0))
+        discount_total += line_discount
+        resolved_lines.append(
+            {
+                "id": str(product["id"]),
+                "product_id": str(product["id"]),
+                "name": product.get("name") or "",
+                "price": unit_price,
+                "quantity": quantity,
+                "qty": quantity,
+                "category_id": category_id,
+                "line_subtotal": line_subtotal,
+                "line_discount": line_discount,
+                "line_total": line_total,
+                "applied_promotion_name": selected.get("name") if selected else None,
+                "applied_promotion_id": str(selected.get("id")) if selected and selected.get("id") else None,
+                "applied_discount_type": selected.get("discount_type") if selected else None,
+                "applied_discount_value": float(selected.get("discount_value") or 0.0) if selected else None,
+            }
+        )
 
     discount_total = round_money(discount_total)
-    return round_money(max(subtotal - discount_total, 0.0))
+    total = round_money(max(subtotal - discount_total, 0.0))
+    return total, resolved_lines
 
 
 def _list_pipeline_stages_for_response(*, supabase: SupabaseClient, tenant_id: str) -> list[dict]:
@@ -577,11 +618,13 @@ async def create_lead(
         data["stock_reserved_json"] = next_reserved
         if "purchase_history_json" not in data or data["purchase_history_json"] is None:
             data["purchase_history_json"] = []
-        data["value"] = _calculate_lead_value_with_promotions(
+        priced_value, resolved_lines = _price_lead_products_with_promotions(
             supabase=supabase,
             tenant_id=user.id,
             products_json=data.get("products_json") or [],
         )
+        data["value"] = priced_value
+        data["products_json"] = resolved_lines
 
         response = supabase.table("leads").insert(data).execute()
     except Exception:
@@ -635,11 +678,13 @@ async def update_lead(
         _apply_stock_delta(supabase=supabase, tenant_id=user.id, delta=applied_delta)
         rollback_needed = True
         update_data["stock_reserved_json"] = next_reserved
-        update_data["value"] = _calculate_lead_value_with_promotions(
+        priced_value, resolved_lines = _price_lead_products_with_promotions(
             supabase=supabase,
             tenant_id=user.id,
             products_json=update_data.get("products_json") or [],
         )
+        update_data["value"] = priced_value
+        update_data["products_json"] = resolved_lines
 
     try:
         response = supabase.table("leads") \

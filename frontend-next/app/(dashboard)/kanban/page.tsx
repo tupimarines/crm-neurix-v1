@@ -38,7 +38,16 @@ interface KanbanCard {
     priorityColor: string;
     desc: string;
     stageId: string;
-    products_json?: { id: string; name: string; quantity: number; price: number }[];
+    products_json?: {
+        id: string;
+        name: string;
+        quantity?: number;
+        qty?: number;
+        price: number;
+        line_total?: number;
+        line_discount?: number;
+        applied_promotion_name?: string | null;
+    }[];
 }
 
 interface KanbanStage {
@@ -269,6 +278,9 @@ export default function KanbanPage() {
     const [editCardMenu, setEditCardMenu] = useState<string | null>(null);
     const [editCardMenuPosition, setEditCardMenuPosition] = useState<{ top: number; left: number } | null>(null);
     const [editingCard, setEditingCard] = useState<KanbanCard | null>(null);
+    const [editSuggestedValue, setEditSuggestedValue] = useState("R$ 0,00");
+    const [isManualValueConfirmed, setIsManualValueConfirmed] = useState(false);
+    const [manualValueJustification, setManualValueJustification] = useState("");
     const [isSaving, setIsSaving] = useState(false);
     const [isSavingStageOrder, setIsSavingStageOrder] = useState(false);
     const [isSavingCardMove, setIsSavingCardMove] = useState(false);
@@ -536,6 +548,22 @@ export default function KanbanPage() {
 
     const formatCurrency = (val: number) => {
         return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val);
+    };
+
+    const computeProductsTotal = (items: any[] = []) => {
+        return items.reduce((sum, p) => {
+            const qty = Number(p.quantity ?? p.qty ?? 1);
+            const lineTotal = typeof p.line_total === "number" ? Number(p.line_total) : Number(p.price || 0) * qty;
+            return sum + (Number.isFinite(lineTotal) ? lineTotal : 0);
+        }, 0);
+    };
+
+    const openEditCard = (card: KanbanCard) => {
+        const suggested = computeProductsTotal(card.products_json || []);
+        setEditingCard(card);
+        setEditSuggestedValue(formatCurrency(suggested));
+        setIsManualValueConfirmed(false);
+        setManualValueJustification("");
     };
 
     // DnD handlers
@@ -818,6 +846,17 @@ export default function KanbanPage() {
                 notes: editingCard.desc,
                 products_json: editingCard.products_json || [],
             };
+            const currentValue = parseCurrency(editingCard.value);
+            const suggestedValue = parseCurrency(editSuggestedValue);
+            const hasManualAdjustment = Math.abs(currentValue - suggestedValue) > 0.009;
+            if (hasManualAdjustment) {
+                if (!isManualValueConfirmed || !manualValueJustification.trim()) {
+                    alert("Para salvar valor manual, informe justificativa e clique em confirmar ajuste.");
+                    return;
+                }
+                const manualAudit = `[Ajuste manual de valor] De ${formatCurrency(suggestedValue)} para ${formatCurrency(currentValue)}. Justificativa: ${manualValueJustification.trim()}`;
+                payload.notes = [editingCard.desc?.trim(), manualAudit].filter(Boolean).join("\n");
+            }
 
             // Call the PATCH endpoint to sync with Uazapi
             try {
@@ -836,6 +875,8 @@ export default function KanbanPage() {
                 };
                 setCards(cards.map(c => c.id === updatedCard.id ? updatedCard : c));
                 setEditingCard(null);
+                setIsManualValueConfirmed(false);
+                setManualValueJustification("");
                 return;
             } catch (err) {
                 console.warn("API update failed, could be mocked card:", err);
@@ -847,6 +888,8 @@ export default function KanbanPage() {
 
             setCards(cards.map(c => c.id === updatedCard.id ? updatedCard : c));
             setEditingCard(null);
+            setIsManualValueConfirmed(false);
+            setManualValueJustification("");
         } catch (error) {
             console.error("Failed to save edited card:", error);
             // Even if failed, update local UI for demo purposes
@@ -854,25 +897,37 @@ export default function KanbanPage() {
             const updatedCard = { ...editingCard, priorityColor: priorityColorMap[editingCard.priority] || "gray" };
             setCards(cards.map(c => c.id === updatedCard.id ? updatedCard : c));
             setEditingCard(null);
+            setIsManualValueConfirmed(false);
+            setManualValueJustification("");
         } finally {
             setIsSaving(false);
         }
     }
 
-    // Auto-calculate value from products
+    // Auto-calculate value from products (with promotion-adjusted line_total when present)
     useEffect(() => {
         if (editingCard && editingCard.products_json && editingCard.products_json.length > 0) {
-            const total = editingCard.products_json.reduce((sum, p) => sum + (p.price * p.quantity), 0);
-            const formatted = formatCurrency(total);
-            if (editingCard.value !== formatted) {
+            const total = computeProductsTotal(editingCard.products_json);
+            const hasPricingMetadata = editingCard.products_json.some(
+                (p: any) =>
+                    typeof p.line_total === "number" ||
+                    typeof p.line_discount === "number" ||
+                    Boolean(p.applied_promotion_name)
+            );
+            const suggestedNumber = hasPricingMetadata ? total : parseCurrency(editingCard.value);
+            const formatted = formatCurrency(suggestedNumber);
+            setEditSuggestedValue(formatted);
+            if (hasPricingMetadata && !isManualValueConfirmed && editingCard.value !== formatted) {
                 setEditingCard({ ...editingCard, value: formatted });
             }
+        } else if (editingCard) {
+            setEditSuggestedValue(formatCurrency(parseCurrency(editingCard.value)));
         }
-    }, [editingCard?.products_json]);
+    }, [editingCard?.products_json, isManualValueConfirmed]);
 
     useEffect(() => {
         if (newCard.products_json && newCard.products_json.length > 0) {
-            const total = newCard.products_json.reduce((sum, p) => sum + (p.price * p.quantity), 0);
+            const total = computeProductsTotal(newCard.products_json);
             const formatted = formatCurrency(total);
             if (newCard.value !== formatted) {
                 setNewCard({ ...newCard, value: formatted });
@@ -1205,7 +1260,7 @@ export default function KanbanPage() {
                     className="fixed w-48 bg-surface-light dark:bg-surface-dark rounded-xl shadow-2xl border border-border-light dark:border-border-dark z-[80] py-1"
                     style={{ top: editCardMenuPosition.top, left: editCardMenuPosition.left }}
                 >
-                    <button onClick={() => { setEditingCard(activeMenuCard); setEditCardMenu(null); setEditCardMenuPosition(null); }} className="w-full px-4 py-2 text-sm hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-2">
+                    <button onClick={() => { openEditCard(activeMenuCard); setEditCardMenu(null); setEditCardMenuPosition(null); }} className="w-full px-4 py-2 text-sm hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-2">
                         <span className="material-symbols-outlined text-base">edit</span> Editar Card
                     </button>
                     <button onClick={() => { openChat(activeMenuCard.id); setEditCardMenu(null); setEditCardMenuPosition(null); }} className="w-full px-4 py-2 text-sm hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-2">
@@ -1305,7 +1360,7 @@ export default function KanbanPage() {
             {/* Edit Card Modal */}
             {editingCard && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-                    <div className="absolute inset-0 bg-slate-900/30 backdrop-blur-sm" onClick={() => setEditingCard(null)} />
+                    <div className="absolute inset-0 bg-slate-900/30 backdrop-blur-sm" onClick={() => { setEditingCard(null); setIsManualValueConfirmed(false); setManualValueJustification(""); }} />
                     <div className="relative bg-surface-light dark:bg-surface-dark rounded-xl shadow-2xl border border-border-light dark:border-border-dark w-full max-w-lg p-6 space-y-4 max-h-[90vh] overflow-y-auto">
                         <h3 className="text-lg font-bold">Editar Negócio</h3>
                         <div>
@@ -1323,7 +1378,41 @@ export default function KanbanPage() {
                         <div className="flex gap-4">
                             <div className="flex-1">
                                 <label className="block text-xs font-semibold text-text-secondary-light uppercase tracking-wider mb-1">Valor</label>
-                                <input value={editingCard.value} onChange={(e) => setEditingCard({ ...editingCard, value: e.target.value })} className="w-full px-3 py-2 border border-border-light dark:border-border-dark rounded-lg text-sm bg-white dark:bg-slate-800 focus:ring-1 focus:ring-primary focus:border-transparent" />
+                                <input
+                                    value={editingCard.value}
+                                    onChange={(e) => {
+                                        setEditingCard({ ...editingCard, value: e.target.value });
+                                        setIsManualValueConfirmed(false);
+                                    }}
+                                    className="w-full px-3 py-2 border border-border-light dark:border-border-dark rounded-lg text-sm bg-white dark:bg-slate-800 focus:ring-1 focus:ring-primary focus:border-transparent"
+                                />
+                                <p className="mt-1 text-[11px] text-text-secondary-light dark:text-text-secondary-dark">
+                                    Valor com desconto automático: <span className="font-semibold">{editSuggestedValue}</span>
+                                </p>
+                                {Math.abs(parseCurrency(editingCard.value) - parseCurrency(editSuggestedValue)) > 0.009 && (
+                                    <div className="mt-2 space-y-2">
+                                        <textarea
+                                            value={manualValueJustification}
+                                            onChange={(e) => { setManualValueJustification(e.target.value); setIsManualValueConfirmed(false); }}
+                                            placeholder="Justifique o ajuste manual de valor"
+                                            className="w-full px-3 py-2 border border-amber-300 rounded-lg text-xs bg-amber-50/40 dark:bg-amber-900/10 focus:ring-1 focus:ring-amber-500"
+                                            rows={2}
+                                        />
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                if (!manualValueJustification.trim()) {
+                                                    alert("Informe a justificativa antes de confirmar o ajuste manual.");
+                                                    return;
+                                                }
+                                                setIsManualValueConfirmed(true);
+                                            }}
+                                            className={`px-3 py-1.5 rounded-lg text-xs font-semibold ${isManualValueConfirmed ? "bg-emerald-100 text-emerald-700 border border-emerald-300" : "bg-amber-100 text-amber-700 border border-amber-300 hover:bg-amber-200"}`}
+                                        >
+                                            {isManualValueConfirmed ? "Ajuste manual confirmado" : "Confirmar ajuste manual"}
+                                        </button>
+                                    </div>
+                                )}
                             </div>
                             <div className="flex-1">
                                 <label className="block text-xs font-semibold text-text-secondary-light uppercase tracking-wider mb-1">Prioridade</label>
@@ -1353,12 +1442,13 @@ export default function KanbanPage() {
                                     if (existingIdx >= 0) {
                                         current[existingIdx] = {
                                             ...current[existingIdx],
-                                            quantity: current[existingIdx].quantity + (Number(editSelectedQuantity) || 1)
+                                            quantity: Number(current[existingIdx].quantity ?? current[existingIdx].qty ?? 0) + (Number(editSelectedQuantity) || 1)
                                         };
                                     } else {
                                         current.push({ id: p.id, name: p.name, price: p.price, quantity: (Number(editSelectedQuantity) || 1) });
                                     }
                                     setEditingCard({ ...editingCard, products_json: current });
+                                    setIsManualValueConfirmed(false);
                                     setEditSelectedProductId("");
                                     setEditSelectedQuantity(1);
                                 }} className="bg-primary text-white px-3 border border-transparent rounded-lg text-sm font-medium hover:bg-primary-hover">Add</button>
@@ -1367,12 +1457,16 @@ export default function KanbanPage() {
                                 <div className="space-y-1 mb-3">
                                     {(editingCard.products_json || []).map((op, idx) => (
                                         <div key={idx} className="flex justify-between items-center text-sm p-2 bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 mx-1 rounded">
-                                            <span>{op.quantity}x {op.name}</span>
+                                            <span>{Number(op.quantity ?? op.qty ?? 0)}x {op.name}</span>
                                             <div className="flex items-center gap-2">
-                                                <span>{new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(op.quantity * op.price)}</span>
+                                                <span className="text-[11px] text-purple-600 dark:text-purple-300">
+                                                    {op.applied_promotion_name ? op.applied_promotion_name : "Sem promoção"}
+                                                </span>
+                                                <span>{new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(Number(op.line_total ?? ((Number(op.quantity ?? op.qty ?? 0)) * Number(op.price || 0))))}</span>
                                                 <button type="button" onClick={() => {
                                                     const filtered = editingCard.products_json!.filter((_, i) => i !== idx);
                                                     setEditingCard({ ...editingCard, products_json: filtered });
+                                                    setIsManualValueConfirmed(false);
                                                 }} className="text-red-500 material-symbols-outlined text-[16px]">close</button>
                                             </div>
                                         </div>
@@ -1388,7 +1482,7 @@ export default function KanbanPage() {
                             <button onClick={handleSaveEditCard} disabled={isSaving} className="flex-1 py-2 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
                                 {isSaving ? "Salvando..." : "Salvar Alterações"}
                             </button>
-                            <button onClick={() => setEditingCard(null)} disabled={isSaving} className="flex-1 py-2 border border-border-light dark:border-border-dark rounded-lg text-sm font-medium hover:bg-slate-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                            <button onClick={() => { setEditingCard(null); setIsManualValueConfirmed(false); setManualValueJustification(""); }} disabled={isSaving} className="flex-1 py-2 border border-border-light dark:border-border-dark rounded-lg text-sm font-medium hover:bg-slate-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
                                 Cancelar
                             </button>
                         </div>
