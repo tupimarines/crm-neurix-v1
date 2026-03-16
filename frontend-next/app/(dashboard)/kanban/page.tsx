@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useId, useCallback } from "react";
+import { createPortal } from "react-dom";
 import {
     DndContext,
     closestCenter,
@@ -44,10 +45,11 @@ interface KanbanStage {
     id: string;
     title: string;
     version: number;
+    isConversion?: boolean;
 }
 
 // Sortable Card Component
-function SortableCard({ card, onOpenChat, onOpenMenu }: { card: KanbanCard; onOpenChat: (id: string) => void; onOpenMenu: (id: string) => void }) {
+function SortableCard({ card, onOpenChat, onOpenMenu }: { card: KanbanCard; onOpenChat: (id: string) => void; onOpenMenu: (id: string, anchor: DOMRect) => void }) {
     const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: card.id, data: { type: "card" } });
     const style = {
         transform: CSS.Transform.toString(transform),
@@ -83,7 +85,7 @@ function SortableCard({ card, onOpenChat, onOpenMenu }: { card: KanbanCard; onOp
                     <button onClick={(e) => { e.stopPropagation(); onOpenChat(card.id); }} className="text-text-secondary-light hover:text-green-500 transition-colors p-1 rounded" title="Abrir Chat">
                         <span className="material-symbols-outlined text-lg">chat</span>
                     </button>
-                    <button onClick={(e) => { e.stopPropagation(); onOpenMenu(card.id); }} className="text-text-secondary-light hover:text-primary transition-colors p-1 rounded" title="Opções">
+                    <button onClick={(e) => { e.stopPropagation(); onOpenMenu(card.id, (e.currentTarget as HTMLButtonElement).getBoundingClientRect()); }} className="text-text-secondary-light hover:text-primary transition-colors p-1 rounded" title="Opções">
                         <span className="material-symbols-outlined text-lg">more_vert</span>
                     </button>
                 </div>
@@ -164,6 +166,7 @@ export default function KanbanPage() {
                     stage: string;
                     stage_id?: string;
                     stage_version?: number;
+                    stage_is_conversion?: boolean;
                     label: string;
                     leads: Array<{
                         id: string;
@@ -185,6 +188,7 @@ export default function KanbanPage() {
                 id: col.stage_id || `s-${col.stage}`,
                 title: col.label,
                 version: col.stage_version || 1,
+                isConversion: Boolean(col.stage_is_conversion),
             }));
             setStages(fetchedStages);
 
@@ -243,6 +247,7 @@ export default function KanbanPage() {
     const [activeCard, setActiveCard] = useState<KanbanCard | null>(null);
     const [showNewStage, setShowNewStage] = useState(false);
     const [newStageName, setNewStageName] = useState("");
+    const [showNewStageAsConversion, setShowNewStageAsConversion] = useState(false);
     const [showNewCard, setShowNewCard] = useState<string | null>(null);
     const [newCard, setNewCard] = useState<{
         name: string;
@@ -262,6 +267,7 @@ export default function KanbanPage() {
     const [isLoadingReport, setIsLoadingReport] = useState(false);
     const [showAddMenu, setShowAddMenu] = useState(false);
     const [editCardMenu, setEditCardMenu] = useState<string | null>(null);
+    const [editCardMenuPosition, setEditCardMenuPosition] = useState<{ top: number; left: number } | null>(null);
     const [editingCard, setEditingCard] = useState<KanbanCard | null>(null);
     const [isSaving, setIsSaving] = useState(false);
     const [isSavingStageOrder, setIsSavingStageOrder] = useState(false);
@@ -336,14 +342,6 @@ export default function KanbanPage() {
         setShowReport(true);
         setIsLoadingReport(true);
         try {
-            const normalizeStageKey = (value: string | null | undefined) =>
-                (value || "")
-                    .normalize("NFD")
-                    .replace(/[\u0300-\u036f]/g, "")
-                    .toLowerCase()
-                    .replace(/[_-]+/g, " ")
-                    .replace(/\s+/g, " ")
-                    .trim();
             const parseCardCurrency = (val: string) => {
                 if (!val) return 0;
                 const cleanObj = val.replace(/[^\d,-]/g, '').replace(',', '.');
@@ -398,28 +396,10 @@ export default function KanbanPage() {
                 };
             });
 
-            // Calculate conversion rate
-            const sortedStages = [...sData].sort((a: any, b: any) => a.order_position - b.order_position);
-            const confirmedStageIndex = sortedStages.findIndex(s =>
-                normalizeStageKey(s.name).includes('pagamento confirmado')
-            );
-
+            // Calculate conversion rate using explicit conversion stages.
+            const conversionStageIds = new Set(stages.filter((s) => s.isConversion).map((s) => s.id));
             const initialCount = cards.length;
-            const confirmedCount = confirmedStageIndex !== -1
-                ? sortedStages
-                    .slice(confirmedStageIndex)
-                    .reduce((sum: number, stage: any) => {
-                        const stageReport = report.find((r: any) => r.stage === stage.name);
-                        return sum + (stageReport?.count || 0);
-                    }, 0)
-                : report
-                    .filter((r: any) => {
-                        const stageKey = normalizeStageKey(r.stage);
-                        return (stageKey.includes('confirmado') || stageKey === 'enviado') &&
-                            !stageKey.includes('aguardando');
-                    })
-                    .reduce((sum: number, r: any) => sum + r.count, 0);
-
+            const confirmedCount = cards.reduce((sum, card) => sum + (conversionStageIds.has(card.stageId) ? 1 : 0), 0);
             const conversionRate = initialCount > 0 ? ((confirmedCount / initialCount) * 100).toFixed(1) + '%' : '0%';
 
             const totalLeads = cards.length;
@@ -518,6 +498,7 @@ export default function KanbanPage() {
         function handleClick(e: MouseEvent) {
             if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
                 setEditCardMenu(null);
+                setEditCardMenuPosition(null);
                 setShowAddMenu(false);
             }
             if (filterRef.current && !filterRef.current.contains(e.target as Node)) {
@@ -545,6 +526,7 @@ export default function KanbanPage() {
         if (filterSort === "newest") return b.id.localeCompare(a.id);
         return 0;
     });
+    const activeMenuCard = editCardMenu ? cards.find((c) => c.id === editCardMenu) || null : null;
 
     const parseCurrency = (val: string) => {
         if (!val) return 0;
@@ -703,13 +685,14 @@ export default function KanbanPage() {
         const name = newStageName.trim();
         try {
             const token = localStorage.getItem("access_token") || undefined;
-            const created = await api<{ id: string; name: string; order_position: number; version: number }>("/api/leads/stages", {
+            const created = await api<{ id: string; name: string; order_position: number; version: number; is_conversion?: boolean }>("/api/leads/stages", {
                 method: "POST",
-                body: JSON.stringify({ name }),
+                body: JSON.stringify({ name, is_conversion: showNewStageAsConversion }),
                 token,
             });
-            setStages([...stages, { id: created.id, title: created.name, version: created.version || 1 }]);
+            setStages([...stages, { id: created.id, title: created.name, version: created.version || 1, isConversion: Boolean(created.is_conversion) }]);
             setNewStageName("");
+            setShowNewStageAsConversion(false);
             setShowNewStage(false);
         } catch (err) {
             console.error("Failed to add stage:", err);
@@ -738,14 +721,14 @@ export default function KanbanPage() {
 
         try {
             const token = localStorage.getItem("access_token") || undefined;
-            const response = await api<{ fallback_stage_id: string; stages: Array<{ id: string; name: string; version?: number }> }>(`/api/leads/stages/${stageId}`, {
+            const response = await api<{ fallback_stage_id: string; stages: Array<{ id: string; name: string; version?: number; is_conversion?: boolean }> }>(`/api/leads/stages/${stageId}`, {
                 method: "DELETE",
                 body: JSON.stringify({ fallback_stage_id: fallbackStage.id }),
                 token,
             });
 
             setCards((prev) => prev.map((c) => (c.stageId === stageId ? { ...c, stageId: response.fallback_stage_id } : c)));
-            setStages(response.stages.map((s) => ({ id: s.id, title: s.name, version: s.version || 1 })));
+            setStages(response.stages.map((s) => ({ id: s.id, title: s.name, version: s.version || 1, isConversion: Boolean(s.is_conversion) })));
             if (showNewCard === stageId) setShowNewCard(null);
         } catch (err) {
             console.error("Failed to delete stage:", err);
@@ -762,7 +745,7 @@ export default function KanbanPage() {
         const priorityColorMap: Record<string, string> = { Alta: "red", Média: "blue", Baixa: "yellow", OK: "green" };
 
         try {
-            const created = await api<{ id: string; company_name: string; contact_name: string; phone: string | null; value: number; priority: string | null; notes: string | null }>("/api/leads", {
+            const created = await api<{ id: string; company_name: string; contact_name: string; phone: string | null; value: number; priority: string | null; notes: string | null; products_json?: any[] }>("/api/leads", {
                 method: "POST",
                 body: JSON.stringify({
                     company_name: newCard.name,
@@ -779,9 +762,9 @@ export default function KanbanPage() {
             setCards([...cards, {
                 id: created.id, stageId, name: newCard.name, contact: newCard.contact || newCard.name,
                 phone: newCard.phone,
-                value: newCard.value || "R$ 0,00", priority: newCard.priority,
+                value: formatCurrency(Number(created.value || 0)), priority: newCard.priority,
                 priorityColor: priorityColorMap[newCard.priority] || "blue", desc: "",
-                products_json: newCard.products_json,
+                products_json: created.products_json || newCard.products_json,
             }]);
         } catch (err) {
             console.error("Failed to create lead:", err);
@@ -839,11 +822,21 @@ export default function KanbanPage() {
             // Call the PATCH endpoint to sync with Uazapi
             try {
                 // Ignore any 400 errors if it's a mocked local card "c1" "c2" that isn't in DB yet
-                await api(`/api/leads/${editingCard.id}`, {
+                const updatedFromApi = await api<{ id: string; value: number; products_json?: any[] }>(`/api/leads/${editingCard.id}`, {
                     method: 'PATCH',
                     body: JSON.stringify(payload),
                     token
                 });
+                const priorityColorMap: Record<string, string> = { Alta: "red", Média: "blue", Baixa: "yellow", OK: "green" };
+                const updatedCard = {
+                    ...editingCard,
+                    value: formatCurrency(Number(updatedFromApi?.value || 0)),
+                    products_json: updatedFromApi?.products_json || editingCard.products_json || [],
+                    priorityColor: priorityColorMap[editingCard.priority] || "gray",
+                };
+                setCards(cards.map(c => c.id === updatedCard.id ? updatedCard : c));
+                setEditingCard(null);
+                return;
             } catch (err) {
                 console.warn("API update failed, could be mocked card:", err);
             }
@@ -974,7 +967,7 @@ export default function KanbanPage() {
                                     className="w-full px-4 py-2.5 text-sm hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-2 text-text-main-light dark:text-text-main-dark">
                                     <span className="material-symbols-outlined text-base">person_add</span> Novo Negócio
                                 </button>
-                                <button onClick={() => { setShowNewStage(true); setShowAddMenu(false); }}
+                                <button onClick={() => { setShowNewStage(true); setShowNewStageAsConversion(false); setShowAddMenu(false); }}
                                     className="w-full px-4 py-2.5 text-sm hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-2 text-text-main-light dark:text-text-main-dark">
                                     <span className="material-symbols-outlined text-base">view_column</span> Nova Etapa
                                 </button>
@@ -1029,9 +1022,16 @@ export default function KanbanPage() {
                                                             onBlur={() => { void renameStage(stage.id); }} />
                                                     </form>
                                                 ) : (
-                                                    <button onClick={() => { setEditStage(stage.id); setEditStageName(stage.title); }} className="text-sm font-semibold truncate hover:text-primary transition-colors">
-                                                        {stage.title}
-                                                    </button>
+                                                    <div className="flex items-center gap-2 min-w-0">
+                                                        <button onClick={() => { setEditStage(stage.id); setEditStageName(stage.title); }} className="text-sm font-semibold truncate hover:text-primary transition-colors">
+                                                            {stage.title}
+                                                        </button>
+                                                        {stage.isConversion && (
+                                                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 font-semibold uppercase tracking-wide">
+                                                                Conversão
+                                                            </span>
+                                                        )}
+                                                    </div>
                                                 )}
                                                 <span className="bg-primary-light dark:bg-primary/20 text-primary text-xs font-medium px-2 py-0.5 rounded-full shrink-0">
                                                     {stageCards.length}
@@ -1048,7 +1048,7 @@ export default function KanbanPage() {
                                                 >
                                                     <span className="material-symbols-outlined text-lg">delete</span>
                                                 </button>
-                                                <button onClick={() => { setShowNewStage(true); }} className="ml-1 p-0.5 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-full text-primary" title="Nova etapa">
+                                                <button onClick={() => { setShowNewStage(true); setShowNewStageAsConversion(false); }} className="ml-1 p-0.5 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-full text-primary" title="Nova etapa">
                                                     <span className="material-symbols-outlined text-lg">add</span>
                                                 </button>
                                             </div>
@@ -1058,21 +1058,22 @@ export default function KanbanPage() {
                                             <DroppableStage id={stage.id} className="flex-1 p-3 overflow-y-auto space-y-2.5 custom-scrollbar min-h-[100px]">
                                                 {stageCards.map((card) => (
                                                     <div key={card.id} className="relative">
-                                                        <SortableCard card={card} onOpenChat={(id) => openChat(id)} onOpenMenu={(id) => setEditCardMenu(editCardMenu === id ? null : id)} />
-                                                        {editCardMenu === card.id && (
-                                                            <div ref={menuRef} className="absolute right-0 top-full mt-1 w-48 bg-surface-light dark:bg-surface-dark rounded-xl shadow-2xl border border-border-light dark:border-border-dark z-50 py-1">
-                                                                <button onClick={() => { setEditingCard(card); setEditCardMenu(null); }} className="w-full px-4 py-2 text-sm hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-2">
-                                                                    <span className="material-symbols-outlined text-base">edit</span> Editar Card
-                                                                </button>
-                                                                <button onClick={() => { openChat(card.id); setEditCardMenu(null); }} className="w-full px-4 py-2 text-sm hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-2">
-                                                                    <span className="material-symbols-outlined text-base">chat</span> Ver Chat
-                                                                </button>
-                                                                <div className="h-px bg-border-light dark:bg-border-dark mx-2 my-1" />
-                                                                <button onClick={() => { setDeleteCardId(card.id); setEditCardMenu(null); }} className="w-full px-4 py-2 text-sm hover:bg-red-50 dark:hover:bg-red-900/20 text-red-600 flex items-center gap-2">
-                                                                    <span className="material-symbols-outlined text-base">delete</span> Excluir
-                                                                </button>
-                                                            </div>
-                                                        )}
+                                                        <SortableCard
+                                                            card={card}
+                                                            onOpenChat={(id) => openChat(id)}
+                                                            onOpenMenu={(id, anchor) => {
+                                                                if (editCardMenu === id) {
+                                                                    setEditCardMenu(null);
+                                                                    setEditCardMenuPosition(null);
+                                                                    return;
+                                                                }
+                                                                setEditCardMenu(id);
+                                                                setEditCardMenuPosition({
+                                                                    top: Math.round(anchor.bottom + 6),
+                                                                    left: Math.max(8, Math.round(anchor.right - 192)),
+                                                                });
+                                                            }}
+                                                        />
                                                     </div>
                                                 ))}
                                             </DroppableStage>
@@ -1145,9 +1146,18 @@ export default function KanbanPage() {
                                 <div className="w-[310px] flex flex-col flex-shrink-0 bg-surface-light dark:bg-surface-dark rounded-xl border-2 border-dashed border-primary/40 p-4 space-y-3">
                                     <input autoFocus value={newStageName} onChange={(e) => setNewStageName(e.target.value)}
                                         placeholder="Nome da etapa" className="px-3 py-2 border border-border-light dark:border-border-dark rounded-lg text-sm bg-white dark:bg-slate-800 focus:ring-1 focus:ring-primary focus:border-transparent" />
+                                    <label className="flex items-center gap-2 text-xs text-text-secondary-light dark:text-text-secondary-dark">
+                                        <input
+                                            type="checkbox"
+                                            checked={showNewStageAsConversion}
+                                            onChange={(e) => setShowNewStageAsConversion(e.target.checked)}
+                                            className="rounded border-border-light dark:border-border-dark"
+                                        />
+                                        Marcar como etapa de conversão
+                                    </label>
                                     <div className="flex gap-2">
                                         <button onClick={addStage} className="flex-1 py-2 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-hover">Criar</button>
-                                        <button onClick={() => { setShowNewStage(false); setNewStageName(""); }} className="flex-1 py-2 border border-border-light dark:border-border-dark rounded-lg text-sm font-medium hover:bg-slate-50">Cancelar</button>
+                                        <button onClick={() => { setShowNewStage(false); setNewStageName(""); setShowNewStageAsConversion(false); }} className="flex-1 py-2 border border-border-light dark:border-border-dark rounded-lg text-sm font-medium hover:bg-slate-50">Cancelar</button>
                                     </div>
                                 </div>
                             )}
@@ -1187,6 +1197,26 @@ export default function KanbanPage() {
                         </table>
                     </div>
                 </div>
+            )}
+
+            {isMounted && activeMenuCard && editCardMenuPosition && createPortal(
+                <div
+                    ref={menuRef}
+                    className="fixed w-48 bg-surface-light dark:bg-surface-dark rounded-xl shadow-2xl border border-border-light dark:border-border-dark z-[80] py-1"
+                    style={{ top: editCardMenuPosition.top, left: editCardMenuPosition.left }}
+                >
+                    <button onClick={() => { setEditingCard(activeMenuCard); setEditCardMenu(null); setEditCardMenuPosition(null); }} className="w-full px-4 py-2 text-sm hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-2">
+                        <span className="material-symbols-outlined text-base">edit</span> Editar Card
+                    </button>
+                    <button onClick={() => { openChat(activeMenuCard.id); setEditCardMenu(null); setEditCardMenuPosition(null); }} className="w-full px-4 py-2 text-sm hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-2">
+                        <span className="material-symbols-outlined text-base">chat</span> Ver Chat
+                    </button>
+                    <div className="h-px bg-border-light dark:bg-border-dark mx-2 my-1" />
+                    <button onClick={() => { setDeleteCardId(activeMenuCard.id); setEditCardMenu(null); setEditCardMenuPosition(null); }} className="w-full px-4 py-2 text-sm hover:bg-red-50 dark:hover:bg-red-900/20 text-red-600 flex items-center gap-2">
+                        <span className="material-symbols-outlined text-base">delete</span> Excluir
+                    </button>
+                </div>,
+                document.body
             )}
 
             {/* Report Modal */}

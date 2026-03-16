@@ -8,6 +8,7 @@ from supabase import Client as SupabaseClient
 from typing import Optional
 from pydantic import BaseModel, Field
 from time import perf_counter
+from datetime import datetime, timezone
 
 from app.dependencies import get_supabase, get_current_user
 from app.models.lead import (
@@ -17,6 +18,7 @@ from app.models.lead import (
 from app.models.chat_message import SendMessagePayload
 from app.observability import get_logger, metrics
 from app.services.uazapi_service import get_uazapi_service
+from app.services.promotion_engine import apply_promotion_discount, round_money, select_best_promotion
 
 router = APIRouter()
 logger = get_logger("leads")
@@ -114,6 +116,147 @@ def _apply_stock_delta(
         supabase.table("products").update({"stock_quantity": new_stock}).eq("id", product_id).eq("tenant_id", tenant_id).execute()
 
 
+def _normalize_product_items(items: list[dict] | None) -> list[dict]:
+    normalized: list[dict] = []
+    for item in items or []:
+        product_id = str(item.get("id") or item.get("product_id") or "").strip()
+        if not product_id:
+            continue
+        quantity = _to_positive_int(item.get("quantity") or item.get("qty") or 0, default=0)
+        if quantity <= 0:
+            continue
+        normalized.append({"product_id": product_id, "quantity": quantity})
+    return normalized
+
+
+def _calculate_lead_value_with_promotions(
+    *,
+    supabase: SupabaseClient,
+    tenant_id: str,
+    products_json: list[dict] | None,
+) -> float:
+    normalized_items = _normalize_product_items(products_json)
+    if not normalized_items:
+        return 0.0
+
+    product_ids = list({item["product_id"] for item in normalized_items})
+    product_rows = (
+        supabase.table("products")
+        .select("id, name, price, category_id, is_active")
+        .eq("tenant_id", tenant_id)
+        .in_("id", product_ids)
+        .execute()
+    ).data or []
+    products_map = {str(row["id"]): row for row in product_rows}
+    missing_ids = [pid for pid in product_ids if pid not in products_map]
+    if missing_ids:
+        raise HTTPException(status_code=400, detail=f"Produtos não encontrados: {', '.join(missing_ids)}")
+
+    subtotal = 0.0
+    for item in normalized_items:
+        product = products_map[item["product_id"]]
+        subtotal += round_money(float(product.get("price") or 0.0) * int(item["quantity"]))
+    subtotal = round_money(subtotal)
+
+    # Compatibility safety: if promotions schema isn't available, keep subtotal.
+    try:
+        promotions_rows = (
+            supabase.table("promotions")
+            .select("id, name, discount_type, discount_value, category_id, starts_at, ends_at, priority, is_active, created_at")
+            .eq("tenant_id", tenant_id)
+            .execute()
+        ).data or []
+    except Exception:
+        return subtotal
+
+    if not promotions_rows:
+        return subtotal
+
+    promotion_ids = [row["id"] for row in promotions_rows]
+    category_ids = list(
+        {
+            str(products_map[item["product_id"]].get("category_id"))
+            for item in normalized_items
+            if products_map[item["product_id"]].get("category_id")
+        }
+    )
+
+    link_rows = []
+    try:
+        if promotion_ids and product_ids:
+            link_rows = (
+                supabase.table("promotion_products")
+                .select("promotion_id, product_id")
+                .eq("tenant_id", tenant_id)
+                .in_("promotion_id", promotion_ids)
+                .in_("product_id", product_ids)
+                .execute()
+            ).data or []
+    except Exception:
+        link_rows = []
+
+    linked_by_product: dict[str, list[dict]] = {}
+    linked_by_category: dict[str, list[dict]] = {}
+    promo_by_id = {str(row["id"]): row for row in promotions_rows}
+    for link in link_rows:
+        promo = promo_by_id.get(str(link.get("promotion_id")))
+        if not promo:
+            continue
+        enriched = {**promo, "link_type": "product", "product_id": str(link.get("product_id"))}
+        linked_by_product.setdefault(str(link.get("product_id")), []).append(enriched)
+
+    for promo in promotions_rows:
+        category_id = promo.get("category_id")
+        if category_id and str(category_id) in category_ids:
+            linked_by_category.setdefault(str(category_id), []).append({**promo, "link_type": "category"})
+
+    now_utc = datetime.now(timezone.utc)
+    discount_total = 0.0
+    for item in normalized_items:
+        product = products_map[item["product_id"]]
+        unit_price = float(product.get("price") or 0.0)
+        quantity = int(item["quantity"])
+        line_subtotal = round_money(unit_price * quantity)
+        category_id = str(product.get("category_id")) if product.get("category_id") else None
+
+        candidates = []
+        candidates.extend(linked_by_product.get(str(product["id"]), []))
+        if category_id:
+            candidates.extend(linked_by_category.get(category_id, []))
+
+        selected = select_best_promotion(
+            product_id=str(product["id"]),
+            category_id=category_id,
+            candidate_promotions=candidates,
+            now_utc=now_utc,
+        )
+        discount_total += apply_promotion_discount(line_subtotal, selected)
+
+    discount_total = round_money(discount_total)
+    return round_money(max(subtotal - discount_total, 0.0))
+
+
+def _list_pipeline_stages_for_response(*, supabase: SupabaseClient, tenant_id: str) -> list[dict]:
+    try:
+        response = (
+            supabase.table("pipeline_stages")
+            .select("id, name, order_position, version, is_conversion")
+            .eq("tenant_id", tenant_id)
+            .order("order_position")
+            .execute()
+        )
+        return response.data or []
+    except Exception:
+        response = (
+            supabase.table("pipeline_stages")
+            .select("id, name, order_position, version")
+            .eq("tenant_id", tenant_id)
+            .order("order_position")
+            .execute()
+        )
+        return response.data or []
+
+
 class ReorderStageItem(BaseModel):
     id: str
     version: int = Field(..., ge=1)
@@ -125,6 +268,7 @@ class ReorderStagesPayload(BaseModel):
 
 class StageCreatePayload(BaseModel):
     name: str = Field(..., min_length=1, max_length=120)
+    is_conversion: bool = False
 
 
 class StageRenamePayload(BaseModel):
@@ -154,10 +298,10 @@ async def get_kanban_board(
     # Default stages if none exist
     if not stages_data:
         stages_data = [
-            {"id": "default-contato", "name": "Contato Inicial", "order_position": 0, "version": 1},
-            {"id": "default-escolhendo", "name": "Escolhendo Sabores", "order_position": 1, "version": 1},
-            {"id": "default-aguardando", "name": "Aguardando Pagamento", "order_position": 2, "version": 1},
-            {"id": "default-enviado", "name": "Enviado", "order_position": 3, "version": 1},
+            {"id": "default-contato", "name": "Contato Inicial", "order_position": 0, "version": 1, "is_conversion": False},
+            {"id": "default-escolhendo", "name": "Escolhendo Sabores", "order_position": 1, "version": 1, "is_conversion": False},
+            {"id": "default-aguardando", "name": "Aguardando Pagamento", "order_position": 2, "version": 1, "is_conversion": False},
+            {"id": "default-enviado", "name": "Enviado", "order_position": 3, "version": 1, "is_conversion": False},
         ]
 
     # 2. Fetch Leads
@@ -196,6 +340,7 @@ async def get_kanban_board(
             stage=name,
             stage_id=stage_info.get("id"),
             stage_version=int(stage_info.get("version") or 1),
+            stage_is_conversion=bool(stage_info.get("is_conversion", False)),
             label=name,
             count=len(stage_leads),
             total_value=sum(l.value for l in stage_leads),
@@ -275,20 +420,14 @@ async def reorder_stages(
         logger.exception("kanban_reorder_failed", extra={"tenant_id": str(user.id)})
         raise HTTPException(status_code=500, detail=f"Erro ao persistir reorder: {str(exc)}")
 
-    refreshed = (
-        supabase.table("pipeline_stages")
-        .select("id, name, order_position, version")
-        .eq("tenant_id", user.id)
-        .order("order_position")
-        .execute()
-    )
+    refreshed = _list_pipeline_stages_for_response(supabase=supabase, tenant_id=user.id)
     elapsed_ms = (perf_counter() - started) * 1000.0
     metrics.observe("kanban_reorder", elapsed_ms, ok=True)
     logger.info(
         "kanban_reorder_success",
         extra={"tenant_id": str(user.id), "result_count": len(ordered_ids), "elapsed_ms": round(elapsed_ms, 2)},
     )
-    return {"stages": refreshed.data or []}
+    return {"stages": refreshed}
 
 
 @router.post("/stages", status_code=status.HTTP_201_CREATED)
@@ -306,13 +445,35 @@ async def create_stage(
         .execute()
     ).data or []
     next_order = int(existing[0]["order_position"]) + 1 if existing else 0
-    response = (
-        supabase.table("pipeline_stages")
-        .insert({"tenant_id": user.id, "name": payload.name.strip(), "order_position": next_order})
-        .select("id, name, order_position, version")
-        .single()
-        .execute()
-    )
+    insert_payload = {
+        "tenant_id": user.id,
+        "name": payload.name.strip(),
+        "order_position": next_order,
+        "is_conversion": bool(payload.is_conversion),
+    }
+    try:
+        response = (
+            supabase.table("pipeline_stages")
+            .insert(insert_payload)
+            .select("id, name, order_position, version, is_conversion")
+            .single()
+            .execute()
+        )
+    except Exception:
+        # Legacy compatibility in case is_conversion migration hasn't been applied yet.
+        response = (
+            supabase.table("pipeline_stages")
+            .insert(
+                {
+                    "tenant_id": user.id,
+                    "name": payload.name.strip(),
+                    "order_position": next_order,
+                }
+            )
+            .select("id, name, order_position, version")
+            .single()
+            .execute()
+        )
     if not response.data:
         raise HTTPException(status_code=400, detail="Erro ao criar etapa.")
     return response.data
@@ -373,13 +534,7 @@ async def delete_stage(
     if not delete_result.data:
         raise HTTPException(status_code=400, detail="Erro ao excluir etapa.")
 
-    refreshed = (
-        supabase.table("pipeline_stages")
-        .select("id, name, order_position, version")
-        .eq("tenant_id", user.id)
-        .order("order_position")
-        .execute()
-    ).data or []
+    refreshed = _list_pipeline_stages_for_response(supabase=supabase, tenant_id=user.id)
     return {"fallback_stage_id": fallback["id"], "stages": refreshed}
 
 
@@ -422,6 +577,11 @@ async def create_lead(
         data["stock_reserved_json"] = next_reserved
         if "purchase_history_json" not in data or data["purchase_history_json"] is None:
             data["purchase_history_json"] = []
+        data["value"] = _calculate_lead_value_with_promotions(
+            supabase=supabase,
+            tenant_id=user.id,
+            products_json=data.get("products_json") or [],
+        )
 
         response = supabase.table("leads").insert(data).execute()
     except Exception:
@@ -475,6 +635,11 @@ async def update_lead(
         _apply_stock_delta(supabase=supabase, tenant_id=user.id, delta=applied_delta)
         rollback_needed = True
         update_data["stock_reserved_json"] = next_reserved
+        update_data["value"] = _calculate_lead_value_with_promotions(
+            supabase=supabase,
+            tenant_id=user.id,
+            products_json=update_data.get("products_json") or [],
+        )
 
     try:
         response = supabase.table("leads") \

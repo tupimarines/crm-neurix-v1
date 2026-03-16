@@ -35,7 +35,28 @@ async def get_kpis(
     # Count leads and calculate conversion
     leads_response = supabase.table("leads").select("id, stage", count="exact").eq("tenant_id", user.id).execute()
     total_leads = leads_response.count or 0
-    converted = sum(1 for l in (leads_response.data or []) if l.get("stage") == "enviado")
+    converted_stage_names: set[str] = set()
+    try:
+        stage_rows = (
+            supabase.table("pipeline_stages")
+            .select("name, is_conversion")
+            .eq("tenant_id", user.id)
+            .execute()
+        ).data or []
+        converted_stage_names = {
+            str(row.get("name", "")).strip().lower()
+            for row in stage_rows
+            if bool(row.get("is_conversion"))
+        }
+    except Exception:
+        # Migration may not be applied yet: in this case conversion remains opt-in (0%).
+        converted_stage_names = set()
+
+    converted = sum(
+        1
+        for l in (leads_response.data or [])
+        if str(l.get("stage", "")).strip().lower() in converted_stage_names
+    )
     conversion_rate = (converted / total_leads * 100) if total_leads > 0 else 0
 
     # Calculate monthly revenue from paid orders

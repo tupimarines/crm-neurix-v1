@@ -70,6 +70,7 @@ class KanbanColumn(BaseModel):
     stage: str
     stage_id: Optional[str] = None
     stage_version: Optional[int] = None
+    stage_is_conversion: Optional[bool] = None
     label: str
     count: int
     total_value: float
