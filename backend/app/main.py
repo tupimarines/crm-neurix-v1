@@ -15,6 +15,7 @@ from app.routers import (
     keyword_rules,
     leads,
     orders,
+    organizations,
     product_categories,
     products,
     promotions,
@@ -58,6 +59,7 @@ def create_app() -> FastAPI:
 
     # ── Routers ──
     app.include_router(auth.router, prefix="/api/auth", tags=["Autenticação"])
+    app.include_router(organizations.router, prefix="/api/organizations", tags=["Organizações"])
     app.include_router(leads.router, prefix="/api/leads", tags=["Leads / Kanban"])
     app.include_router(products.router, prefix="/api/products", tags=["Produtos"])
     app.include_router(product_categories.router, prefix="/api/product-categories", tags=["Categorias de Produto"])
