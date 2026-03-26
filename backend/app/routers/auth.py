@@ -6,8 +6,9 @@ Uses Supabase Auth under the hood.
 from fastapi import APIRouter, Depends, HTTPException, status
 from supabase import Client as SupabaseClient
 
-from app.dependencies import get_supabase, get_current_user
+from app.dependencies import get_supabase, get_current_user, require_org_admin, require_superadmin
 from app.models.user import LoginRequest, OTPVerifyRequest, TokenResponse, RefreshRequest, UserProfile
+from app.authz import EffectiveRole
 
 router = APIRouter()
 
@@ -132,3 +133,15 @@ async def get_me(user=Depends(get_current_user)):
         role=user.role,
         avatar_url=user.user_metadata.get("avatar_url") if user.user_metadata else None,
     )
+
+
+@router.get("/rbac/superadmin")
+async def rbac_probe_superadmin(_role: EffectiveRole = Depends(require_superadmin)):
+    """Prova de dependência: 200 só para superadmin; caso contrário 403."""
+    return {"ok": True, "scope": "superadmin"}
+
+
+@router.get("/rbac/org-admin")
+async def rbac_probe_org_admin(_role: EffectiveRole = Depends(require_org_admin)):
+    """Prova de dependência: 200 para superadmin ou admin de org (ou legado admin sem membership); 403 para read_only."""
+    return {"ok": True, "scope": "org_admin"}

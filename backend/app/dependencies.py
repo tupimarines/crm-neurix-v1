@@ -148,3 +148,25 @@ async def get_current_user(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=f"Falha na autenticação: {str(e)}",
         )
+
+
+# ── RBAC (Sprint 2) — lazy export (evita import circular com app.authz) ──
+
+_AUTHZ_EXPORTS = frozenset(
+    {
+        "EffectiveRole",
+        "compute_effective_role",
+        "fetch_effective_role",
+        "get_effective_role",
+        "require_org_admin",
+        "require_superadmin",
+    }
+)
+
+
+def __getattr__(name: str):
+    if name in _AUTHZ_EXPORTS:
+        from app import authz as _authz
+
+        return getattr(_authz, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
