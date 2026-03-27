@@ -28,14 +28,19 @@ export function getApiBase(): string {
     return normalizeConfiguredApiUrl(process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000");
 }
 
-/** URL para chamadas à API. Usa path relativo quando mesmo origin (herda HTTPS da página). */
+/**
+ * URL final para fetch. Quando API e página compartilham o mesmo `host` (hostname:porta),
+ * usa path relativo — o browser resolve com o **mesmo esquema da página** (HTTPS), mesmo se
+ * `NEXT_PUBLIC_API_URL` estiver em `http://` (evita Mixed Content).
+ * Não usar só `origin`: http e https no mesmo host têm origins diferentes.
+ */
 export function getApiUrl(path: string): string {
     const pathNorm = path.startsWith("/") ? path : `/${path}`;
     if (typeof window !== "undefined") {
         try {
             const base = getApiBase();
             const url = new URL(base);
-            if (url.origin === window.location.origin) {
+            if (url.host === window.location.host) {
                 return pathNorm;
             }
         } catch {
