@@ -19,6 +19,7 @@ from app.authz import EffectiveRole, get_effective_role
 from app.dependencies import get_current_user, get_supabase
 from app.models.client import CrmClientCreate, CrmClientResponse, CrmClientUpdate, crm_client_from_row
 from app.org_scope import admin_user_ids_for_organization
+from app.services.phone_normalize import digits_only
 
 router = APIRouter()
 
@@ -145,6 +146,38 @@ async def list_clients(
     return [crm_client_from_row(r) for r in (res.data or [])]
 
 
+@router.get("/lookup/by-phone", response_model=Optional[CrmClientResponse])
+async def lookup_client_by_phone(
+    phone: str = Query(..., min_length=4, description="Telefone (apenas dígitos ou formatado)."),
+    tenant_id: Optional[str] = Query(None),
+    user=Depends(get_current_user),
+    eff: EffectiveRole = Depends(get_effective_role),
+    supabase: SupabaseClient = Depends(get_supabase),
+):
+    """Resolve cliente por telefone normalizado. Retorna o primeiro match ou null."""
+    uid = str(user.id)
+    target = _resolve_list_tenant(supabase, eff, uid, tenant_id)
+    needle = digits_only(phone)
+    if len(needle) < 4:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Telefone muito curto.")
+
+    res = (
+        supabase.table("crm_clients")
+        .select("*")
+        .eq("tenant_id", target)
+        .order("created_at", desc=True)
+        .execute()
+    )
+    for r in res.data or []:
+        phones_raw = r.get("phones")
+        if not isinstance(phones_raw, list):
+            continue
+        for p in phones_raw:
+            if digits_only(str(p)) == needle:
+                return crm_client_from_row(r)
+    return None
+
+
 @router.get("/{client_id}", response_model=CrmClientResponse)
 async def get_client(
     client_id: str,
@@ -232,3 +265,54 @@ async def delete_client(
     _assert_can_mutate(supabase, eff, uid, str(row["tenant_id"]))
     supabase.table("crm_clients").delete().eq("id", client_id).execute()
     return None
+
+
+@router.get("/{client_id}/leads")
+async def list_client_leads(
+    client_id: str,
+    user=Depends(get_current_user),
+    eff: EffectiveRole = Depends(get_effective_role),
+    supabase: SupabaseClient = Depends(get_supabase),
+):
+    """Lista leads/cards de negócio vinculados ao cliente."""
+    uid = str(user.id)
+    row = _get_client_row(supabase, client_id)
+    _assert_can_read_row(supabase, eff, uid, row)
+    res = (
+        supabase.table("leads")
+        .select("id, contact_name, company_name, phone, stage, value, created_at, updated_at, products_json, purchase_history_json")
+        .eq("client_id", client_id)
+        .order("created_at", desc=True)
+        .execute()
+    )
+    return res.data or []
+
+
+@router.get("/{client_id}/orders")
+async def list_client_orders(
+    client_id: str,
+    user=Depends(get_current_user),
+    eff: EffectiveRole = Depends(get_effective_role),
+    supabase: SupabaseClient = Depends(get_supabase),
+):
+    """Lista pedidos de leads vinculados ao cliente (histórico de compras)."""
+    uid = str(user.id)
+    row = _get_client_row(supabase, client_id)
+    _assert_can_read_row(supabase, eff, uid, row)
+    leads_res = (
+        supabase.table("leads")
+        .select("id")
+        .eq("client_id", client_id)
+        .execute()
+    )
+    lead_ids = [str(l["id"]) for l in (leads_res.data or [])]
+    if not lead_ids:
+        return []
+    orders_res = (
+        supabase.table("orders")
+        .select("id, lead_id, client_name, product_summary, products_json, total, payment_status, created_at")
+        .in_("lead_id", lead_ids)
+        .order("created_at", desc=True)
+        .execute()
+    )
+    return orders_res.data or []

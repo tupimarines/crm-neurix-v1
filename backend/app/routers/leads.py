@@ -24,6 +24,7 @@ from app.observability import get_logger, metrics
 from app.services.uazapi_service import get_uazapi_service
 from app.services.webhook_lead_context import get_uazapi_instance_token_for_tenant
 from app.services.promotion_engine import apply_promotion_discount, round_money, select_best_promotion
+from app.services.phone_normalize import digits_only as _digits_only
 from app.services.lead_board import (
     apply_destination_mirror,
     build_pos_by_lead,
@@ -951,6 +952,38 @@ async def list_leads(
     return [LeadResponse(**row) for row in response.data]
 
 
+def _resolve_or_create_client_by_phone(
+    supabase: SupabaseClient, tenant_id: str, phone: str | None, contact_name: str | None, company_name: str | None,
+) -> str | None:
+    """Search crm_clients by phone; create a minimal record if not found. Returns client_id or None."""
+    if not phone:
+        return None
+    needle = _digits_only(phone)
+    if len(needle) < 4:
+        return None
+
+    res = supabase.table("crm_clients").select("*").eq("tenant_id", tenant_id).execute()
+    for r in res.data or []:
+        phones_raw = r.get("phones")
+        if not isinstance(phones_raw, list):
+            continue
+        for p in phones_raw:
+            if _digits_only(str(p)) == needle:
+                return str(r["id"])
+
+    now = datetime.now(timezone.utc).isoformat()
+    display = (contact_name or company_name or phone or "Novo cliente").strip()
+    ins = supabase.table("crm_clients").insert({
+        "tenant_id": tenant_id,
+        "person_type": "PF",
+        "display_name": display,
+        "phones": [phone],
+        "updated_at": now,
+    }).execute()
+    rows = ins.data or []
+    return str(rows[0]["id"]) if rows else None
+
+
 @router.post("/", response_model=LeadResponse, status_code=status.HTTP_201_CREATED)
 async def create_lead(
     payload: LeadCreate,
@@ -961,6 +994,7 @@ async def create_lead(
     """Create a new lead/card."""
     data = payload.model_dump()
     funnel_id_opt = data.pop("funnel_id", None)
+    explicit_client_id = data.pop("client_id", None)
     data_tenant_id = str(user.id)
     resolved_fid = ""
     previous_reserved: list[dict] = []
@@ -984,6 +1018,19 @@ async def create_lead(
         data["value"] = priced_value
         data["products_json"] = resolved_lines
         data["funnel_id"] = resolved_fid
+
+        if explicit_client_id:
+            data["client_id"] = explicit_client_id
+        elif data.get("phone"):
+            resolved_cid = _resolve_or_create_client_by_phone(
+                supabase,
+                tenant_id=data_tenant_id,
+                phone=data["phone"],
+                contact_name=data.get("contact_name"),
+                company_name=data.get("company_name"),
+            )
+            if resolved_cid:
+                data["client_id"] = resolved_cid
 
         response = supabase.table("leads").insert(data).execute()
     except Exception:

@@ -584,6 +584,42 @@ export const updateClient = (clientId: string, body: PatchCrmClientBody, token?:
 export const deleteClient = (clientId: string, token?: string) =>
     apiDelete<void>(`/api/clients/${clientId}`, token);
 
+export const lookupClientByPhone = (phone: string, token?: string, tenantId?: string) => {
+    const p = new URLSearchParams({ phone });
+    if (tenantId) p.set("tenant_id", tenantId);
+    return apiGet<CrmClientDTO | null>(`/api/clients/lookup/by-phone?${p.toString()}`, token);
+};
+
+export type ClientLeadDTO = {
+    id: string;
+    contact_name: string;
+    company_name: string;
+    phone?: string | null;
+    stage: string;
+    value: number;
+    created_at: string;
+    updated_at: string;
+    products_json?: unknown[];
+    purchase_history_json?: unknown[];
+};
+
+export const listClientLeads = (clientId: string, token?: string) =>
+    apiGet<ClientLeadDTO[]>(`/api/clients/${clientId}/leads`, token);
+
+export type ClientOrderDTO = {
+    id: string;
+    lead_id?: string | null;
+    client_name: string;
+    product_summary: string;
+    products_json?: unknown[];
+    total: number;
+    payment_status: string;
+    created_at: string;
+};
+
+export const listClientOrders = (clientId: string, token?: string) =>
+    apiGet<ClientOrderDTO[]>(`/api/clients/${clientId}/orders`, token);
+
 // ── WhatsApp Instance Management (escopo opcional por inbox) ──
 
 function whatsappInboxQuery(inboxId?: string) {

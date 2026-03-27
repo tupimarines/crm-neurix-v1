@@ -41,6 +41,10 @@ class LeadCreate(LeadBase):
         None,
         description="Funil do board ao criar pelo Kanban; default = funil Default do tenant.",
     )
+    client_id: Optional[str] = Field(
+        None,
+        description="UUID do crm_client vinculado; se omitido e phone fornecido, resolve automaticamente.",
+    )
 
 
 class LeadUpdate(BaseModel):
@@ -53,6 +57,7 @@ class LeadUpdate(BaseModel):
     products_json: Optional[list[dict]] = None
     stock_reserved_json: Optional[list[dict]] = None
     purchase_history_json: Optional[list[dict]] = None
+    client_id: Optional[str] = None
 
 
 class LeadMoveStage(BaseModel):
@@ -67,6 +72,7 @@ class LeadResponse(LeadBase):
     updated_at: datetime
     funnel_id: Optional[str] = None
     inbox_id: Optional[str] = None
+    client_id: Optional[str] = None
 
     model_config = {"from_attributes": True}
 

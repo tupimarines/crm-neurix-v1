@@ -10,6 +10,7 @@ import { getAuthMe } from "@/lib/api";
 const navItems = [
     { href: "/dashboard", icon: "dashboard", label: "Painel" },
     { href: "/kanban", icon: "view_kanban", label: "Funil de Vendas" },
+    { href: "/clientes", icon: "person_search", label: "Clientes" },
     { href: "/produtos", icon: "inventory_2", label: "Produtos" },
 ];
 

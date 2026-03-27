@@ -36,7 +36,9 @@ import {
     listInboxes,
     listMyFunnels,
     listOrganizationFunnels,
+    lookupClientByPhone,
     putStageAutomation,
+    type CrmClientDTO,
     type LeadActivityDTO,
     type FunnelListItem,
     type OrganizationFunnelItem,
@@ -444,6 +446,9 @@ function KanbanContent() {
         priority: string;
         products_json: any[];
     }>({ name: "", contact: "", phone: "", value: "", priority: "Média", products_json: [] });
+    const [phoneLookupResult, setPhoneLookupResult] = useState<CrmClientDTO | null | undefined>(undefined);
+    const [phoneLookupLoading, setPhoneLookupLoading] = useState(false);
+    const phoneLookupTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const [showFilter, setShowFilter] = useState(false);
     const [filterPriority, setFilterPriority] = useState("");
     const [filterSort, setFilterSort] = useState("");
@@ -1121,6 +1126,7 @@ function KanbanContent() {
             }]);
         }
         setNewCard({ name: "", contact: "", phone: "", value: "", priority: "Média", products_json: [] });
+        setPhoneLookupResult(undefined);
         setShowNewCard(null);
     }
 
@@ -1281,6 +1287,26 @@ function KanbanContent() {
             }
         }
     }, [newCard.products_json]);
+
+    useEffect(() => {
+        if (phoneLookupTimerRef.current) clearTimeout(phoneLookupTimerRef.current);
+        const digits = newCard.phone.replace(/\D/g, "");
+        if (digits.length < 8) {
+            setPhoneLookupResult(undefined);
+            return;
+        }
+        setPhoneLookupLoading(true);
+        phoneLookupTimerRef.current = setTimeout(() => {
+            const t = localStorage.getItem("access_token") || undefined;
+            lookupClientByPhone(digits, t)
+                .then((client) => setPhoneLookupResult(client))
+                .catch(() => setPhoneLookupResult(undefined))
+                .finally(() => setPhoneLookupLoading(false));
+        }, 500);
+        return () => {
+            if (phoneLookupTimerRef.current) clearTimeout(phoneLookupTimerRef.current);
+        };
+    }, [newCard.phone]);
 
     return (
         <div className="flex flex-col h-full">
@@ -1600,6 +1626,24 @@ function KanbanContent() {
                                                     <input value={newCard.name} onChange={(e) => setNewCard({ ...newCard, name: e.target.value })} placeholder="Nome do negócio" className="w-full px-3 py-1.5 border border-border-light dark:border-border-dark rounded-lg text-sm bg-white dark:bg-slate-800 focus:ring-1 focus:ring-primary focus:border-transparent" />
                                                     <input value={newCard.contact} onChange={(e) => setNewCard({ ...newCard, contact: e.target.value })} placeholder="Nome do contato" className="w-full px-3 py-1.5 border border-border-light dark:border-border-dark rounded-lg text-sm bg-white dark:bg-slate-800 focus:ring-1 focus:ring-primary focus:border-transparent" />
                                                     <input value={newCard.phone} onChange={(e) => setNewCard({ ...newCard, phone: formatPhone(e.target.value) })} placeholder="55 41 99999-9999" maxLength={16} className="w-full px-3 py-1.5 border border-border-light dark:border-border-dark rounded-lg text-sm bg-white dark:bg-slate-800 focus:ring-1 focus:ring-primary focus:border-transparent" />
+                                                    {phoneLookupLoading && (
+                                                        <div className="flex items-center gap-1.5 text-[10px] text-text-secondary-light px-1">
+                                                            <div className="animate-spin h-3 w-3 border border-primary border-t-transparent rounded-full" />
+                                                            Buscando cliente...
+                                                        </div>
+                                                    )}
+                                                    {!phoneLookupLoading && phoneLookupResult && (
+                                                        <div className="flex items-center gap-1.5 text-[10px] px-2 py-1 rounded-md bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300 border border-green-200 dark:border-green-800">
+                                                            <span className="material-symbols-outlined text-[14px]">check_circle</span>
+                                                            Cliente encontrado: <strong className="font-semibold">{phoneLookupResult.display_name}</strong>
+                                                        </div>
+                                                    )}
+                                                    {!phoneLookupLoading && phoneLookupResult === null && newCard.phone.replace(/\D/g, "").length >= 8 && (
+                                                        <div className="flex items-center gap-1.5 text-[10px] px-2 py-1 rounded-md bg-yellow-50 dark:bg-yellow-900/20 text-yellow-700 dark:text-yellow-300 border border-yellow-200 dark:border-yellow-800">
+                                                            <span className="material-symbols-outlined text-[14px]">person_add</span>
+                                                            Novo cliente — será criado automaticamente ao salvar
+                                                        </div>
+                                                    )}
                                                     <div className="flex gap-2">
                                                         <input value={newCard.value} onChange={(e) => setNewCard({ ...newCard, value: e.target.value })} placeholder="R$ 0,00" className="flex-1 px-3 py-1.5 border border-border-light dark:border-border-dark rounded-lg text-sm bg-white dark:bg-slate-800 focus:ring-1 focus:ring-primary focus:border-transparent" />
                                                         <select value={newCard.priority} onChange={(e) => setNewCard({ ...newCard, priority: e.target.value })} className="px-2 py-1.5 border border-border-light dark:border-border-dark rounded-lg text-sm bg-white dark:bg-slate-800">
