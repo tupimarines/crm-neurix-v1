@@ -54,11 +54,29 @@ export async function api<T = unknown>(
             window.location.href = "/login";
         }
         const raw = await res.text().catch(() => "");
-        let detail = res.statusText;
+        let detail: string = res.statusText;
         if (raw) {
             try {
-                const parsed = JSON.parse(raw);
-                detail = parsed.detail || parsed.message || raw;
+                const parsed = JSON.parse(raw) as {
+                    detail?: unknown;
+                    message?: string;
+                };
+                const d = parsed.detail ?? parsed.message;
+                if (Array.isArray(d)) {
+                    detail = d
+                        .map((item: unknown) =>
+                            typeof item === "object" && item !== null && "msg" in item
+                                ? String((item as { msg: string }).msg)
+                                : JSON.stringify(item)
+                        )
+                        .join("; ");
+                } else if (typeof d === "string") {
+                    detail = d;
+                } else if (d !== undefined) {
+                    detail = JSON.stringify(d);
+                } else {
+                    detail = raw;
+                }
             } catch {
                 detail = raw;
             }
@@ -322,6 +340,69 @@ export const listAdminInboxes = (tenantId: string, token?: string) =>
         `/api/admin/inboxes?${new URLSearchParams({ tenant_id: tenantId }).toString()}`,
         token
     );
+
+// ── Clientes CRM (Sprint 10) ──
+
+export type CrmClientDTO = {
+    id: string;
+    tenant_id: string;
+    person_type: "PF" | "PJ";
+    cpf?: string | null;
+    cnpj?: string | null;
+    display_name: string;
+    contact_name?: string | null;
+    phones: string[];
+    address_line1?: string | null;
+    address_line2?: string | null;
+    neighborhood?: string | null;
+    postal_code?: string | null;
+    city?: string | null;
+    state?: string | null;
+    complement?: string | null;
+    no_number?: boolean | null;
+    dead_end_street?: boolean | null;
+    created_at: string;
+    updated_at: string;
+};
+
+export type CreateCrmClientBody = {
+    person_type: "PF" | "PJ";
+    display_name: string;
+    contact_name?: string | null;
+    phones: string[];
+    cpf?: string | null;
+    cnpj?: string | null;
+    tenant_id?: string | null;
+    address_line1?: string | null;
+    address_line2?: string | null;
+    neighborhood?: string | null;
+    postal_code?: string | null;
+    city?: string | null;
+    state?: string | null;
+    complement?: string | null;
+    no_number?: boolean | null;
+    dead_end_street?: boolean | null;
+};
+
+export type PatchCrmClientBody = Partial<Omit<CreateCrmClientBody, "tenant_id">>;
+
+/** Superadmin: `tenant_id` obrigatório. Demais usuários: omitir (usa JWT). */
+export const listClients = (token: string, tenantId?: string) => {
+    const q = tenantId ? `?${new URLSearchParams({ tenant_id: tenantId }).toString()}` : "";
+    return apiGet<CrmClientDTO[]>(`/api/clients${q}`, token);
+};
+
+export const getClient = (clientId: string, token?: string) =>
+    apiGet<CrmClientDTO>(`/api/clients/${clientId}`, token);
+
+export const createClient = (body: CreateCrmClientBody, token?: string) =>
+    apiPost<CrmClientDTO>("/api/clients/", body, token);
+
+export const updateClient = (clientId: string, body: PatchCrmClientBody, token?: string) =>
+    apiPatch<CrmClientDTO>(`/api/clients/${clientId}`, body, token);
+
+export const deleteClient = (clientId: string, token?: string) =>
+    apiDelete<void>(`/api/clients/${clientId}`, token);
 
 // ── WhatsApp Instance Management (escopo opcional por inbox) ──
 

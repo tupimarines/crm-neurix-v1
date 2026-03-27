@@ -65,3 +65,15 @@ def assert_funnel_assignable_to_org(
     allowed = funnel_ids_for_organization(supabase, org_id)
     if funnel_id not in allowed:
         raise ValueError("Funil inválido ou não pertence a esta organização.")
+
+
+def admin_user_ids_for_organization(supabase: SupabaseClient, org_id: str) -> set[str]:
+    """user_id dos membros com papel admin na organização (tenants legados dos dados)."""
+    mres = (
+        supabase.table("organization_members")
+        .select("user_id")
+        .eq("organization_id", org_id)
+        .eq("role", "admin")
+        .execute()
+    )
+    return {str(r["user_id"]) for r in (mres.data or [])}

@@ -330,15 +330,15 @@ Este plano incorpora o documento complementar **`tech-spec-admin-console-ui-rbac
 
 #### Sprint 10 — CRM clients CRUD + máscaras (3 tasks) + Console Admin — CRM completo
 
-- [ ] **S10-T1:** `clients.py` + validação CPF/CNPJ server-side.
-- [ ] **S10-T2:** Front máscaras PF/PJ + endereço.
-- [ ] **S10-T3:** Teste 422 CNPJ inválido.
+- [x] **S10-T1:** `clients.py` + validação CPF/CNPJ server-side.
+- [x] **S10-T2:** Front máscaras PF/PJ + endereço.
+- [x] **S10-T3:** Teste 422 CNPJ inválido.
 
 **Console Admin:**
 
-- [ ] **S10-UI-1:** Implementar **`frontend-next/app/(admin)/admin/clientes/page.tsx`** (ou rota equivalente): **listagem** com filtros (tenant/org), **criar/editar/excluir** chamando as rotas **`/api/...`** do router de clientes; reutilizar **máscaras e validação** da mesma base que **S10-T2** (componentes compartilhados em `components/` para não duplicar lógica).
-- [ ] **S10-UI-2:** Formulário com campos do modelo **`crm_clients`** (PF/PJ, CPF/CNPJ, endereço, flags **sem número** / **rua sem saída**, **phones** JSONB). Exibir erros **422** da API de forma legível (AC9).
-- [ ] **S10-UI-3:** Até **S10-T1** existir, manter **placeholder** explícito (conforme spec complementar **AC-UI-06**) — sem tela em branco.
+- [x] **S10-UI-1:** Implementar **`frontend-next/app/(admin)/admin/clientes/page.tsx`** (ou rota equivalente): **listagem** com filtros (tenant/org), **criar/editar/excluir** chamando as rotas **`/api/...`** do router de clientes; reutilizar **máscaras e validação** da mesma base que **S10-T2** (componentes compartilhados em `components/` para não duplicar lógica).
+- [x] **S10-UI-2:** Formulário com campos do modelo **`crm_clients`** (PF/PJ, CPF/CNPJ, endereço, flags **sem número** / **rua sem saída**, **phones** JSONB). Exibir erros **422** da API de forma legível (AC9).
+- [x] **S10-UI-3:** Até **S10-T1** existir, manter **placeholder** explícito (conforme spec complementar **AC-UI-06**) — sem tela em branco.
 
 #### Sprint 11 — Posições + automação + auditoria (3 tasks) + Console Admin — leitura / links
 
