@@ -25,6 +25,7 @@ class EffectiveRole:
     profile_organization_id: Optional[str]
     org_member_role: Optional[str]
     org_member_organization_id: Optional[str]
+    assigned_funnel_id: Optional[str]
 
     @property
     def is_org_admin(self) -> bool:
@@ -36,6 +37,10 @@ class EffectiveRole:
         if self.org_member_role is None and self.legacy_profile_role == "admin":
             return True
         return False
+
+    @property
+    def is_read_only(self) -> bool:
+        return self.org_member_role == "read_only"
 
 
 def compute_effective_role(
@@ -60,6 +65,8 @@ def compute_effective_role(
 
     om_role = chosen.get("role") if chosen else None
     om_org = str(chosen["organization_id"]) if chosen and chosen.get("organization_id") is not None else None
+    af = chosen.get("assigned_funnel_id") if chosen else None
+    assigned_funnel = str(af) if af else None
 
     return EffectiveRole(
         user_id=user_id,
@@ -68,6 +75,7 @@ def compute_effective_role(
         profile_organization_id=str(prof_org) if prof_org else None,
         org_member_role=om_role,
         org_member_organization_id=om_org,
+        assigned_funnel_id=assigned_funnel,
     )
 
 

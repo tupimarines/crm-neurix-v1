@@ -3,6 +3,8 @@ Auth Router — Login, 2FA, Refresh Token, Logout
 Uses Supabase Auth under the hood.
 """
 
+from typing import Optional
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from supabase import Client as SupabaseClient
 
@@ -124,14 +126,38 @@ async def logout(supabase: SupabaseClient = Depends(get_supabase), user=Depends(
 
 
 @router.get("/me", response_model=UserProfile)
-async def get_me(user=Depends(get_current_user)):
-    """Get the current authenticated user's profile."""
+async def get_me(
+    user=Depends(get_current_user),
+    supabase: SupabaseClient = Depends(get_supabase),
+):
+    """Perfil atual + flags RBAC (`is_superadmin`, `organization_id`) a partir de `profiles`."""
+    is_superadmin = False
+    organization_id: Optional[str] = None
+    try:
+        res = (
+            supabase.table("profiles")
+            .select("is_superadmin, organization_id")
+            .eq("id", str(user.id))
+            .limit(1)
+            .execute()
+        )
+        rows = res.data or []
+        if rows:
+            row = rows[0]
+            is_superadmin = bool(row.get("is_superadmin"))
+            oid = row.get("organization_id")
+            organization_id = str(oid) if oid is not None else None
+    except Exception:
+        pass
+
     return UserProfile(
-        id=user.id,
-        email=user.email,
+        id=str(user.id),
+        email=user.email or "",
         full_name=user.user_metadata.get("full_name") if user.user_metadata else None,
         role=user.role,
         avatar_url=user.user_metadata.get("avatar_url") if user.user_metadata else None,
+        is_superadmin=is_superadmin,
+        organization_id=organization_id,
     )
 
 

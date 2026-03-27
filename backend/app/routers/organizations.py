@@ -18,8 +18,10 @@ from supabase import Client as SupabaseClient
 
 from app.authz import EffectiveRole, get_effective_role
 from app.dependencies import get_current_user, get_supabase, require_superadmin
+from app.org_scope import assert_funnel_assignable_to_org, list_funnels_for_organization
 from app.models.organization import (
     OrganizationCreate,
+    OrganizationFunnelItem,
     OrganizationMemberCreate,
     OrganizationMemberResponse,
     OrganizationMemberUpdate,
@@ -243,6 +245,38 @@ async def list_members(
     return [_member_row_to_response(r) for r in rows]
 
 
+@router.get("/{org_id}/funnels", response_model=list[OrganizationFunnelItem])
+async def list_organization_funnels(
+    org_id: str,
+    user=Depends(get_current_user),
+    eff: EffectiveRole = Depends(get_effective_role),
+    supabase: SupabaseClient = Depends(get_supabase),
+):
+    """Funis dos tenants admin da organização (dropdown assigned_funnel_id, console)."""
+    uid = str(user.id)
+    membership = _membership_for_org(supabase, uid, org_id)
+    if not _can_read_org(eff, membership):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Sem acesso a esta organização.")
+
+    org_check = supabase.table("organizations").select("id").eq("id", org_id).limit(1).execute()
+    if not (org_check.data or []):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Organização não encontrada.")
+
+    raw = list_funnels_for_organization(supabase, org_id)
+    out: list[OrganizationFunnelItem] = []
+    for r in raw:
+        out.append(
+            OrganizationFunnelItem(
+                id=str(r["id"]),
+                tenant_id=str(r["tenant_id"]),
+                name=str(r["name"]),
+                created_at=_parse_ts(r.get("created_at")),
+                updated_at=_parse_ts(r.get("updated_at")),
+            )
+        )
+    return out
+
+
 @router.post("/{org_id}/members", response_model=OrganizationMemberResponse, status_code=status.HTTP_201_CREATED)
 async def add_member(
     org_id: str,
@@ -263,13 +297,19 @@ async def add_member(
     if not (ocheck.data or []):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Organização não encontrada.")
 
+    if payload.role == "read_only":
+        assert payload.assigned_funnel_id
+        try:
+            assert_funnel_assignable_to_org(supabase, org_id, payload.assigned_funnel_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+
     row: dict[str, Any] = {
         "organization_id": org_id,
         "user_id": payload.user_id,
         "role": payload.role,
+        "assigned_funnel_id": payload.assigned_funnel_id if payload.role == "read_only" else None,
     }
-    if payload.assigned_funnel_id is not None:
-        row["assigned_funnel_id"] = payload.assigned_funnel_id
 
     try:
         ins = supabase.table("organization_members").insert(row).execute()
@@ -307,11 +347,39 @@ async def update_member(
             detail="Informe role e/ou assigned_funnel_id.",
         )
 
-    patch: dict[str, Any] = {}
-    if payload.role is not None:
-        patch["role"] = payload.role
-    if payload.assigned_funnel_id is not None:
-        patch["assigned_funnel_id"] = payload.assigned_funnel_id
+    cur = (
+        supabase.table("organization_members")
+        .select("role, assigned_funnel_id")
+        .eq("organization_id", org_id)
+        .eq("user_id", member_user_id)
+        .limit(1)
+        .execute()
+    )
+    cur_rows = cur.data or []
+    if not cur_rows:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Membro não encontrado.")
+    current = cur_rows[0]
+
+    final_role = payload.role if payload.role is not None else current["role"]
+    if final_role == "admin":
+        final_funnel = None
+    else:
+        final_funnel = (
+            payload.assigned_funnel_id
+            if payload.assigned_funnel_id is not None
+            else current.get("assigned_funnel_id")
+        )
+        if not final_funnel:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="assigned_funnel_id é obrigatório para read_only.",
+            )
+        try:
+            assert_funnel_assignable_to_org(supabase, org_id, str(final_funnel))
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+
+    patch: dict[str, Any] = {"role": final_role, "assigned_funnel_id": final_funnel}
 
     upd = (
         supabase.table("organization_members")

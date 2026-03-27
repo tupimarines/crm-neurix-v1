@@ -34,3 +34,5 @@ class UserProfile(BaseModel):
     full_name: Optional[str] = None
     role: Optional[str] = None
     avatar_url: Optional[str] = None
+    is_superadmin: bool = False
+    organization_id: Optional[str] = None

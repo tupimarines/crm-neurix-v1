@@ -79,3 +79,4 @@ class KanbanColumn(BaseModel):
 
 class KanbanBoard(BaseModel):
     columns: list[KanbanColumn]
+    funnel_id: Optional[str] = Field(None, description="Funil efetivamente carregado (read_only: sempre o atribuído).")

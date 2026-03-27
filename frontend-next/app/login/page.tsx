@@ -3,12 +3,16 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 
+import { getApiBase, getAuthMe } from "@/lib/api";
+
 export default function LoginPage() {
     const router = useRouter();
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState("");
+    /** Após login bem-sucedido: superadmin escolhe destino (S5-UI-2). */
+    const [postLoginChoice, setPostLoginChoice] = useState(false);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -16,14 +20,11 @@ export default function LoginPage() {
         setLoading(true);
 
         try {
-            const res = await fetch(
-                `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/api/auth/login`,
-                {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ email, password }),
-                }
-            );
+            const res = await fetch(`${getApiBase()}/api/auth/login`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ email, password }),
+            });
 
             if (!res.ok) {
                 const data = await res.json().catch(() => ({}));
@@ -33,6 +34,16 @@ export default function LoginPage() {
             const data = await res.json();
             localStorage.setItem("access_token", data.access_token);
             localStorage.setItem("refresh_token", data.refresh_token || "");
+
+            try {
+                const me = await getAuthMe(data.access_token);
+                if (me.is_superadmin) {
+                    setPostLoginChoice(true);
+                    return;
+                }
+            } catch {
+                /* fallback: app normal */
+            }
             router.push("/dashboard");
         } catch (err) {
             setError(err instanceof Error ? err.message : "Erro ao fazer login");
@@ -67,6 +78,28 @@ export default function LoginPage() {
 
                     {/* Login Card */}
                     <div className="glass-effect rounded-2xl shadow-lg shadow-primary/5 border border-primary-light/50 p-8 sm:p-10 w-full">
+                        {postLoginChoice ? (
+                            <div className="flex flex-col gap-4 text-center">
+                                <p className="text-sm text-text-secondary-light dark:text-text-secondary-dark">
+                                    Conta superadmin detectada. Onde deseja ir?
+                                </p>
+                                <button
+                                    type="button"
+                                    onClick={() => router.push("/admin")}
+                                    className="w-full h-12 bg-primary hover:bg-primary-hover text-white font-bold rounded-xl shadow-lg shadow-primary/30 flex items-center justify-center gap-2"
+                                >
+                                    <span className="material-symbols-outlined text-[20px]">admin_panel_settings</span>
+                                    Console Admin
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => router.push("/dashboard")}
+                                    className="w-full h-12 border border-border-light dark:border-border-dark font-bold rounded-xl hover:bg-black/5 dark:hover:bg-white/5"
+                                >
+                                    Ir para o app
+                                </button>
+                            </div>
+                        ) : (
                         <form onSubmit={handleSubmit} className="flex flex-col gap-5">
                             {error && (
                                 <div className="bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 text-sm px-4 py-3 rounded-xl border border-red-200 dark:border-red-800">
@@ -149,7 +182,10 @@ export default function LoginPage() {
                                 )}
                             </button>
                         </form>
+                        )}
 
+                        {!postLoginChoice && (
+                            <>
                         {/* Divider */}
                         <div className="relative my-8">
                             <div className="absolute inset-0 flex items-center">
@@ -183,6 +219,8 @@ export default function LoginPage() {
                                 Privacidade
                             </a>
                         </div>
+                            </>
+                        )}
                     </div>
 
                     {/* Bottom */}

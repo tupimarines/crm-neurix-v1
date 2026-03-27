@@ -11,6 +11,8 @@ from time import perf_counter
 from datetime import datetime, timezone
 
 from app.dependencies import get_supabase, get_current_user
+from app.authz import EffectiveRole, get_effective_role
+from app.org_scope import funnel_ids_for_organization
 from app.models.lead import (
     LeadCreate, LeadUpdate, LeadMoveStage, LeadResponse,
     KanbanBoard, KanbanColumn, LeadStage,
@@ -334,23 +336,171 @@ class StageDeletePayload(BaseModel):
     fallback_stage_id: str | None = None
 
 
+def _default_funnel_id_for_tenant(supabase: SupabaseClient, tenant_id: str) -> str:
+    """Preferência: funil nome 'Default'; senão o mais antigo por created_at."""
+    res = (
+        supabase.table("funnels")
+        .select("id, name, created_at")
+        .eq("tenant_id", tenant_id)
+        .execute()
+    )
+    rows = res.data or []
+    if not rows:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Nenhum funil cadastrado para este tenant. Crie um funil ou execute a migração de funil Default.",
+        )
+    for r in rows:
+        if str(r.get("name") or "").strip().lower() == "default":
+            return str(r["id"])
+    rows.sort(key=lambda r: str(r.get("created_at") or ""))
+    return str(rows[0]["id"])
+
+
+def _resolve_kanban_scope(
+    supabase: SupabaseClient,
+    user_id: str,
+    eff: EffectiveRole,
+    funnel_id_query: Optional[str],
+) -> tuple[str, str]:
+    """Retorna (tenant_id dos dados no banco, funnel_id resolvido)."""
+    uid = str(user_id)
+    if eff.is_read_only:
+        fid = eff.assigned_funnel_id
+        if not fid:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Funil não atribuído para usuário read_only.",
+            )
+        fres = (
+            supabase.table("funnels")
+            .select("id, tenant_id")
+            .eq("id", fid)
+            .limit(1)
+            .execute()
+        )
+        rows = fres.data or []
+        if not rows:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Funil atribuído inválido ou inexistente.",
+            )
+        data_tenant = str(rows[0]["tenant_id"])
+        resolved = str(rows[0]["id"])
+        if eff.org_member_organization_id:
+            allowed = funnel_ids_for_organization(supabase, eff.org_member_organization_id)
+            if resolved not in allowed:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Funil não autorizado para a organização deste usuário.",
+                )
+        return data_tenant, resolved
+
+    tenant_id = uid
+    q = (funnel_id_query or "").strip()
+    if q:
+        fres = (
+            supabase.table("funnels")
+            .select("id, tenant_id")
+            .eq("id", q)
+            .limit(1)
+            .execute()
+        )
+        rows = fres.data or []
+        if not rows:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Funil não encontrado.")
+        if str(rows[0]["tenant_id"]) != tenant_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Funil não pertence a este tenant.",
+            )
+        return tenant_id, str(rows[0]["id"])
+
+    return tenant_id, _default_funnel_id_for_tenant(supabase, tenant_id)
+
+
+def _fetch_pipeline_stages_for_funnel(
+    supabase: SupabaseClient,
+    *,
+    data_tenant_id: str,
+    funnel_id: str,
+) -> list[dict]:
+    try:
+        stages_response = (
+            supabase.table("pipeline_stages")
+            .select("*")
+            .eq("tenant_id", data_tenant_id)
+            .eq("funnel_id", funnel_id)
+            .order("order_position")
+            .execute()
+        )
+        return stages_response.data or []
+    except Exception as exc:
+        detail = _db_error_detail(exc)
+        if _is_missing_column_error(detail, "funnel_id"):
+            stages_response = (
+                supabase.table("pipeline_stages")
+                .select("*")
+                .eq("tenant_id", data_tenant_id)
+                .order("order_position")
+                .execute()
+            )
+            return stages_response.data or []
+        raise
+
+
+def _fetch_leads_for_funnel(
+    supabase: SupabaseClient,
+    *,
+    data_tenant_id: str,
+    funnel_id: str,
+) -> list[dict]:
+    try:
+        response = (
+            supabase.table("leads")
+            .select("*")
+            .eq("tenant_id", data_tenant_id)
+            .eq("archived", False)
+            .eq("deleted", False)
+            .eq("funnel_id", funnel_id)
+            .order("created_at", desc=False)
+            .execute()
+        )
+        return response.data or []
+    except Exception as exc:
+        detail = _db_error_detail(exc)
+        if _is_missing_column_error(detail, "funnel_id"):
+            response = (
+                supabase.table("leads")
+                .select("*")
+                .eq("tenant_id", data_tenant_id)
+                .eq("archived", False)
+                .eq("deleted", False)
+                .order("created_at", desc=False)
+                .execute()
+            )
+            return response.data or []
+        raise
+
+
 @router.get("/kanban", response_model=KanbanBoard)
 async def get_kanban_board(
+    funnel_id: Optional[str] = Query(
+        None,
+        description="Funil do board; default = funil Default do tenant. Ignorado para read_only (usa assigned_funnel_id).",
+    ),
     user=Depends(get_current_user),
     supabase: SupabaseClient = Depends(get_supabase),
+    eff: EffectiveRole = Depends(get_effective_role),
 ):
-    """Get all leads organized as a Kanban board with columns."""
+    """Kanban por funil: colunas = estágios daquele funil; leads filtrados por funnel_id."""
     started = perf_counter()
-    # 1. Fetch Stages
-    stages_response = supabase.table("pipeline_stages") \
-        .select("*") \
-        .eq("tenant_id", user.id) \
-        .order("order_position") \
-        .execute()
-    
-    stages_data = stages_response.data
-    
-    # Default stages if none exist
+    data_tenant_id, resolved_funnel_id = _resolve_kanban_scope(supabase, user.id, eff, funnel_id)
+
+    stages_data = _fetch_pipeline_stages_for_funnel(
+        supabase, data_tenant_id=data_tenant_id, funnel_id=resolved_funnel_id
+    )
+
     if not stages_data:
         stages_data = [
             {"id": "default-contato", "name": "Contato Inicial", "order_position": 0, "version": 1, "is_conversion": False},
@@ -359,52 +509,42 @@ async def get_kanban_board(
             {"id": "default-enviado", "name": "Enviado", "order_position": 3, "version": 1, "is_conversion": False},
         ]
 
-    # 2. Fetch Leads
-    response = supabase.table("leads") \
-        .select("*") \
-        .eq("tenant_id", user.id) \
-        .eq("archived", False) \
-        .eq("deleted", False) \
-        .order("created_at", desc=False) \
-        .execute()
+    lead_rows = _fetch_leads_for_funnel(supabase, data_tenant_id=data_tenant_id, funnel_id=resolved_funnel_id)
 
-    # 3. Group Leads by Stage Name (or slug)
     leads_by_stage: dict[str, list] = {s["name"]: [] for s in stages_data}
-    # Also support mapping by ID if needed, but leads table uses string names
-    
-    for row in response.data:
+
+    for row in lead_rows:
         stage_val = row.get("stage", "Contato Inicial")
-        # Direct match or case-insensitive match
         matched = False
         for s_name in leads_by_stage.keys():
-            if stage_val.lower() == s_name.lower():
+            if str(stage_val).lower() == s_name.lower():
                 leads_by_stage[s_name].append(LeadResponse(**row))
                 matched = True
                 break
-        
+
         if not matched and stages_data:
-            # Fallback to first stage if no match found
             leads_by_stage[stages_data[0]["name"]].append(LeadResponse(**row))
 
-    # 4. Build Columns
     columns = []
     for stage_info in stages_data:
         name = stage_info["name"]
         stage_leads = leads_by_stage[name]
-        columns.append(KanbanColumn(
-            stage=name,
-            stage_id=stage_info.get("id"),
-            stage_version=int(stage_info.get("version") or 1),
-            stage_is_conversion=bool(stage_info.get("is_conversion", False)),
-            label=name,
-            count=len(stage_leads),
-            total_value=sum(l.value for l in stage_leads),
-            leads=stage_leads,
-        ))
+        columns.append(
+            KanbanColumn(
+                stage=name,
+                stage_id=stage_info.get("id"),
+                stage_version=int(stage_info.get("version") or 1),
+                stage_is_conversion=bool(stage_info.get("is_conversion", False)),
+                label=name,
+                count=len(stage_leads),
+                total_value=sum(l.value for l in stage_leads),
+                leads=stage_leads,
+            )
+        )
 
     elapsed_ms = (perf_counter() - started) * 1000.0
     metrics.observe("kanban_board", elapsed_ms, ok=True)
-    return KanbanBoard(columns=columns)
+    return KanbanBoard(columns=columns, funnel_id=resolved_funnel_id)
 
 
 @router.post("/stages/reorder", status_code=status.HTTP_200_OK)

@@ -88,6 +88,176 @@ export const apiPut = <T = unknown>(endpoint: string, body: unknown, token?: str
 export const apiDelete = <T = unknown>(endpoint: string, token?: string) =>
     api<T>(endpoint, { method: "DELETE", token });
 
+export const apiPatch = <T = unknown>(endpoint: string, body: unknown, token?: string) =>
+    api<T>(endpoint, { method: "PATCH", body: JSON.stringify(body), token });
+
+// ── Auth / RBAC (Sprint 5 — Console Admin) ──
+
+export type AuthMe = {
+    id: string;
+    email: string;
+    full_name?: string | null;
+    role?: string | null;
+    avatar_url?: string | null;
+    is_superadmin: boolean;
+    organization_id?: string | null;
+};
+
+export const getAuthMe = (token?: string) => apiGet<AuthMe>("/api/auth/me", token);
+
+// ── Organizações ──
+
+export type OrganizationDTO = {
+    id: string;
+    name: string;
+    created_at: string;
+    updated_at: string;
+};
+
+export type OrganizationMemberDTO = {
+    id: string;
+    organization_id: string;
+    user_id: string;
+    role: "admin" | "read_only";
+    assigned_funnel_id?: string | null;
+    created_at: string;
+};
+
+export const getOrganizations = (token?: string) =>
+    apiGet<OrganizationDTO[]>("/api/organizations/", token);
+
+export const createOrganization = (body: { name: string }, token?: string) =>
+    apiPost<OrganizationDTO>("/api/organizations/", body, token);
+
+export const updateOrganization = (orgId: string, body: { name: string }, token?: string) =>
+    apiPatch<OrganizationDTO>(`/api/organizations/${orgId}`, body, token);
+
+export const deleteOrganization = (orgId: string, token?: string) =>
+    apiDelete<void>(`/api/organizations/${orgId}`, token);
+
+export const getOrganization = (orgId: string, token?: string) =>
+    apiGet<OrganizationDTO>(`/api/organizations/${orgId}`, token);
+
+export const listOrgMembers = (orgId: string, token?: string) =>
+    apiGet<OrganizationMemberDTO[]>(`/api/organizations/${orgId}/members`, token);
+
+export type AddOrgMemberBody = {
+    user_id: string;
+    role: "admin" | "read_only";
+    assigned_funnel_id?: string | null;
+};
+
+export const addOrgMember = (orgId: string, body: AddOrgMemberBody, token?: string) =>
+    apiPost<OrganizationMemberDTO>(`/api/organizations/${orgId}/members`, body, token);
+
+export type PatchOrgMemberBody = {
+    role?: "admin" | "read_only";
+    assigned_funnel_id?: string | null;
+};
+
+export const updateOrgMember = (
+    orgId: string,
+    memberUserId: string,
+    body: PatchOrgMemberBody,
+    token?: string
+) =>
+    apiPatch<OrganizationMemberDTO>(
+        `/api/organizations/${orgId}/members/${memberUserId}`,
+        body,
+        token
+    );
+
+export const removeOrgMember = (orgId: string, memberUserId: string, token?: string) =>
+    apiDelete<void>(`/api/organizations/${orgId}/members/${memberUserId}`, token);
+
+/** Funis atribuíveis na org (admins da org) — Sprint 6 */
+export type OrganizationFunnelItem = {
+    id: string;
+    tenant_id: string;
+    name: string;
+    created_at: string;
+    updated_at: string;
+};
+
+export const listOrganizationFunnels = (orgId: string, token?: string) =>
+    apiGet<OrganizationFunnelItem[]>(`/api/organizations/${orgId}/funnels`, token);
+
+/** Console Admin — superadmin apenas */
+export const getAdminProducts = (tenantId: string, token?: string) =>
+    apiGet<
+        Array<{
+            id: string;
+            name: string;
+            price: number;
+            stock_quantity?: number;
+            is_active?: boolean;
+            category?: string | null;
+        }>
+    >(`/api/admin/products?${new URLSearchParams({ tenant_id: tenantId }).toString()}`, token);
+
+export const getAdminFunnels = (tenantId: string, token?: string) =>
+    apiGet<OrganizationFunnelItem[]>(
+        `/api/admin/funnels?${new URLSearchParams({ tenant_id: tenantId }).toString()}`,
+        token
+    );
+
+// ── Usuários (Auth Admin API via backend) ──
+
+export type CreateUserBody = {
+    organization_id: string;
+    email: string;
+    password: string;
+    full_name: string;
+    company_name?: string | null;
+    phones: string[];
+    role: "admin" | "read_only";
+    assigned_funnel_id?: string | null;
+};
+
+export type OrganizationUserResponse = {
+    id: string;
+    email?: string | null;
+    full_name?: string | null;
+    company_name?: string | null;
+    phones: string[];
+    organization_id: string;
+    role: string;
+    assigned_funnel_id?: string | null;
+    created_at: string;
+};
+
+export const createUser = (body: CreateUserBody, token?: string) =>
+    apiPost<OrganizationUserResponse>("/api/users/", body, token);
+
+export type UserDetailResponse = {
+    id: string;
+    email?: string | null;
+    full_name?: string | null;
+    company_name?: string | null;
+    phones: string[];
+    memberships: { organization_id: string; role: string; assigned_funnel_id?: string | null }[];
+};
+
+export const getUser = (userId: string, token?: string) =>
+    apiGet<UserDetailResponse>(`/api/users/${userId}`, token);
+
+export type PatchUserBody = {
+    full_name?: string;
+    company_name?: string | null;
+    phones?: string[];
+    role?: "admin" | "read_only";
+    assigned_funnel_id?: string | null;
+};
+
+export const patchUser = (userId: string, organizationId: string, body: PatchUserBody, token?: string) => {
+    const q = new URLSearchParams({ organization_id: organizationId });
+    return apiPatch<{ organization_id: string; role: string; assigned_funnel_id?: string | null }>(
+        `/api/users/${userId}?${q.toString()}`,
+        body,
+        token
+    );
+};
+
 // ── WhatsApp Instance Management ──
 export const getWhatsappStatus = (token?: string) =>
     apiGet<{ status: string; data?: any }>("/api/whatsapp/status", token);

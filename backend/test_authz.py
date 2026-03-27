@@ -35,6 +35,16 @@ class TestComputeEffectiveRole(unittest.TestCase):
             [{"organization_id": "org-a", "role": "read_only"}],
         )
         self.assertFalse(eff.is_org_admin)
+        self.assertTrue(eff.is_read_only)
+
+    def test_read_only_assigned_funnel_id(self):
+        eff = compute_effective_role(
+            "u1",
+            {"is_superadmin": False, "role": "admin", "organization_id": "org-a"},
+            [{"organization_id": "org-a", "role": "read_only", "assigned_funnel_id": "funnel-uuid-1"}],
+        )
+        self.assertEqual(eff.assigned_funnel_id, "funnel-uuid-1")
+        self.assertTrue(eff.is_read_only)
 
     def test_legacy_tenant_admin_without_membership(self):
         eff = compute_effective_role(

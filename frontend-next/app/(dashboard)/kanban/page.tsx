@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useId, useCallback } from "react";
+import { useSearchParams } from "next/navigation";
 import { createPortal } from "react-dom";
 import {
     DndContext,
@@ -155,6 +156,8 @@ const PRIORITY_MAP: Record<string, { label: string; color: string }> = {
 };
 
 export default function KanbanPage() {
+    const searchParams = useSearchParams();
+    const funnelIdFromUrl = searchParams.get("funnel_id");
     const dndId = useId();
     const isFetchingKanbanRef = useRef(false);
 
@@ -170,7 +173,12 @@ export default function KanbanPage() {
         if (!silent) setIsLoading(true);
         try {
             const token = localStorage.getItem("access_token") || undefined;
+            const kanbanPath =
+                funnelIdFromUrl && funnelIdFromUrl.trim()
+                    ? `/api/leads/kanban?funnel_id=${encodeURIComponent(funnelIdFromUrl.trim())}`
+                    : "/api/leads/kanban";
             const data = await api<{
+                funnel_id?: string | null;
                 columns: Array<{
                     stage: string;
                     stage_id?: string;
@@ -189,8 +197,8 @@ export default function KanbanPage() {
                         whatsapp_chat_id: string | null;
                         products_json?: any[];
                     }>;
-                }>
-            }>("/api/leads/kanban", { method: "GET", token });
+                }>;
+            }>(kanbanPath, { method: "GET", token });
 
             // Update stages state from columns
             const fetchedStages: KanbanStage[] = data.columns.map((col) => ({
@@ -227,7 +235,7 @@ export default function KanbanPage() {
             isFetchingKanbanRef.current = false;
             if (!silent) setIsLoading(false);
         }
-    }, []);
+    }, [funnelIdFromUrl]);
 
     // Initial fetch + automatic refresh to keep new conversations updated
     useEffect(() => {

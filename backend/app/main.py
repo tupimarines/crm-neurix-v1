@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import get_settings
 from app.observability import metrics
 from app.routers import (
+    admin_api,
     auth,
     catalog_search,
     dashboard,
@@ -21,6 +22,7 @@ from app.routers import (
     promotions,
     settings as settings_router,
     upload,
+    users,
     webhooks,
     whatsapp,
 )
@@ -59,7 +61,9 @@ def create_app() -> FastAPI:
 
     # ── Routers ──
     app.include_router(auth.router, prefix="/api/auth", tags=["Autenticação"])
+    app.include_router(admin_api.router, prefix="/api/admin", tags=["Console Admin"])
     app.include_router(organizations.router, prefix="/api/organizations", tags=["Organizações"])
+    app.include_router(users.router, prefix="/api/users", tags=["Usuários (Admin)"])
     app.include_router(leads.router, prefix="/api/leads", tags=["Leads / Kanban"])
     app.include_router(products.router, prefix="/api/products", tags=["Produtos"])
     app.include_router(product_categories.router, prefix="/api/product-categories", tags=["Categorias de Produto"])
