@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Any, Optional
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
@@ -19,6 +20,7 @@ from supabase import Client as SupabaseClient
 
 from app.authz import EffectiveRole, get_effective_role
 from app.dependencies import get_current_user, get_supabase, require_superadmin
+from app.observability import get_logger
 from app.org_scope import assert_funnel_assignable_to_org, funnel_ids_for_organization, list_funnels_for_organization
 from app.models.organization import (
     OrganizationCreate,
@@ -31,6 +33,7 @@ from app.models.organization import (
 )
 
 router = APIRouter()
+logger = get_logger("organizations")
 
 
 class PipelineStageBrief(BaseModel):
@@ -113,14 +116,59 @@ async def create_organization(
 ):
     """Cria organização (somente superadmin)."""
     now = datetime.now(timezone.utc).isoformat()
-    ins = (
-        supabase.table("organizations")
-        .insert({"name": payload.name.strip(), "updated_at": now})
-        .execute()
-    )
+    org_id = str(uuid4())
+    insert_payload = {
+        "id": org_id,
+        "name": payload.name.strip(),
+        "created_at": now,
+        "updated_at": now,
+    }
+    try:
+        ins = supabase.table("organizations").insert(insert_payload).execute()
+    except Exception as exc:
+        detail = str(exc)
+        logger.exception(
+            "organizations.create_failed",
+            extra={"request_id": org_id},
+        )
+        if "permission denied" in detail.lower() or "row-level security" in detail.lower():
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Falha ao criar organização por indisponibilidade de permissão no backend.",
+            ) from exc
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Falha interna ao criar organização.",
+        ) from exc
     rows = ins.data or []
     if not rows:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Falha ao criar organização.")
+        try:
+            refetch = (
+                supabase.table("organizations")
+                .select("id, name, created_at, updated_at")
+                .eq("id", org_id)
+                .limit(1)
+                .execute()
+            )
+        except Exception:
+            logger.exception(
+                "organizations.create_refetch_failed",
+                extra={"request_id": org_id},
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Organização criada, mas a API não conseguiu confirmar o registro.",
+            )
+        rows = refetch.data or []
+    if not rows:
+        logger.warning(
+            "organizations.create_missing_after_insert",
+            extra={"request_id": org_id},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Organização criada, mas a API não conseguiu confirmar o registro.",
+        )
     return _org_row_to_response(rows[0])
 
 
