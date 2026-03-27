@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useId, useCallback } from "react";
+import { Suspense, useState, useRef, useEffect, useId, useCallback } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { createPortal } from "react-dom";
 import {
@@ -199,7 +199,7 @@ const PRIORITY_MAP: Record<string, { label: string; color: string }> = {
     baixa: { label: "Baixa", color: "yellow" },
 };
 
-export default function KanbanPage() {
+function KanbanContent() {
     const searchParams = useSearchParams();
     const router = useRouter();
     const funnelIdFromUrl = searchParams.get("funnel_id");
@@ -2020,5 +2020,13 @@ export default function KanbanPage() {
                 )
             }
         </div >
+    );
+}
+
+export default function KanbanPage() {
+    return (
+        <Suspense fallback={<div className="p-8 text-text-secondary-light text-sm">Carregando kanban...</div>}>
+            <KanbanContent />
+        </Suspense>
     );
 }
