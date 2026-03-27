@@ -14,6 +14,7 @@ from supabase import Client as SupabaseClient
 
 from app.authz import EffectiveRole, require_superadmin
 from app.dependencies import get_supabase
+from app.models.inbox import InboxResponse, inbox_response_from_row
 from app.models.organization import OrganizationFunnelItem
 from app.models.product import ProductResponse
 from app.routers.products import _hydrate_legacy_category_from_category_id
@@ -82,3 +83,24 @@ async def admin_list_funnels_by_tenant(
             )
         )
     return out
+
+
+@router.get(
+    "/inboxes",
+    response_model=list[InboxResponse],
+    summary="Lista caixas de entrada de um tenant (superadmin)",
+)
+async def admin_list_inboxes_by_tenant(
+    tenant_id: str = Query(..., description="UUID do tenant (auth.users.id dono das caixas)"),
+    _sa: EffectiveRole = Depends(require_superadmin),
+    supabase: SupabaseClient = Depends(get_supabase),
+):
+    """Somente leitura — mesmo conjunto que GET /api/inboxes?tenant_id= para superadmin."""
+    res = (
+        supabase.table("inboxes")
+        .select("*")
+        .eq("tenant_id", tenant_id)
+        .order("created_at", desc=False)
+        .execute()
+    )
+    return [inbox_response_from_row(r) for r in (res.data or [])]

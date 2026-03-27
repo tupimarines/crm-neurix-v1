@@ -258,18 +258,87 @@ export const patchUser = (userId: string, organizationId: string, body: PatchUse
     );
 };
 
-// ── WhatsApp Instance Management ──
-export const getWhatsappStatus = (token?: string) =>
-    apiGet<{ status: string; data?: any }>("/api/whatsapp/status", token);
+// ── Caixas de entrada (inboxes) — Sprint 7 ──
 
-export const initWhatsappInstance = (instanceName: string, token?: string) =>
-    apiPost<{ message: string; token: string }>("/api/whatsapp/init", { instance_name: instanceName }, token);
+export type InboxDTO = {
+    id: string;
+    tenant_id: string;
+    funnel_id: string;
+    name: string;
+    uazapi_settings: Record<string, unknown>;
+    created_at: string;
+    updated_at: string;
+};
 
-export const connectWhatsappInstance = (token?: string) =>
-    apiPost<{ message: string; data: any }>("/api/whatsapp/connect", {}, token);
+export type CreateInboxBody = {
+    name: string;
+    funnel_id: string;
+    uazapi_settings?: Record<string, unknown>;
+};
 
-export const saveWhatsappToken = (instanceToken: string, token?: string) =>
-    apiPost<{ message: string; status: string }>("/api/whatsapp/token", { instance_token: instanceToken }, token);
+export type UpdateInboxBody = {
+    name?: string;
+    funnel_id?: string;
+    uazapi_settings?: Record<string, unknown>;
+};
 
-export const disconnectWhatsappInstance = (token?: string) =>
-    apiDelete<{ message: string }>("/api/whatsapp/disconnect", token);
+/** Lista inboxes do tenant; superadmin pode passar tenantId (query tenant_id). */
+export const listInboxes = (token?: string, tenantId?: string) => {
+    const q = tenantId ? `?${new URLSearchParams({ tenant_id: tenantId }).toString()}` : "";
+    return apiGet<InboxDTO[]>(`/api/inboxes/${q}`, token);
+};
+
+export const getInbox = (inboxId: string, token?: string) =>
+    apiGet<InboxDTO>(`/api/inboxes/${inboxId}`, token);
+
+export const createInbox = (body: CreateInboxBody, token?: string) =>
+    apiPost<InboxDTO>("/api/inboxes/", body, token);
+
+export const updateInbox = (inboxId: string, body: UpdateInboxBody, token?: string) =>
+    apiPatch<InboxDTO>(`/api/inboxes/${inboxId}`, body, token);
+
+export const deleteInbox = (inboxId: string, token?: string) =>
+    apiDelete<void>(`/api/inboxes/${inboxId}`, token);
+
+/** Console Admin — somente superadmin */
+export const listAdminInboxes = (tenantId: string, token?: string) =>
+    apiGet<InboxDTO[]>(
+        `/api/admin/inboxes?${new URLSearchParams({ tenant_id: tenantId }).toString()}`,
+        token
+    );
+
+// ── WhatsApp Instance Management (escopo opcional por inbox) ──
+
+function whatsappInboxQuery(inboxId?: string) {
+    return inboxId ? `?${new URLSearchParams({ inbox_id: inboxId }).toString()}` : "";
+}
+
+export const getWhatsappStatus = (token?: string, inboxId?: string) =>
+    apiGet<{ status: string; data?: unknown; message?: string; scope?: string }>(
+        `/api/whatsapp/status${whatsappInboxQuery(inboxId)}`,
+        token
+    );
+
+export const initWhatsappInstance = (instanceName: string, token?: string, inboxId?: string) =>
+    apiPost<{ message: string; token: string }>(
+        "/api/whatsapp/init",
+        { instance_name: instanceName, ...(inboxId ? { inbox_id: inboxId } : {}) },
+        token
+    );
+
+export const connectWhatsappInstance = (token?: string, inboxId?: string) =>
+    apiPost<{ message: string; data: unknown; scope?: string }>(
+        `/api/whatsapp/connect${whatsappInboxQuery(inboxId)}`,
+        {},
+        token
+    );
+
+export const saveWhatsappToken = (instanceToken: string, token?: string, inboxId?: string) =>
+    apiPost<{ message: string; status: string }>(
+        "/api/whatsapp/token",
+        { instance_token: instanceToken, ...(inboxId ? { inbox_id: inboxId } : {}) },
+        token
+    );
+
+export const disconnectWhatsappInstance = (token?: string, inboxId?: string) =>
+    apiDelete<{ message: string }>(`/api/whatsapp/disconnect${whatsappInboxQuery(inboxId)}`, token);

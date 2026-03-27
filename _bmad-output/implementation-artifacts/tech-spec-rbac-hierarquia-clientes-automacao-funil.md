@@ -295,15 +295,15 @@ Este plano incorpora o documento complementar **`tech-spec-admin-console-ui-rbac
 
 #### Sprint 7 — Inboxes API + WhatsApp por caixa (3 tasks) + Console Admin — inboxes na API client
 
-- [ ] **S7-T1:** CRUD `inboxes`; validar 1 funil/caixa.
-- [ ] **S7-T2:** `whatsapp.py` escopado por `inbox_id`.
-- [ ] **S7-T3:** `lib/api.ts` endpoints inbox.
+- [x] **S7-T1:** CRUD `inboxes`; validar 1 funil/caixa.
+- [x] **S7-T2:** `whatsapp.py` escopado por `inbox_id`.
+- [x] **S7-T3:** `lib/api.ts` endpoints inbox.
 
 **Console Admin:**
 
-- [ ] **S7-UI-1:** Em **`lib/api.ts`**, expor **`listInboxes`**, **`createInbox`**, **`updateInbox`**, **`deleteInbox`** (nomes alinhados ao router real) para uso tanto de **S8** quanto do console.
-- [ ] **S7-UI-2:** No **`layout`** ou página **“Links”** do admin, card **“Caixas de entrada (Uazapi)”**: texto explicando que o fluxo completo (QR, instância, Leads Infinitos) fica em **Configurações**; botão **“Ir para Configurações”** → `/configuracoes` (opcional `?from=admin`). Opcionalmente, **tabela somente leitura** de inboxes via API nova se superadmin tiver permissão nas rotas (confirmar backend); se não, apenas link.
-- [ ] **S7-UI-3:** Garantir que nenhuma chamada do console use **service role** no browser — apenas JWT do usuário superadmin.
+- [x] **S7-UI-1:** Em **`lib/api.ts`**, expor **`listInboxes`**, **`createInbox`**, **`updateInbox`**, **`deleteInbox`** (nomes alinhados ao router real) para uso tanto de **S8** quanto do console.
+- [x] **S7-UI-2:** No **`layout`** ou página **“Links”** do admin, card **“Caixas de entrada (Uazapi)”**: texto explicando que o fluxo completo (QR, instância, Leads Infinitos) fica em **Configurações**; botão **“Ir para Configurações”** → `/configuracoes` (opcional `?from=admin`). Opcionalmente, **tabela somente leitura** de inboxes via API nova se superadmin tiver permissão nas rotas (confirmar backend); se não, apenas link.
+- [x] **S7-UI-3:** Garantir que nenhuma chamada do console use **service role** no browser — apenas JWT do usuário superadmin.
 
 #### Sprint 8 — UI Configurações caixas (3 tasks) + Console Admin — deep link e paridade
 
