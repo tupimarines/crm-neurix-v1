@@ -58,6 +58,17 @@ export default function AdminHomePage() {
                     <li>Sprint 7–8: Inboxes Uazapi e Configurações — link na seção Configurações / Inboxes.</li>
                 </ul>
             </div>
+
+            <div className="glass-effect rounded-2xl border border-border-light dark:border-border-dark p-6 shadow-lg shadow-primary/5">
+                <h2 className="text-sm font-semibold text-text-secondary-light uppercase tracking-wide mb-2">
+                    Worker / webhooks (Sprint 9)
+                </h2>
+                <p className="text-sm text-text-secondary-light leading-relaxed">
+                    Não há API de health do processador na aplicação. Para diagnosticar filas Uazapi, erros estruturados
+                    (AC12) e o worker, use os logs do container do worker e da API na infraestrutura (ex.:{" "}
+                    <strong>Dokploy</strong> / VPS) ou a lista Redis <code className="text-xs bg-black/5 dark:bg-white/10 px-1 rounded">neurix:webhook_errors</code>.
+                </p>
+            </div>
         </div>
     );
 }

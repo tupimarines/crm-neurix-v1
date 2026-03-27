@@ -319,14 +319,14 @@ Este plano incorpora o documento complementar **`tech-spec-admin-console-ui-rbac
 
 #### Sprint 9 — Webhook + UNIQUE + cliente (3 tasks) + Console Admin — observabilidade leve
 
-- [ ] **S9-T1:** `webhook_processor.py`: instância → inbox; se não resolver, **log + saída sem lead órfão** (**AC12**).
-- [ ] **S9-T2:** Migração UNIQUE `(inbox_id, whatsapp_chat_id)` + estratégia legado `inbox_id` null.
-- [ ] **S9-T3:** Resolver/criar `crm_client` por telefone ao criar lead.
+- [x] **S9-T1:** `webhook_processor.py`: instância → inbox; se não resolver, **log + saída sem lead órfão** (**AC12**).
+- [x] **S9-T2:** Migração UNIQUE `(inbox_id, whatsapp_chat_id)` + estratégia legado `inbox_id` null.
+- [x] **S9-T3:** Resolver/criar `crm_client` por telefone ao criar lead.
 
 **Console Admin:**
 
-- [ ] **S9-UI-1 (opcional):** Se existir endpoint de **logs** ou **health** do worker, card no dashboard `/admin` com link externo ou texto “ver logs no Dokploy/VPS” (**S14**). Se não existir API, **placeholder** “Diagnóstico via infra” — sem bloquear release.
-- [ ] **S9-UI-2:** Texto de ajuda no console explicando que **leads sem inbox resolvido** não devem ser criados (**AC12**) e onde verificar logs.
+- [x] **S9-UI-1 (opcional):** Se existir endpoint de **logs** ou **health** do worker, card no dashboard `/admin` com link externo ou texto “ver logs no Dokploy/VPS” (**S14**). Se não existir API, **placeholder** “Diagnóstico via infra” — sem bloquear release.
+- [x] **S9-UI-2:** Texto de ajuda no console explicando que **leads sem inbox resolvido** não devem ser criados (**AC12**) e onde verificar logs.
 
 #### Sprint 10 — CRM clients CRUD + máscaras (3 tasks) + Console Admin — CRM completo
 

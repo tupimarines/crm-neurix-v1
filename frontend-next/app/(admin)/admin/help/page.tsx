@@ -43,6 +43,26 @@ export default function AdminHelpPage() {
                 </p>
             </section>
 
+            <section className="space-y-2 rounded-xl border border-border-light dark:border-border-dark bg-black/[0.02] dark:bg-white/[0.03] p-4">
+                <h2 className="text-base font-semibold text-text-main-light dark:text-text-main-dark">
+                    Webhooks sem inbox e logs (AC12 — Sprint 9)
+                </h2>
+                <p>
+                    O worker de WhatsApp <strong>só cria lead novo</strong> quando consegue resolver a{" "}
+                    <strong>caixa de entrada (inbox)</strong> pelo token da instância Uazapi em{" "}
+                    <code className="text-xs bg-black/5 dark:bg-white/10 px-1 rounded">inboxes.uazapi_settings</code>.
+                    Se o evento não tiver token ou não corresponder a nenhuma caixa, <strong>nenhum lead é criado</strong>{" "}
+                    sem <code className="text-xs bg-black/5 px-1 rounded">inbox_id</code> e{" "}
+                    <code className="text-xs bg-black/5 px-1 rounded">funnel_id</code> — é registrado um{" "}
+                    <strong>erro JSON estruturado</strong> na fila Redis{" "}
+                    <code className="text-xs bg-black/5 px-1 rounded">neurix:webhook_errors</code> e no stdout do worker.
+                </p>
+                <p>
+                    Operadores: configure sempre uma caixa em <strong>Configurações</strong> e associe o token da
+                    instância; em caso de falha, verifique logs no Dokploy/VPS ou no Redis acima.
+                </p>
+            </section>
+
             <section className="space-y-2">
                 <h2 className="text-base font-semibold text-text-main-light dark:text-text-main-dark">
                     Smoke: duas caixas no mesmo funil (AC6)
