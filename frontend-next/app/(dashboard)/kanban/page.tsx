@@ -44,6 +44,7 @@ import {
 } from "@/lib/api";
 import { supabase } from "@/lib/supabase";
 import WhatsAppChat from "@/components/WhatsAppChat";
+import { TenantOrgRequired } from "@/components/TenantOrgRequired";
 
 // Types
 interface KanbanCard {
@@ -2147,7 +2148,9 @@ function KanbanContent() {
 export default function KanbanPage() {
     return (
         <Suspense fallback={<div className="p-8 text-text-secondary-light text-sm">Carregando kanban...</div>}>
-            <KanbanContent />
+            <TenantOrgRequired>
+                <KanbanContent />
+            </TenantOrgRequired>
         </Suspense>
     );
 }

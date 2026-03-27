@@ -11,7 +11,9 @@ import {
     getLeadById,
     getOrder,
     getProduct,
+    getAuthMe,
 } from "@/lib/api";
+import { tenantNeedsOrganization } from "@/lib/org-context";
 import NewOrderModal from "@/components/NewOrderModal";
 import WhatsAppChat from "@/components/WhatsAppChat";
 
@@ -297,10 +299,19 @@ export default function DashboardPage() {
     // Set Supabase auth session on mount
     const [recentOrders, setRecentOrders] = useState<OrderDetail[]>([]);
     const [ordersLoading, setOrdersLoading] = useState(true);
+    const [showOrgHint, setShowOrgHint] = useState(false);
 
     useEffect(() => {
         setSupabaseSession();
         loadRecentOrders();
+    }, []);
+
+    useEffect(() => {
+        const token = localStorage.getItem("access_token");
+        if (!token) return;
+        getAuthMe(token)
+            .then((me) => setShowOrgHint(tenantNeedsOrganization(me)))
+            .catch(() => setShowOrgHint(false));
     }, []);
 
     async function loadRecentOrders() {
@@ -489,6 +500,27 @@ export default function DashboardPage() {
 
     return (
         <div className="p-6 lg:p-10 max-w-7xl mx-auto space-y-8">
+            {showOrgHint && (
+                <div
+                    role="status"
+                    className="rounded-xl border border-amber-200 dark:border-amber-800/60 bg-amber-50 dark:bg-amber-950/40 px-4 py-3 text-sm text-amber-900 dark:text-amber-100 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2"
+                >
+                    <span className="flex items-start gap-2">
+                        <span className="material-symbols-outlined text-amber-600 dark:text-amber-400 text-xl shrink-0">info</span>
+                        <span>
+                            Sua conta ainda não está vinculada a uma organização. Recursos como funil, produtos e
+                            configurações podem ficar indisponíveis até um administrador adicioná-lo à equipe.
+                        </span>
+                    </span>
+                    <button
+                        type="button"
+                        onClick={() => setShowOrgHint(false)}
+                        className="shrink-0 text-amber-800 dark:text-amber-200 underline text-xs font-medium"
+                    >
+                        Dispensar
+                    </button>
+                </div>
+            )}
             {/* Detail Card Modals */}
             {selectedLead && <LeadCard lead={selectedLead} onClose={() => setSelectedLead(null)} />}
             {selectedOrder && <OrderCard order={selectedOrder} onClose={() => setSelectedOrder(null)} />}

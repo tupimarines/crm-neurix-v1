@@ -4,15 +4,19 @@ import Link from "next/link";
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 
+import { TenantOrgRequired } from "@/components/TenantOrgRequired";
 import {
     connectWhatsappInstance,
     createInbox,
+    createMyFunnel,
     deleteInbox,
     disconnectWhatsappInstance,
+    getAuthMe,
     getWhatsappStatus,
     initWhatsappInstance,
     listInboxes,
     listMyFunnels,
+    listOrganizationFunnels,
     probeOrgAdmin,
     saveWhatsappToken,
     updateInbox,
@@ -365,6 +369,10 @@ function ConfiguracoesContent() {
     const [createName, setCreateName] = useState("");
     const [createFunnelId, setCreateFunnelId] = useState("");
     const [createBusy, setCreateBusy] = useState(false);
+    const [funnelModalOpen, setFunnelModalOpen] = useState(false);
+    const [newFunnelName, setNewFunnelName] = useState("");
+    const [funnelCreateBusy, setFunnelCreateBusy] = useState(false);
+    const [currentUserId, setCurrentUserId] = useState<string | null>(null);
 
     const [editOpen, setEditOpen] = useState(false);
     const [editRow, setEditRow] = useState<InboxDTO | null>(null);
@@ -395,8 +403,31 @@ function ConfiguracoesContent() {
                 setCanManage(false);
             }
 
-            const [fl, ib] = await Promise.all([listMyFunnels(token), listInboxes(token)]);
-            setFunnels(fl);
+            const me = await getAuthMe(token);
+            setCurrentUserId(me.id);
+            const orgId = me.organization_id?.trim() || null;
+
+            const [myFl, orgFl, ib] = await Promise.all([
+                listMyFunnels(token),
+                orgId ? listOrganizationFunnels(orgId, token) : Promise.resolve([]),
+                listInboxes(token),
+            ]);
+
+            const merged: FunnelListItem[] = [];
+            const seen = new Set<string>();
+            for (const f of orgFl.length > 0 ? orgFl : myFl) {
+                if (!seen.has(f.id)) {
+                    seen.add(f.id);
+                    merged.push(f);
+                }
+            }
+            for (const f of myFl) {
+                if (!seen.has(f.id)) {
+                    seen.add(f.id);
+                    merged.push(f);
+                }
+            }
+            setFunnels(merged);
             setInboxes(ib);
 
             const statusEntries = await Promise.all(
@@ -422,6 +453,22 @@ function ConfiguracoesContent() {
     }, [refreshAll]);
 
     const onCreated = () => void refreshAll();
+
+    const handleCreateFunnel = async () => {
+        const name = newFunnelName.trim();
+        if (!name || !token) return;
+        setFunnelCreateBusy(true);
+        try {
+            await createMyFunnel({ name }, token);
+            setFunnelModalOpen(false);
+            setNewFunnelName("");
+            await refreshAll();
+        } catch (e) {
+            alert(e instanceof Error ? e.message : "Erro ao criar funil.");
+        } finally {
+            setFunnelCreateBusy(false);
+        }
+    };
 
     const handleCreate = async () => {
         const name = createName.trim();
@@ -625,17 +672,29 @@ function ConfiguracoesContent() {
                                     </div>
                                 </div>
                                 {canManage && (
-                                    <button
-                                        type="button"
-                                        onClick={() => {
-                                            setCreateName("");
-                                            setCreateFunnelId(funnels[0]?.id ?? "");
-                                            setCreateOpen(true);
-                                        }}
-                                        className="shrink-0 h-10 px-4 rounded-xl bg-primary text-white text-sm font-semibold hover:bg-primary-hover"
-                                    >
-                                        Nova caixa
-                                    </button>
+                                    <div className="flex flex-wrap gap-2 shrink-0">
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                setNewFunnelName("");
+                                                setFunnelModalOpen(true);
+                                            }}
+                                            className="h-10 px-4 rounded-xl border border-border-light dark:border-border-dark bg-surface-light dark:bg-surface-dark text-sm font-semibold hover:border-primary"
+                                        >
+                                            Novo funil
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                setCreateName("");
+                                                setCreateFunnelId(funnels[0]?.id ?? "");
+                                                setCreateOpen(true);
+                                            }}
+                                            className="h-10 px-4 rounded-xl bg-primary text-white text-sm font-semibold hover:bg-primary-hover"
+                                        >
+                                            Nova caixa
+                                        </button>
+                                    </div>
                                 )}
                             </div>
 
@@ -652,6 +711,12 @@ function ConfiguracoesContent() {
                             )}
 
                             {listLoading && <p className="text-sm text-text-secondary-light">Carregando caixas…</p>}
+
+                            {!listLoading && canManage !== false && funnels.length === 0 && (
+                                <p className="text-sm text-amber-800 dark:text-amber-200 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg px-3 py-2">
+                                    Nenhum funil disponível para esta conta ou organização. Crie um funil com <strong>Novo funil</strong> antes de abrir uma caixa.
+                                </p>
+                            )}
 
                             {!listLoading && canManage !== false && inboxes.length === 0 && (
                                 <p className="text-sm text-text-secondary-light">
@@ -1008,6 +1073,51 @@ function ConfiguracoesContent() {
                 </div>
             )}
 
+            {funnelModalOpen && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+                    <div
+                        className="absolute inset-0 bg-slate-900/30 backdrop-blur-sm"
+                        onClick={() => !funnelCreateBusy && setFunnelModalOpen(false)}
+                    />
+                    <div className="relative bg-surface-light dark:bg-surface-dark rounded-2xl shadow-2xl border border-border-light dark:border-border-dark w-full max-w-md p-6 space-y-4">
+                        <h3 className="text-lg font-bold font-display">Novo funil</h3>
+                        <p className="text-xs text-text-secondary-light">
+                            O funil é criado na sua conta e pode ser usado em caixas e no Kanban. Administradores da
+                            organização também enxergam funis de outros admins no seletor.
+                        </p>
+                        <div>
+                            <label className="text-xs font-semibold text-text-secondary-light uppercase mb-1 block">
+                                Nome
+                            </label>
+                            <input
+                                value={newFunnelName}
+                                onChange={(e) => setNewFunnelName(e.target.value)}
+                                className="w-full px-3 py-2 rounded-lg border border-border-light dark:border-border-dark bg-white dark:bg-slate-800 text-sm"
+                                placeholder="Ex.: Vendas B2B"
+                            />
+                        </div>
+                        <div className="flex gap-2 justify-end pt-2">
+                            <button
+                                type="button"
+                                onClick={() => setFunnelModalOpen(false)}
+                                className="h-10 px-4 rounded-lg border border-border-light dark:border-border-dark text-sm"
+                                disabled={funnelCreateBusy}
+                            >
+                                Cancelar
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => void handleCreateFunnel()}
+                                disabled={funnelCreateBusy || !newFunnelName.trim()}
+                                className="h-10 px-4 rounded-lg bg-primary text-white text-sm font-semibold disabled:opacity-50"
+                            >
+                                {funnelCreateBusy ? "Criando…" : "Criar funil"}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {createOpen && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
                     <div
@@ -1040,6 +1150,7 @@ function ConfiguracoesContent() {
                                 {funnels.map((f) => (
                                     <option key={f.id} value={f.id}>
                                         {f.name}
+                                        {currentUserId && f.tenant_id === currentUserId ? " (sua conta)" : ""}
                                     </option>
                                 ))}
                             </select>
@@ -1096,6 +1207,7 @@ function ConfiguracoesContent() {
                                 {funnels.map((f) => (
                                     <option key={f.id} value={f.id}>
                                         {f.name}
+                                        {currentUserId && f.tenant_id === currentUserId ? " (sua conta)" : ""}
                                     </option>
                                 ))}
                             </select>
@@ -1140,7 +1252,9 @@ export default function ConfiguracoesPage() {
                 <div className="p-8 text-text-secondary-light text-sm">Carregando configurações…</div>
             }
         >
-            <ConfiguracoesContent />
+            <TenantOrgRequired>
+                <ConfiguracoesContent />
+            </TenantOrgRequired>
         </Suspense>
     );
 }

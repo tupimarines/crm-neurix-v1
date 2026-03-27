@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import { apiFetch, getApiUrl } from "@/lib/api";
+import { TenantOrgRequired } from "@/components/TenantOrgRequired";
 
 // #region agent log
 function debugLog(hypothesisId: string, location: string, message: string, data: Record<string, unknown>) {
@@ -498,6 +499,7 @@ export default function ProdutosPage() {
 
     // ── Render ────────────────────────────────────────────────────
     return (
+        <TenantOrgRequired>
         <div className="flex flex-col h-full relative">
             {/* Header */}
             <header className="h-16 bg-surface-light/80 dark:bg-surface-dark/80 backdrop-blur-md border-b border-border-light dark:border-border-dark flex items-center justify-between px-8 sticky top-0 z-10">
@@ -864,5 +866,6 @@ export default function ProdutosPage() {
                 </>
             )}
         </div>
+        </TenantOrgRequired>
     );
 }
