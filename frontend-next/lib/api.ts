@@ -1,21 +1,33 @@
 import { clearAuthSession, persistAuthSession } from "@/lib/supabase";
 
+/**
+ * Base da API. Em produção HTTPS, nunca retorna `http://` no mesmo host (evita Mixed Content).
+ * Usa `URL` para upgrade http→https; em dev (localhost portas diferentes) preserva a origem da API.
+ */
 export function getApiBase(): string {
-    const base = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-    if (typeof window !== "undefined" && base.startsWith("http://") && window.location.protocol === "https:") {
-        return base.replace("http://", "https://");
+    const raw = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").trim();
+    if (typeof window === "undefined") {
+        return raw.replace(/\/$/, "");
     }
-    return base;
+    try {
+        const u = new URL(raw);
+        if (window.location.protocol === "https:" && u.protocol === "http:") {
+            u.protocol = "https:";
+        }
+        return u.toString().replace(/\/$/, "");
+    } catch {
+        return raw.replace(/\/$/, "");
+    }
 }
 
-/** URL para chamadas à API. Usa path relativo quando mesmo host (evita Mixed Content). */
+/** URL para chamadas à API. Usa path relativo quando mesmo origin (herda HTTPS da página). */
 export function getApiUrl(path: string): string {
     const pathNorm = path.startsWith("/") ? path : `/${path}`;
     if (typeof window !== "undefined") {
         try {
             const base = getApiBase();
             const url = new URL(base);
-            if (url.host === window.location.host) {
+            if (url.origin === window.location.origin) {
                 return pathNorm;
             }
         } catch {
@@ -34,6 +46,21 @@ let refreshInFlight: Promise<string | null> | null = null;
 
 function resolveRequestUrl(endpoint: string): string {
     if (/^https?:\/\//i.test(endpoint)) {
+        if (typeof window !== "undefined" && window.location.protocol === "https:" && /^http:\/\//i.test(endpoint)) {
+            try {
+                const u = new URL(endpoint);
+                if (u.protocol === "http:") {
+                    const httpsUrl = endpoint.replace(/^http:\/\//i, "https://");
+                    const u2 = new URL(httpsUrl);
+                    if (u2.origin === window.location.origin) {
+                        return u2.pathname + u2.search + u2.hash;
+                    }
+                    return httpsUrl;
+                }
+            } catch {
+                return endpoint.replace(/^http:\/\//i, "https://");
+            }
+        }
         return endpoint;
     }
     return getApiUrl(endpoint);

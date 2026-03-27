@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { supabase } from "@/lib/supabase";
+import { getApiUrl } from "@/lib/api";
 
 interface WhatsAppMessage {
     id: string;
@@ -39,8 +40,6 @@ export default function WhatsAppChat({ leadId, leadName, onClose }: WhatsAppChat
     const fileInputRef = useRef<HTMLInputElement>(null);
     const attachMenuRef = useRef<HTMLDivElement>(null);
 
-    const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-
     useEffect(() => {
         loadHistory();
     }, [leadId]);
@@ -70,7 +69,7 @@ export default function WhatsAppChat({ leadId, leadName, onClose }: WhatsAppChat
             const token = session?.access_token;
             if (!token) throw new Error("Não autenticado");
 
-            const res = await fetch(`${API_URL}/api/leads/${leadId}/chat-history`, {
+            const res = await fetch(getApiUrl(`/api/leads/${leadId}/chat-history`), {
                 headers: { "Authorization": `Bearer ${token}` }
             });
 
@@ -105,7 +104,7 @@ export default function WhatsAppChat({ leadId, leadName, onClose }: WhatsAppChat
             const { data: { session } } = await supabase.auth.getSession();
             const token = session?.access_token;
 
-            const res = await fetch(`${API_URL}/api/leads/${leadId}/messages/send`, {
+            const res = await fetch(getApiUrl(`/api/leads/${leadId}/messages/send`), {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json",
@@ -160,7 +159,7 @@ export default function WhatsAppChat({ leadId, leadName, onClose }: WhatsAppChat
             else if (file.type.startsWith('audio/')) mediaType = 'audio';
 
             // Send via API
-            const res = await fetch(`${API_URL}/api/leads/${leadId}/messages/send`, {
+            const res = await fetch(getApiUrl(`/api/leads/${leadId}/messages/send`), {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json",
