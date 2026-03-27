@@ -1127,6 +1127,15 @@ function KanbanContent() {
     async function renameStage(stageId: string) {
         if (!editStageName.trim()) return;
         const nextName = editStageName.trim();
+        // Colunas só com slug local (s-… / sem UUID) não existem em pipeline_stages — renomear gerava 500 no backend
+        const stageUuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        if (!stageUuidRe.test(stageId)) {
+            alert("Esta etapa ainda não está salva no servidor (recarregue o Kanban ou verifique o funil).");
+            setEditStage(null);
+            setEditStageName("");
+            void fetchKanban();
+            return;
+        }
         const previousStages = [...stages];
         setStages(stages.map((s) => s.id === stageId ? { ...s, title: nextName } : s));
         setEditStage(null);

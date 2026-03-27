@@ -3,6 +3,8 @@ Leads Router — CRUD + Kanban Stage Management + Chat Mirror
 Provides the data for the Funil de Vendas Kanban board and WhatsApp chat integration.
 """
 
+import uuid
+
 from fastapi import APIRouter, Depends, HTTPException, status, Query, BackgroundTasks
 from supabase import Client as SupabaseClient
 from typing import Optional
@@ -803,28 +805,75 @@ async def rename_stage(
     eff: EffectiveRole = Depends(require_org_admin),
     supabase: SupabaseClient = Depends(get_supabase),
 ):
-    data_tenant_id, resolved_funnel_id = _resolve_kanban_scope(supabase, user.id, eff, funnel_id)
-    allowed_stage_ids = {
-        str(row["id"])
-        for row in _list_pipeline_stages_for_board_scope(
-            supabase=supabase,
-            data_tenant_id=data_tenant_id,
-            funnel_id=resolved_funnel_id,
+    try:
+        uuid.UUID(str(stage_id).strip())
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="ID de etapa inválido. Recarregue o Kanban — etapas só locais (demonstração) não podem ser renomeadas até existirem no banco.",
         )
-    }
+
+    data_tenant_id, resolved_funnel_id = _resolve_kanban_scope(supabase, user.id, eff, funnel_id)
+    stage_rows = _list_pipeline_stages_for_board_scope(
+        supabase=supabase,
+        data_tenant_id=data_tenant_id,
+        funnel_id=resolved_funnel_id,
+    )
+    allowed_stage_ids = {str(row["id"]) for row in stage_rows}
     if stage_id not in allowed_stage_ids:
         raise HTTPException(status_code=404, detail="Etapa não encontrada.")
-    response = (
-        supabase.table("pipeline_stages")
-        .update({"name": payload.name.strip()})
-        .eq("id", stage_id)
-        .eq("tenant_id", data_tenant_id)
-        .select("id, name, order_position, version")
-        .single()
-        .execute()
-    )
+
+    target_row = next((r for r in stage_rows if str(r["id"]) == str(stage_id)), None)
+    if not target_row:
+        raise HTTPException(status_code=404, detail="Etapa não encontrada.")
+    old_name = str(target_row.get("name") or "")
+    new_name = payload.name.strip()
+    if old_name == new_name:
+        return {
+            "id": stage_id,
+            "name": new_name,
+            "order_position": target_row.get("order_position", 0),
+            "version": int(target_row.get("version") or 1),
+        }
+
+    try:
+        response = (
+            supabase.table("pipeline_stages")
+            .update({"name": new_name})
+            .eq("id", stage_id)
+            .eq("tenant_id", data_tenant_id)
+            .select("id, name, order_position, version")
+            .single()
+            .execute()
+        )
+    except Exception as exc:
+        detail = _db_error_detail(exc)
+        logger.exception("rename_stage_failed", extra={"stage_id": stage_id, "detail": detail})
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST
+            if "invalid input syntax for type uuid" in detail.lower() or "22P02" in detail
+            else status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erro ao renomear etapa: {detail}",
+        ) from exc
+
     if not response.data:
         raise HTTPException(status_code=404, detail="Etapa não encontrada.")
+
+    # leads.stage armazena o nome da coluna — alinhar após renomear pipeline_stages
+    try:
+        supabase.table("leads").update({"stage": new_name}).eq("tenant_id", data_tenant_id).eq("funnel_id", resolved_funnel_id).eq(
+            "stage", old_name
+        ).execute()
+    except Exception as exc:
+        d = _db_error_detail(exc)
+        if _is_missing_column_error(d, "funnel_id"):
+            try:
+                supabase.table("leads").update({"stage": new_name}).eq("tenant_id", data_tenant_id).eq("stage", old_name).execute()
+            except Exception as exc2:
+                logger.warning("rename_stage_leads_update_failed", extra={"detail": _db_error_detail(exc2)})
+        else:
+            logger.warning("rename_stage_leads_update_failed", extra={"detail": d})
+
     return response.data
 
 
