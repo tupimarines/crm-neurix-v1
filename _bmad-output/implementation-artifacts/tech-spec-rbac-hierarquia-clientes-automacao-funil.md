@@ -307,15 +307,15 @@ Este plano incorpora o documento complementar **`tech-spec-admin-console-ui-rbac
 
 #### Sprint 8 — UI Configurações caixas (3 tasks) + Console Admin — deep link e paridade
 
-- [ ] **S8-T1:** `configuracoes/page.tsx`: lista + modal (QR / instância / Leads Infinitos + nome + funil).
-- [ ] **S8-T2:** Retirar fluxo WhatsApp único legado.
-- [ ] **S8-T3:** Smoke: 2 inboxes no mesmo funil.
+- [x] **S8-T1:** `configuracoes/page.tsx`: lista + modal (QR / instância / Leads Infinitos + nome + funil).
+- [x] **S8-T2:** Retirar fluxo WhatsApp único legado.
+- [x] **S8-T3:** Smoke: 2 inboxes no mesmo funil.
 
 **Console Admin:**
 
-- [ ] **S8-UI-1:** Em **`configuracoes/page.tsx`**, se `searchParams.from === 'admin'` (ou equivalente), exibir **banner** “Voltar ao Console Admin” → `/admin`.
-- [ ] **S8-UI-2:** No console, repetir **smoke S8-T3** do ponto de vista superadmin: após criar 2 inboxes no mesmo funil, verificar no Kanban (quando S13 pronto) ou via API que **inbox_id** distingue origem — checklist manual cruzado com **AC6**.
-- [ ] **S8-UI-3:** Documentar em **Ajuda** do console (página estática ou markdown inline) o fluxo **Configurações ↔ Console** para operadores.
+- [x] **S8-UI-1:** Em **`configuracoes/page.tsx`**, se `searchParams.from === 'admin'` (ou equivalente), exibir **banner** “Voltar ao Console Admin” → `/admin`.
+- [x] **S8-UI-2:** No console, repetir **smoke S8-T3** do ponto de vista superadmin: após criar 2 inboxes no mesmo funil, verificar no Kanban (quando S13 pronto) ou via API que **inbox_id** distingue origem — checklist manual cruzado com **AC6**.
+- [x] **S8-UI-3:** Documentar em **Ajuda** do console (página estática ou markdown inline) o fluxo **Configurações ↔ Console** para operadores.
 
 #### Sprint 9 — Webhook + UNIQUE + cliente (3 tasks) + Console Admin — observabilidade leve
 

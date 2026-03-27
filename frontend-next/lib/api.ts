@@ -258,6 +258,22 @@ export const patchUser = (userId: string, organizationId: string, body: PatchUse
     );
 };
 
+// ── Funis do tenant (lista para Configurações / inboxes) — Sprint 8 ──
+
+export type FunnelListItem = {
+    id: string;
+    tenant_id: string;
+    name: string;
+    created_at: string;
+    updated_at: string;
+};
+
+export const listMyFunnels = (token?: string) => apiGet<FunnelListItem[]>("/api/funnels/", token);
+
+/** 200 se usuário pode gerenciar inboxes (org admin); 403 caso contrário (ex.: read_only). */
+export const probeOrgAdmin = (token?: string) =>
+    apiGet<{ ok: boolean; scope: string }>("/api/auth/rbac/org-admin", token);
+
 // ── Caixas de entrada (inboxes) — Sprint 7 ──
 
 export type InboxDTO = {

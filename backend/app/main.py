@@ -13,6 +13,7 @@ from app.routers import (
     auth,
     catalog_search,
     dashboard,
+    funnels,
     inboxes,
     keyword_rules,
     leads,
@@ -65,6 +66,7 @@ def create_app() -> FastAPI:
     app.include_router(admin_api.router, prefix="/api/admin", tags=["Console Admin"])
     app.include_router(organizations.router, prefix="/api/organizations", tags=["Organizações"])
     app.include_router(users.router, prefix="/api/users", tags=["Usuários (Admin)"])
+    app.include_router(funnels.router, prefix="/api/funnels", tags=["Funis"])
     app.include_router(inboxes.router, prefix="/api/inboxes", tags=["Caixas de entrada"])
     app.include_router(leads.router, prefix="/api/leads", tags=["Leads / Kanban"])
     app.include_router(products.router, prefix="/api/products", tags=["Produtos"])

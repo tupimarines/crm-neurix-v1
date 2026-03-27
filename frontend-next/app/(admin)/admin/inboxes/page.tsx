@@ -199,6 +199,18 @@ export default function AdminInboxesLinkPage() {
                 {!loadingInboxes && tenantId && rows.length === 0 && (
                     <p className="text-sm text-text-secondary-light">Nenhuma caixa encontrada para este tenant.</p>
                 )}
+
+                <div className="rounded-xl border border-dashed border-border-light dark:border-border-dark p-4 text-sm text-text-secondary-light space-y-2">
+                    <p className="font-medium text-text-main-light dark:text-text-main-dark">Checklist Sprint 8 (AC6)</p>
+                    <p>
+                        Crie duas caixas no mesmo funil em{" "}
+                        <Link href="/configuracoes?from=admin" className="text-primary hover:underline">
+                            Configurações
+                        </Link>
+                        ; depois confira aqui se ambas aparecem para o tenant com o mesmo{" "}
+                        <code className="text-xs bg-black/5 px-1 rounded">funnel_id</code>. Badge no Kanban: Sprint 13.
+                    </p>
+                </div>
             </div>
         </div>
     );
