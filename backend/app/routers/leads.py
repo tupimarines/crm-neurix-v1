@@ -324,6 +324,19 @@ def _list_pipeline_stages_for_response(*, supabase: SupabaseClient, tenant_id: s
         return response.data or []
 
 
+def _list_pipeline_stages_for_board_scope(
+    *,
+    supabase: SupabaseClient,
+    data_tenant_id: str,
+    funnel_id: str,
+) -> list[dict]:
+    return _fetch_pipeline_stages_for_funnel(
+        supabase,
+        data_tenant_id=data_tenant_id,
+        funnel_id=funnel_id,
+    )
+
+
 class ReorderStageItem(BaseModel):
     id: str
     version: int = Field(..., ge=1)
@@ -634,22 +647,23 @@ async def get_kanban_board(
 @router.post("/stages/reorder", status_code=status.HTTP_200_OK)
 async def reorder_stages(
     payload: ReorderStagesPayload,
+    funnel_id: Optional[str] = Query(
+        None,
+        description="Funil do board que está sendo reordenado.",
+    ),
     user=Depends(get_current_user),
-    _eff: EffectiveRole = Depends(require_org_admin),
+    eff: EffectiveRole = Depends(require_org_admin),
     supabase: SupabaseClient = Depends(get_supabase),
 ):
     started = perf_counter()
+    data_tenant_id, resolved_funnel_id = _resolve_kanban_scope(supabase, user.id, eff, funnel_id)
     ordered_ids = [item.id for item in payload.items]
     version_by_id = {item.id: item.version for item in payload.items}
-
-    current_response = (
-        supabase.table("pipeline_stages")
-        .select("id, tenant_id, order_position, version")
-        .eq("tenant_id", user.id)
-        .order("order_position")
-        .execute()
+    current_rows = _list_pipeline_stages_for_board_scope(
+        supabase=supabase,
+        data_tenant_id=data_tenant_id,
+        funnel_id=resolved_funnel_id,
     )
-    current_rows = current_response.data or []
     if not current_rows:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Nenhuma etapa encontrada para reorder.")
 
@@ -676,7 +690,7 @@ async def reorder_stages(
                 supabase.table("pipeline_stages")
                 .update({"order_position": idx, "version": previous_versions[stage_id] + 1})
                 .eq("id", stage_id)
-                .eq("tenant_id", user.id)
+                .eq("tenant_id", data_tenant_id)
                 .eq("version", previous_versions[stage_id])
                 .execute()
             )
@@ -687,25 +701,29 @@ async def reorder_stages(
         for stage_id, old_position in previous_positions.items():
             supabase.table("pipeline_stages").update(
                 {"order_position": old_position, "version": previous_versions[stage_id]}
-            ).eq("id", stage_id).eq("tenant_id", user.id).execute()
+            ).eq("id", stage_id).eq("tenant_id", data_tenant_id).execute()
         metrics.observe("kanban_reorder", (perf_counter() - started) * 1000.0, ok=False)
-        logger.warning("kanban_reorder_conflict_or_error", extra={"tenant_id": str(user.id), "error_count": 1})
+        logger.warning("kanban_reorder_conflict_or_error", extra={"tenant_id": data_tenant_id, "error_count": 1})
         raise
     except Exception as exc:
         for stage_id, old_position in previous_positions.items():
             supabase.table("pipeline_stages").update(
                 {"order_position": old_position, "version": previous_versions[stage_id]}
-            ).eq("id", stage_id).eq("tenant_id", user.id).execute()
+            ).eq("id", stage_id).eq("tenant_id", data_tenant_id).execute()
         metrics.observe("kanban_reorder", (perf_counter() - started) * 1000.0, ok=False)
-        logger.exception("kanban_reorder_failed", extra={"tenant_id": str(user.id)})
+        logger.exception("kanban_reorder_failed", extra={"tenant_id": data_tenant_id})
         raise HTTPException(status_code=500, detail=f"Erro ao persistir reorder: {str(exc)}")
 
-    refreshed = _list_pipeline_stages_for_response(supabase=supabase, tenant_id=user.id)
+    refreshed = _list_pipeline_stages_for_board_scope(
+        supabase=supabase,
+        data_tenant_id=data_tenant_id,
+        funnel_id=resolved_funnel_id,
+    )
     elapsed_ms = (perf_counter() - started) * 1000.0
     metrics.observe("kanban_reorder", elapsed_ms, ok=True)
     logger.info(
         "kanban_reorder_success",
-        extra={"tenant_id": str(user.id), "result_count": len(ordered_ids), "elapsed_ms": round(elapsed_ms, 2)},
+        extra={"tenant_id": data_tenant_id, "result_count": len(ordered_ids), "elapsed_ms": round(elapsed_ms, 2)},
     )
     return {"stages": refreshed}
 
@@ -713,22 +731,25 @@ async def reorder_stages(
 @router.post("/stages", status_code=status.HTTP_201_CREATED)
 async def create_stage(
     payload: StageCreatePayload,
+    funnel_id: Optional[str] = Query(
+        None,
+        description="Funil do board onde a etapa será criada.",
+    ),
     user=Depends(get_current_user),
-    _eff: EffectiveRole = Depends(require_org_admin),
+    eff: EffectiveRole = Depends(require_org_admin),
     supabase: SupabaseClient = Depends(get_supabase),
 ):
-    tenant_id = str(user.id)
-    existing = (
-        supabase.table("pipeline_stages")
-        .select("id, order_position")
-        .eq("tenant_id", tenant_id)
-        .order("order_position", desc=True)
-        .limit(1)
-        .execute()
-    ).data or []
+    tenant_id, resolved_funnel_id = _resolve_kanban_scope(supabase, user.id, eff, funnel_id)
+    existing = _list_pipeline_stages_for_board_scope(
+        supabase=supabase,
+        data_tenant_id=tenant_id,
+        funnel_id=resolved_funnel_id,
+    )
+    existing.sort(key=lambda row: int(row.get("order_position") or 0), reverse=True)
     next_order = int(existing[0]["order_position"]) + 1 if existing else 0
     insert_payload = {
         "tenant_id": tenant_id,
+        "funnel_id": resolved_funnel_id,
         "name": payload.name.strip(),
         "order_position": next_order,
         "is_conversion": bool(payload.is_conversion),
@@ -745,6 +766,7 @@ async def create_stage(
                     .insert(
                         {
                             "tenant_id": tenant_id,
+                            "funnel_id": resolved_funnel_id,
                             "name": payload.name.strip(),
                             "order_position": next_order,
                         }
@@ -772,15 +794,30 @@ async def create_stage(
 async def rename_stage(
     stage_id: str,
     payload: StageRenamePayload,
+    funnel_id: Optional[str] = Query(
+        None,
+        description="Funil do board onde a etapa está localizada.",
+    ),
     user=Depends(get_current_user),
-    _eff: EffectiveRole = Depends(require_org_admin),
+    eff: EffectiveRole = Depends(require_org_admin),
     supabase: SupabaseClient = Depends(get_supabase),
 ):
+    data_tenant_id, resolved_funnel_id = _resolve_kanban_scope(supabase, user.id, eff, funnel_id)
+    allowed_stage_ids = {
+        str(row["id"])
+        for row in _list_pipeline_stages_for_board_scope(
+            supabase=supabase,
+            data_tenant_id=data_tenant_id,
+            funnel_id=resolved_funnel_id,
+        )
+    }
+    if stage_id not in allowed_stage_ids:
+        raise HTTPException(status_code=404, detail="Etapa não encontrada.")
     response = (
         supabase.table("pipeline_stages")
         .update({"name": payload.name.strip()})
         .eq("id", stage_id)
-        .eq("tenant_id", user.id)
+        .eq("tenant_id", data_tenant_id)
         .select("id, name, order_position, version")
         .single()
         .execute()
@@ -794,17 +831,20 @@ async def rename_stage(
 async def delete_stage(
     stage_id: str,
     payload: StageDeletePayload,
+    funnel_id: Optional[str] = Query(
+        None,
+        description="Funil do board onde a etapa será excluída.",
+    ),
     user=Depends(get_current_user),
-    _eff: EffectiveRole = Depends(require_org_admin),
+    eff: EffectiveRole = Depends(require_org_admin),
     supabase: SupabaseClient = Depends(get_supabase),
 ):
-    stages = (
-        supabase.table("pipeline_stages")
-        .select("id, name, order_position")
-        .eq("tenant_id", user.id)
-        .order("order_position")
-        .execute()
-    ).data or []
+    data_tenant_id, resolved_funnel_id = _resolve_kanban_scope(supabase, user.id, eff, funnel_id)
+    stages = _list_pipeline_stages_for_board_scope(
+        supabase=supabase,
+        data_tenant_id=data_tenant_id,
+        funnel_id=resolved_funnel_id,
+    )
     target = next((s for s in stages if str(s["id"]) == str(stage_id)), None)
     if not target:
         raise HTTPException(status_code=404, detail="Etapa não encontrada.")
@@ -820,12 +860,23 @@ async def delete_stage(
         raise HTTPException(status_code=400, detail="Etapa de fallback inválida.")
 
     # Move leads to fallback by both stage name and legacy id-in-stage field.
-    supabase.table("leads").update({"stage": fallback["name"]}).eq("tenant_id", user.id).in_("stage", [target["name"], target["id"]]).execute()
-    delete_result = supabase.table("pipeline_stages").delete().eq("id", stage_id).eq("tenant_id", user.id).execute()
+    try:
+        supabase.table("leads").update({"stage": fallback["name"]}).eq("tenant_id", data_tenant_id).eq("funnel_id", resolved_funnel_id).in_("stage", [target["name"], target["id"]]).execute()
+    except Exception as exc:
+        detail = _db_error_detail(exc)
+        if _is_missing_column_error(detail, "funnel_id"):
+            supabase.table("leads").update({"stage": fallback["name"]}).eq("tenant_id", data_tenant_id).in_("stage", [target["name"], target["id"]]).execute()
+        else:
+            raise
+    delete_result = supabase.table("pipeline_stages").delete().eq("id", stage_id).eq("tenant_id", data_tenant_id).execute()
     if not delete_result.data:
         raise HTTPException(status_code=400, detail="Erro ao excluir etapa.")
 
-    refreshed = _list_pipeline_stages_for_response(supabase=supabase, tenant_id=user.id)
+    refreshed = _list_pipeline_stages_for_board_scope(
+        supabase=supabase,
+        data_tenant_id=data_tenant_id,
+        funnel_id=resolved_funnel_id,
+    )
     return {"fallback_stage_id": fallback["id"], "stages": refreshed}
 
 
@@ -852,52 +903,43 @@ async def list_leads(
 async def create_lead(
     payload: LeadCreate,
     user=Depends(get_current_user),
-    _eff: EffectiveRole = Depends(require_org_admin),
+    eff: EffectiveRole = Depends(require_org_admin),
     supabase: SupabaseClient = Depends(get_supabase),
 ):
     """Create a new lead/card."""
     data = payload.model_dump()
     funnel_id_opt = data.pop("funnel_id", None)
-    data["tenant_id"] = user.id
+    data_tenant_id = str(user.id)
+    resolved_fid = ""
     previous_reserved: list[dict] = []
     rollback_needed = False
     applied_delta: dict[str, int] = {}
 
     try:
+        data_tenant_id, resolved_fid = _resolve_kanban_scope(supabase, user.id, eff, funnel_id_opt)
+        data["tenant_id"] = data_tenant_id
         next_reserved, applied_delta = _compute_stock_delta(previous_reserved, data.get("products_json") or [])
-        _apply_stock_delta(supabase=supabase, tenant_id=user.id, delta=applied_delta)
+        _apply_stock_delta(supabase=supabase, tenant_id=data_tenant_id, delta=applied_delta)
         rollback_needed = True
         data["stock_reserved_json"] = next_reserved
         if "purchase_history_json" not in data or data["purchase_history_json"] is None:
             data["purchase_history_json"] = []
         priced_value, resolved_lines = _price_lead_products_with_promotions(
             supabase=supabase,
-            tenant_id=user.id,
+            tenant_id=data_tenant_id,
             products_json=data.get("products_json") or [],
         )
         data["value"] = priced_value
         data["products_json"] = resolved_lines
-
-        resolved_fid = (funnel_id_opt or "").strip() or _default_funnel_id_for_tenant(supabase, str(user.id))
-        if funnel_id_opt and funnel_id_opt.strip():
-            fcheck = (
-                supabase.table("funnels")
-                .select("id, tenant_id")
-                .eq("id", resolved_fid)
-                .limit(1)
-                .execute()
-            ).data or []
-            if not fcheck or str(fcheck[0]["tenant_id"]) != str(user.id):
-                raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Funil inválido.")
         data["funnel_id"] = resolved_fid
 
         response = supabase.table("leads").insert(data).execute()
     except Exception:
         if rollback_needed and applied_delta:
             try:
-                _apply_stock_delta(supabase=supabase, tenant_id=user.id, delta=_invert_delta(applied_delta))
+                _apply_stock_delta(supabase=supabase, tenant_id=data_tenant_id, delta=_invert_delta(applied_delta))
             except Exception:
-                logger.exception("lead_create_stock_rollback_failed", extra={"tenant_id": str(user.id)})
+                logger.exception("lead_create_stock_rollback_failed", extra={"tenant_id": data_tenant_id})
         raise
 
     if not response.data:

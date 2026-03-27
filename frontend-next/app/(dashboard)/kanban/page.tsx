@@ -26,6 +26,7 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import {
     api,
+    createMyFunnel,
     deleteStageAutomation,
     getAuthMe,
     getLeadActivity,
@@ -217,8 +218,13 @@ function KanbanContent() {
         loaded: boolean;
         isReadOnly: boolean;
         isOrgAdmin: boolean;
-    }>({ loaded: false, isReadOnly: false, isOrgAdmin: true });
+        organizationId: string | null;
+    }>({ loaded: false, isReadOnly: false, isOrgAdmin: true, organizationId: null });
     const [myFunnels, setMyFunnels] = useState<FunnelListItem[]>([]);
+    const [kanbanError, setKanbanError] = useState<string | null>(null);
+    const [createFunnelOpen, setCreateFunnelOpen] = useState(false);
+    const [createFunnelName, setCreateFunnelName] = useState("");
+    const [createFunnelBusy, setCreateFunnelBusy] = useState(false);
     const [inboxNameById, setInboxNameById] = useState<Record<string, string>>({});
     const [inboxesForBoard, setInboxesForBoard] = useState<{ id: string; name: string }[]>([]);
     const [filterInboxId, setFilterInboxId] = useState("");
@@ -307,8 +313,10 @@ function KanbanContent() {
             }
             setCards(allCards);
             setResolvedFunnelId(data.funnel_id ?? (funnelIdFromUrl && funnelIdFromUrl.trim() ? funnelIdFromUrl.trim() : null));
+            setKanbanError(null);
         } catch (err) {
             console.error("Failed to fetch kanban data:", err);
+            setKanbanError(err instanceof Error ? err.message : "Erro ao carregar Kanban.");
         } finally {
             isFetchingKanbanRef.current = false;
             if (!silent) setIsLoading(false);
@@ -321,7 +329,7 @@ function KanbanContent() {
         (async () => {
             const token = localStorage.getItem("access_token");
             if (!token) {
-                if (!cancelled) setAuthSession({ loaded: true, isReadOnly: false, isOrgAdmin: true });
+                if (!cancelled) setAuthSession({ loaded: true, isReadOnly: false, isOrgAdmin: true, organizationId: null });
                 return;
             }
             try {
@@ -339,9 +347,10 @@ function KanbanContent() {
                     loaded: true,
                     isReadOnly: Boolean(me.is_read_only),
                     isOrgAdmin: me.is_org_admin !== false,
+                    organizationId: me.organization_id || null,
                 });
             } catch {
-                if (!cancelled) setAuthSession({ loaded: true, isReadOnly: false, isOrgAdmin: true });
+                if (!cancelled) setAuthSession({ loaded: true, isReadOnly: false, isOrgAdmin: true, organizationId: null });
             }
         })();
         return () => {
@@ -378,8 +387,11 @@ function KanbanContent() {
         if (!authSession.loaded || authSession.isReadOnly || !authSession.isOrgAdmin) return;
         const token = localStorage.getItem("access_token");
         if (!token) return;
-        listMyFunnels(token).then(setMyFunnels).catch(() => setMyFunnels([]));
-    }, [authSession.loaded, authSession.isReadOnly, authSession.isOrgAdmin]);
+        const loadFunnels = authSession.organizationId
+            ? listOrganizationFunnels(authSession.organizationId, token)
+            : listMyFunnels(token);
+        loadFunnels.then(setMyFunnels).catch(() => setMyFunnels([]));
+    }, [authSession.loaded, authSession.isReadOnly, authSession.isOrgAdmin, authSession.organizationId]);
 
     // Inboxes do tenant — badge quando >1 caixa no mesmo funil
     useEffect(() => {
@@ -905,7 +917,8 @@ function KanbanContent() {
         try {
             const token = localStorage.getItem("access_token") || undefined;
             const payload = { items: nextStages.map((s) => ({ id: s.id, version: s.version || 1 })) };
-            const response = await api<{ stages: Array<{ id: string; version: number }> }>("/api/leads/stages/reorder", {
+            const qp = resolvedFunnelId ? `?funnel_id=${encodeURIComponent(resolvedFunnelId)}` : "";
+            const response = await api<{ stages: Array<{ id: string; version: number }> }>(`/api/leads/stages/reorder${qp}`, {
                 method: "POST",
                 body: JSON.stringify(payload),
                 token
@@ -1011,7 +1024,8 @@ function KanbanContent() {
         const name = newStageName.trim();
         try {
             const token = localStorage.getItem("access_token") || undefined;
-            const created = await api<{ id: string; name: string; order_position: number; version: number; is_conversion?: boolean }>("/api/leads/stages", {
+            const qp = resolvedFunnelId ? `?funnel_id=${encodeURIComponent(resolvedFunnelId)}` : "";
+            const created = await api<{ id: string; name: string; order_position: number; version: number; is_conversion?: boolean }>(`/api/leads/stages${qp}`, {
                 method: "POST",
                 body: JSON.stringify({ name, is_conversion: showNewStageAsConversion }),
                 token,
@@ -1047,7 +1061,8 @@ function KanbanContent() {
 
         try {
             const token = localStorage.getItem("access_token") || undefined;
-            const response = await api<{ fallback_stage_id: string; stages: Array<{ id: string; name: string; version?: number; is_conversion?: boolean }> }>(`/api/leads/stages/${stageId}`, {
+            const qp = resolvedFunnelId ? `?funnel_id=${encodeURIComponent(resolvedFunnelId)}` : "";
+            const response = await api<{ fallback_stage_id: string; stages: Array<{ id: string; name: string; version?: number; is_conversion?: boolean }> }>(`/api/leads/stages/${stageId}${qp}`, {
                 method: "DELETE",
                 body: JSON.stringify({ fallback_stage_id: fallbackStage.id }),
                 token,
@@ -1117,7 +1132,8 @@ function KanbanContent() {
         setEditStageName("");
         try {
             const token = localStorage.getItem("access_token") || undefined;
-            const updated = await api<{ id: string; name: string; version?: number }>(`/api/leads/stages/${stageId}`, {
+            const qp = resolvedFunnelId ? `?funnel_id=${encodeURIComponent(resolvedFunnelId)}` : "";
+            const updated = await api<{ id: string; name: string; version?: number }>(`/api/leads/stages/${stageId}${qp}`, {
                 method: "PATCH",
                 body: JSON.stringify({ name: nextName }),
                 token,
@@ -1126,6 +1142,28 @@ function KanbanContent() {
         } catch (err) {
             setStages(previousStages);
             alert(`Falha ao renomear etapa: ${err instanceof Error ? err.message : String(err)}`);
+        }
+    }
+
+    async function handleCreateFunnel() {
+        const name = createFunnelName.trim();
+        if (!name) return;
+        try {
+            setCreateFunnelBusy(true);
+            const token = localStorage.getItem("access_token") || undefined;
+            const created = await createMyFunnel({ name }, token);
+            const refreshed = authSession.organizationId
+                ? await listOrganizationFunnels(authSession.organizationId, token)
+                : await listMyFunnels(token);
+            setMyFunnels(refreshed);
+            setCreateFunnelName("");
+            setCreateFunnelOpen(false);
+            setKanbanError(null);
+            router.push(`/kanban?funnel_id=${encodeURIComponent(created.id)}`);
+        } catch (err) {
+            alert(`Falha ao criar funil: ${err instanceof Error ? err.message : String(err)}`);
+        } finally {
+            setCreateFunnelBusy(false);
         }
     }
 
@@ -1329,6 +1367,16 @@ function KanbanContent() {
                     )}
                 </div>
                 <div className="flex items-center gap-3">
+                    {!isReadOnlyUi && authSession.isOrgAdmin && (
+                        <button
+                            type="button"
+                            onClick={() => setCreateFunnelOpen(true)}
+                            className="inline-flex items-center px-3 py-2 text-sm font-medium rounded-lg border border-border-light dark:border-border-dark bg-surface-light dark:bg-surface-dark hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
+                        >
+                            <span className="material-symbols-outlined mr-1 text-base">alt_route</span>
+                            Novo Funil
+                        </button>
+                    )}
                     {lastReorderAttempt && !isReadOnlyUi && (
                         <button
                             onClick={() => { void persistStageOrder(lastReorderAttempt, [...stages]); }}
@@ -1381,6 +1429,36 @@ function KanbanContent() {
                     <div className="text-center">
                         <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary mx-auto mb-3"></div>
                         <p className="text-sm text-text-secondary-light dark:text-text-secondary-dark">Carregando leads...</p>
+                    </div>
+                </div>
+            ) : kanbanError ? (
+                <div className="flex-1 flex items-center justify-center p-6">
+                    <div className="w-full max-w-xl rounded-2xl border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 p-6 space-y-4 text-center">
+                        <div className="flex justify-center">
+                            <span className="material-symbols-outlined text-3xl text-amber-700 dark:text-amber-300">warning</span>
+                        </div>
+                        <div className="space-y-2">
+                            <h2 className="text-lg font-semibold">Kanban indisponível</h2>
+                            <p className="text-sm text-text-secondary-light dark:text-text-secondary-dark">{kanbanError}</p>
+                        </div>
+                        {!isReadOnlyUi && authSession.isOrgAdmin && (
+                            <div className="flex items-center justify-center gap-3">
+                                <button
+                                    type="button"
+                                    onClick={() => setCreateFunnelOpen(true)}
+                                    className="inline-flex items-center px-4 py-2 text-sm font-semibold rounded-lg text-white bg-primary hover:bg-primary-hover transition-colors"
+                                >
+                                    Criar funil agora
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => void fetchKanban()}
+                                    className="inline-flex items-center px-4 py-2 text-sm font-medium rounded-lg border border-border-light dark:border-border-dark"
+                                >
+                                    Tentar novamente
+                                </button>
+                            </div>
+                        )}
                     </div>
                 </div>
             ) : viewMode === "kanban" ? (
@@ -2019,6 +2097,49 @@ function KanbanContent() {
                     </div>
                 )
             }
+            {createFunnelOpen && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+                    <div className="absolute inset-0 bg-slate-900/30 backdrop-blur-sm" onClick={() => !createFunnelBusy && setCreateFunnelOpen(false)} />
+                    <div className="relative w-full max-w-md rounded-2xl border border-border-light dark:border-border-dark bg-surface-light dark:bg-surface-dark shadow-2xl p-6 space-y-4">
+                        <div className="flex items-center justify-between gap-4">
+                            <div>
+                                <h3 className="text-lg font-bold font-display">Novo funil</h3>
+                                <p className="text-sm text-text-secondary-light dark:text-text-secondary-dark">
+                                    Crie um funil próprio e abra o board automaticamente.
+                                </p>
+                            </div>
+                            <button type="button" onClick={() => !createFunnelBusy && setCreateFunnelOpen(false)}>
+                                <span className="material-symbols-outlined text-text-secondary-light">close</span>
+                            </button>
+                        </div>
+                        <input
+                            autoFocus
+                            value={createFunnelName}
+                            onChange={(e) => setCreateFunnelName(e.target.value)}
+                            placeholder="Ex.: Comercial, Revendas, Pós-venda"
+                            className="w-full rounded-xl border border-border-light dark:border-border-dark bg-white dark:bg-slate-800 px-3 py-2 text-sm"
+                        />
+                        <div className="flex justify-end gap-3">
+                            <button
+                                type="button"
+                                onClick={() => setCreateFunnelOpen(false)}
+                                disabled={createFunnelBusy}
+                                className="px-4 py-2 text-sm rounded-lg border border-border-light dark:border-border-dark"
+                            >
+                                Cancelar
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => void handleCreateFunnel()}
+                                disabled={createFunnelBusy || !createFunnelName.trim()}
+                                className="px-4 py-2 text-sm rounded-lg bg-primary text-white font-semibold disabled:opacity-50"
+                            >
+                                {createFunnelBusy ? "Criando..." : "Criar funil"}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div >
     );
 }

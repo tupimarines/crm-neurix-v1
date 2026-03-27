@@ -465,6 +465,9 @@ export type FunnelListItem = {
 
 export const listMyFunnels = (token?: string) => apiGet<FunnelListItem[]>("/api/funnels/", token);
 
+export const createMyFunnel = (body: { name: string }, token?: string) =>
+    apiPost<FunnelListItem>("/api/funnels/", body, token);
+
 /** 200 se usuário pode gerenciar inboxes (org admin); 403 caso contrário (ex.: read_only). */
 export const probeOrgAdmin = (token?: string) =>
     apiGet<{ ok: boolean; scope: string }>("/api/auth/rbac/org-admin", token);
