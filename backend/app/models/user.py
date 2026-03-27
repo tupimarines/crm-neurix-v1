@@ -36,3 +36,6 @@ class UserProfile(BaseModel):
     avatar_url: Optional[str] = None
     is_superadmin: bool = False
     organization_id: Optional[str] = None
+    is_read_only: bool = False
+    assigned_funnel_id: Optional[str] = None
+    is_org_admin: bool = True

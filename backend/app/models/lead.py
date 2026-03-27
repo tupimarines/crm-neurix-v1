@@ -65,6 +65,8 @@ class LeadResponse(LeadBase):
     tenant_id: str
     created_at: datetime
     updated_at: datetime
+    funnel_id: Optional[str] = None
+    inbox_id: Optional[str] = None
 
     model_config = {"from_attributes": True}
 

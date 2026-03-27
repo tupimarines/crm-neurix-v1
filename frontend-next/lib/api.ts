@@ -119,6 +119,10 @@ export type AuthMe = {
     avatar_url?: string | null;
     is_superadmin: boolean;
     organization_id?: string | null;
+    /** Sprint 13 — Kanban / RBAC */
+    is_read_only?: boolean;
+    assigned_funnel_id?: string | null;
+    is_org_admin?: boolean;
 };
 
 export const getAuthMe = (token?: string) => apiGet<AuthMe>("/api/auth/me", token);

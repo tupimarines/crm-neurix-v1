@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useState, useRef, useEffect } from "react";
 import { supabase } from "@/lib/supabase";
 import EditProfileModal from "@/components/EditProfileModal";
+import { getAuthMe } from "@/lib/api";
 
 const navItems = [
     { href: "/dashboard", icon: "dashboard", label: "Painel" },
@@ -27,6 +28,7 @@ export default function Sidebar() {
     const [userName, setUserName] = useState("Carregando...");
     const [userEmail, setUserEmail] = useState("");
     const [userInitials, setUserInitials] = useState("--");
+    const [isSuperadmin, setIsSuperadmin] = useState(false);
 
     useEffect(() => {
         async function fetchUser() {
@@ -49,6 +51,14 @@ export default function Sidebar() {
             }
         }
         fetchUser();
+    }, []);
+
+    useEffect(() => {
+        const token = localStorage.getItem("access_token");
+        if (!token) return;
+        getAuthMe(token)
+            .then((me) => setIsSuperadmin(Boolean(me.is_superadmin)))
+            .catch(() => setIsSuperadmin(false));
     }, []);
 
     // Close popup when clicking outside
@@ -134,6 +144,21 @@ export default function Sidebar() {
                         </Link>
                     );
                 })}
+                {isSuperadmin && (
+                    <Link
+                        href="/admin"
+                        className={`flex items-center gap-3 px-3 py-2.5 mt-2 rounded-xl transition-colors ${
+                            pathname.startsWith("/admin")
+                                ? "bg-primary-light dark:bg-primary/20 text-primary font-medium"
+                                : "text-text-secondary-light dark:text-text-secondary-dark hover:bg-slate-100 dark:hover:bg-slate-700/50 hover:text-primary"
+                        }`}
+                    >
+                        <span className={`material-symbols-outlined ${pathname.startsWith("/admin") ? "filled" : ""}`}>
+                            admin_panel_settings
+                        </span>
+                        <span className="text-sm">Console Admin</span>
+                    </Link>
+                )}
             </nav>
 
             {/* User Profile */}

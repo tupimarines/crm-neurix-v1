@@ -102,11 +102,26 @@ export default function AdminHelpPage() {
                         deve listar as duas linhas com o mesmo funil.
                     </li>
                     <li>
-                        O distintivo visual de origem no Kanban (badge / filtro por inbox) é coberto no{" "}
-                        <strong>Sprint 13</strong>; até lá, a distinção está no modelo (<code className="text-xs bg-black/5 px-1 rounded">inbox_id</code>
-                        ) e na API.
+                        No Kanban: com duas caixas no mesmo funil, use o filtro <strong>Caixa</strong> e os badges nos cards
+                        (nome da caixa) para distinguir a origem (AC6).
                     </li>
                 </ol>
+            </section>
+
+            <section className="space-y-2 rounded-xl border border-border-light dark:border-border-dark bg-black/[0.02] dark:bg-white/[0.03] p-4">
+                <h2 className="text-base font-semibold text-text-main-light dark:text-text-main-dark">
+                    Read-only e funil fixo (AC15 — Sprint 13)
+                </h2>
+                <p>
+                    Usuários <strong>read_only</strong> não veem o seletor de funil no Kanban; o board usa apenas o{" "}
+                    <code className="text-xs bg-black/5 dark:bg-white/10 px-1 rounded">assigned_funnel_id</code> definido na
+                    criação. A API retorna <strong>403</strong> se <code className="text-xs bg-black/5 px-1 rounded">GET /api/leads/kanban?funnel_id=</code> for
+                    diferente do funil atribuído. O app remove query inválida e exibe o aviso &quot;Somente leitura — funil fixo&quot;.
+                </p>
+                <p className="text-xs text-text-secondary-light">
+                    Esta validação é feita no app tenant (Kanban), não no Console Admin — o console não substitui essa regra
+                    (S13-UI-3).
+                </p>
             </section>
         </div>
     );

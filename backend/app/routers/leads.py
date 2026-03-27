@@ -404,11 +404,17 @@ def _resolve_kanban_scope(
     """Retorna (tenant_id dos dados no banco, funnel_id resolvido)."""
     uid = str(user_id)
     if eff.is_read_only:
+        q_in = (funnel_id_query or "").strip()
         fid = eff.assigned_funnel_id
         if not fid:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Funil não atribuído para usuário read_only.",
+            )
+        if q_in and q_in != str(fid):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Não é permitido consultar outro funil (read_only).",
             )
         fres = (
             supabase.table("funnels")
@@ -525,7 +531,7 @@ def _fetch_leads_for_funnel(
 async def get_kanban_board(
     funnel_id: Optional[str] = Query(
         None,
-        description="Funil do board; default = funil Default do tenant. Ignorado para read_only (usa assigned_funnel_id).",
+        description="Funil do board; default = funil Default do tenant. read_only: deve ser o funil atribuído ou omitido; outro valor retorna 403.",
     ),
     user=Depends(get_current_user),
     supabase: SupabaseClient = Depends(get_supabase),

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useId, useCallback } from "react";
-import { useSearchParams } from "next/navigation";
+import { useSearchParams, useRouter } from "next/navigation";
 import { createPortal } from "react-dom";
 import {
     DndContext,
@@ -32,9 +32,12 @@ import {
     getStageAutomation,
     listOrgFunnelStages,
     listOrgMembers,
+    listInboxes,
+    listMyFunnels,
     listOrganizationFunnels,
     putStageAutomation,
     type LeadActivityDTO,
+    type FunnelListItem,
     type OrganizationFunnelItem,
     type OrganizationMemberDTO,
 } from "@/lib/api";
@@ -52,6 +55,8 @@ interface KanbanCard {
     priorityColor: string;
     desc: string;
     stageId: string;
+    inboxId?: string | null;
+    inboxName?: string | null;
     products_json?: {
         id: string;
         name: string;
@@ -72,7 +77,19 @@ interface KanbanStage {
 }
 
 // Sortable Card Component
-function SortableCard({ card, onOpenChat, onOpenMenu }: { card: KanbanCard; onOpenChat: (id: string) => void; onOpenMenu: (id: string, anchor: DOMRect) => void }) {
+function SortableCard({
+    card,
+    onOpenChat,
+    onOpenMenu,
+    showInboxBadge,
+    readOnly,
+}: {
+    card: KanbanCard;
+    onOpenChat: (id: string) => void;
+    onOpenMenu: (id: string, anchor: DOMRect) => void;
+    showInboxBadge?: boolean;
+    readOnly?: boolean;
+}) {
     const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: card.id, data: { type: "card" } });
     const style = {
         transform: CSS.Transform.toString(transform),
@@ -87,6 +104,14 @@ function SortableCard({ card, onOpenChat, onOpenMenu }: { card: KanbanCard; onOp
         >
             <div className="flex justify-between items-start mb-2">
                 <div className="flex-1 min-w-0">
+                    {showInboxBadge && card.inboxName && (
+                        <span
+                            className="inline-block mb-1 text-[10px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded-md bg-slate-200/90 dark:bg-slate-600/80 text-slate-700 dark:text-slate-200 max-w-full truncate"
+                            title={`Caixa: ${card.inboxName}`}
+                        >
+                            {card.inboxName}
+                        </span>
+                    )}
                     <h3 className="text-sm font-bold truncate">{card.name}</h3>
                     {card.phone && <p className="text-xs text-text-secondary-light dark:text-text-secondary-dark">Tel: {card.phone}</p>}
                     <p className="text-xs text-text-secondary-light dark:text-text-secondary-dark mt-0.5">Contato: {card.contact}</p>
@@ -108,9 +133,11 @@ function SortableCard({ card, onOpenChat, onOpenMenu }: { card: KanbanCard; onOp
                     <button onClick={(e) => { e.stopPropagation(); onOpenChat(card.id); }} className="text-text-secondary-light hover:text-green-500 transition-colors p-1 rounded" title="Abrir Chat">
                         <span className="material-symbols-outlined text-lg">chat</span>
                     </button>
+                    {!readOnly && (
                     <button onClick={(e) => { e.stopPropagation(); onOpenMenu(card.id, (e.currentTarget as HTMLButtonElement).getBoundingClientRect()); }} className="text-text-secondary-light hover:text-primary transition-colors p-1 rounded" title="Opções">
                         <span className="material-symbols-outlined text-lg">more_vert</span>
                     </button>
+                    )}
                 </div>
             </div>
         </div>
@@ -119,14 +146,18 @@ function SortableCard({ card, onOpenChat, onOpenMenu }: { card: KanbanCard; onOp
 
 function SortableStageShell({
     stageId,
+    disabled,
     children,
 }: {
     stageId: string;
+    /** read_only: não reordenar colunas */
+    disabled?: boolean;
     children: (dragHandle: { attributes: any; listeners: any }) => React.ReactNode;
 }) {
     const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
         id: stageId,
         data: { type: "stage" },
+        disabled: Boolean(disabled),
     });
     const style = {
         transform: CSS.Transform.toString(transform),
@@ -170,6 +201,7 @@ const PRIORITY_MAP: Record<string, { label: string; color: string }> = {
 
 export default function KanbanPage() {
     const searchParams = useSearchParams();
+    const router = useRouter();
     const funnelIdFromUrl = searchParams.get("funnel_id");
     const dndId = useId();
     const isFetchingKanbanRef = useRef(false);
@@ -180,6 +212,16 @@ export default function KanbanPage() {
     const [stages, setStages] = useState<KanbanStage[]>([]);
     const [cards, setCards] = useState<KanbanCard[]>([]);
     const [resolvedFunnelId, setResolvedFunnelId] = useState<string | null>(null);
+
+    const [authSession, setAuthSession] = useState<{
+        loaded: boolean;
+        isReadOnly: boolean;
+        isOrgAdmin: boolean;
+    }>({ loaded: false, isReadOnly: false, isOrgAdmin: true });
+    const [myFunnels, setMyFunnels] = useState<FunnelListItem[]>([]);
+    const [inboxNameById, setInboxNameById] = useState<Record<string, string>>({});
+    const [inboxesForBoard, setInboxesForBoard] = useState<{ id: string; name: string }[]>([]);
+    const [filterInboxId, setFilterInboxId] = useState("");
 
     const [automationOpen, setAutomationOpen] = useState(false);
     const [automationStageId, setAutomationStageId] = useState<string | null>(null);
@@ -226,6 +268,8 @@ export default function KanbanPage() {
                         stage: string;
                         whatsapp_chat_id: string | null;
                         products_json?: any[];
+                        inbox_id?: string | null;
+                        funnel_id?: string | null;
                     }>;
                 }>;
             }>(kanbanPath, { method: "GET", token });
@@ -244,6 +288,7 @@ export default function KanbanPage() {
                 const stageId = col.stage_id || `s-${col.stage}`;
                 for (const lead of col.leads) {
                     const pri = lead.priority ? PRIORITY_MAP[lead.priority] : null;
+                    const iid = lead.inbox_id || null;
                     allCards.push({
                         id: lead.id,
                         stageId,
@@ -255,6 +300,8 @@ export default function KanbanPage() {
                         priorityColor: pri?.color || "",
                         desc: lead.notes || "",
                         products_json: lead.products_json || [],
+                        inboxId: iid,
+                        inboxName: null,
                     });
                 }
             }
@@ -268,9 +315,47 @@ export default function KanbanPage() {
         }
     }, [funnelIdFromUrl]);
 
-    // Initial fetch + automatic refresh to keep new conversations updated
+    // Sessão + saneamento de URL (read_only não pode trocar funil via ?funnel_id=)
+    useEffect(() => {
+        let cancelled = false;
+        (async () => {
+            const token = localStorage.getItem("access_token");
+            if (!token) {
+                if (!cancelled) setAuthSession({ loaded: true, isReadOnly: false, isOrgAdmin: true });
+                return;
+            }
+            try {
+                const me = await getAuthMe(token);
+                if (cancelled) return;
+                if (
+                    me.is_read_only &&
+                    me.assigned_funnel_id &&
+                    funnelIdFromUrl &&
+                    funnelIdFromUrl.trim() !== me.assigned_funnel_id
+                ) {
+                    router.replace("/kanban");
+                }
+                setAuthSession({
+                    loaded: true,
+                    isReadOnly: Boolean(me.is_read_only),
+                    isOrgAdmin: me.is_org_admin !== false,
+                });
+            } catch {
+                if (!cancelled) setAuthSession({ loaded: true, isReadOnly: false, isOrgAdmin: true });
+            }
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, [funnelIdFromUrl, router]);
+
     useEffect(() => {
         setIsMounted(true);
+    }, []);
+
+    // Kanban: só após auth; polling mantém cards atualizados
+    useEffect(() => {
+        if (!authSession.loaded) return;
         void fetchKanban();
 
         const refreshInterval = window.setInterval(() => {
@@ -286,7 +371,48 @@ export default function KanbanPage() {
             window.clearInterval(refreshInterval);
             window.removeEventListener("focus", handleWindowFocus);
         };
-    }, [fetchKanban]);
+    }, [authSession.loaded, fetchKanban]);
+
+    // Funis do tenant — só admin (seletor no header)
+    useEffect(() => {
+        if (!authSession.loaded || authSession.isReadOnly || !authSession.isOrgAdmin) return;
+        const token = localStorage.getItem("access_token");
+        if (!token) return;
+        listMyFunnels(token).then(setMyFunnels).catch(() => setMyFunnels([]));
+    }, [authSession.loaded, authSession.isReadOnly, authSession.isOrgAdmin]);
+
+    // Inboxes do tenant — badge quando >1 caixa no mesmo funil
+    useEffect(() => {
+        if (!resolvedFunnelId) return;
+        const token = localStorage.getItem("access_token");
+        if (!token) return;
+        listInboxes(token)
+            .then((rows) => {
+                const forFunnel = rows.filter((r) => r.funnel_id === resolvedFunnelId);
+                setInboxesForBoard(forFunnel.map((r) => ({ id: r.id, name: r.name })));
+                const m: Record<string, string> = {};
+                for (const r of rows) {
+                    m[r.id] = r.name;
+                }
+                setInboxNameById(m);
+            })
+            .catch(() => {
+                setInboxesForBoard([]);
+            });
+    }, [resolvedFunnelId]);
+
+    useEffect(() => {
+        if (inboxesForBoard.length <= 1) return;
+        setCards((prev) =>
+            prev.map((c) =>
+                c.inboxId ? { ...c, inboxName: inboxNameById[c.inboxId] ?? c.inboxName } : c
+            )
+        );
+    }, [inboxNameById, inboxesForBoard.length]);
+
+    useEffect(() => {
+        setFilterInboxId("");
+    }, [resolvedFunnelId]);
 
     // Removed localStorage sync — data now comes from API
 
@@ -580,6 +706,7 @@ export default function KanbanPage() {
     // Filter & search
     const filteredCards = cards.filter((c) => {
         if (filterPriority && c.priority !== filterPriority) return false;
+        if (filterInboxId && c.inboxId !== filterInboxId) return false;
         if (searchQuery) {
             const q = searchQuery.toLowerCase();
             return c.name.toLowerCase().includes(q) || c.contact.toLowerCase().includes(q) || c.desc.toLowerCase().includes(q);
@@ -591,6 +718,12 @@ export default function KanbanPage() {
         return 0;
     });
     const activeMenuCard = editCardMenu ? cards.find((c) => c.id === editCardMenu) || null : null;
+
+    const isReadOnlyUi = authSession.loaded && authSession.isReadOnly;
+    const showFunnelSelector =
+        authSession.loaded && !authSession.isReadOnly && authSession.isOrgAdmin && myFunnels.length > 0;
+    const showInboxBadge = inboxesForBoard.length > 1;
+    const showBlockingLoading = !authSession.loaded || isLoading;
 
     const parseCurrency = (val: string) => {
         if (!val) return 0;
@@ -619,6 +752,7 @@ export default function KanbanPage() {
     };
 
     async function openAutomationModal(stageId: string, stageTitle: string) {
+        if (authSession.isReadOnly) return;
         const token = localStorage.getItem("access_token") || undefined;
         setAutomationStageId(stageId);
         setAutomationStageTitle(stageTitle);
@@ -818,6 +952,7 @@ export default function KanbanPage() {
         const activeType = active.data.current?.type;
 
         if (activeType === "stage") {
+            if (isReadOnlyUi) return;
             if (!over || active.id === over.id) return;
             const oldIndex = stages.findIndex((s) => s.id === active.id);
             const newIndex = stages.findIndex((s) => s.id === over.id);
@@ -1102,8 +1237,50 @@ export default function KanbanPage() {
     return (
         <div className="flex flex-col h-full">
             {/* Header */}
-            <header className="bg-surface-light dark:bg-surface-dark border-b border-border-light dark:border-border-dark h-14 flex items-center justify-between px-6 flex-shrink-0 z-10">
-                <div className="flex items-center gap-3">
+            <header className="bg-surface-light dark:bg-surface-dark border-b border-border-light dark:border-border-dark min-h-14 flex flex-wrap items-center justify-between gap-y-2 px-6 py-2 flex-shrink-0 z-10">
+                <div className="flex items-center gap-3 flex-wrap">
+                    {showFunnelSelector && (
+                        <label className="flex items-center gap-2 text-sm text-text-main-light dark:text-text-main-dark">
+                            <span className="text-text-secondary-light dark:text-text-secondary-dark whitespace-nowrap">Funil</span>
+                            <select
+                                value={resolvedFunnelId || ""}
+                                onChange={(e) => {
+                                    const v = e.target.value;
+                                    if (!v) router.push("/kanban");
+                                    else router.push(`/kanban?funnel_id=${encodeURIComponent(v)}`);
+                                }}
+                                className="px-2 py-1.5 rounded-lg border border-border-light dark:border-border-dark bg-white dark:bg-slate-800 text-sm min-w-[140px]"
+                            >
+                                {myFunnels.map((f) => (
+                                    <option key={f.id} value={f.id}>
+                                        {f.name}
+                                    </option>
+                                ))}
+                            </select>
+                        </label>
+                    )}
+                    {isReadOnlyUi && (
+                        <span className="text-xs font-medium text-amber-800 dark:text-amber-200 bg-amber-50 dark:bg-amber-900/35 px-2 py-1 rounded-lg border border-amber-200/80 dark:border-amber-800/60">
+                            Somente leitura — funil fixo
+                        </span>
+                    )}
+                    {showInboxBadge && (
+                        <label className="flex items-center gap-2 text-sm text-text-main-light dark:text-text-main-dark">
+                            <span className="text-text-secondary-light dark:text-text-secondary-dark whitespace-nowrap">Caixa</span>
+                            <select
+                                value={filterInboxId}
+                                onChange={(e) => setFilterInboxId(e.target.value)}
+                                className="px-2 py-1.5 rounded-lg border border-border-light dark:border-border-dark bg-white dark:bg-slate-800 text-sm min-w-[120px]"
+                            >
+                                <option value="">Todas</option>
+                                {inboxesForBoard.map((ib) => (
+                                    <option key={ib.id} value={ib.id}>
+                                        {ib.name}
+                                    </option>
+                                ))}
+                            </select>
+                        </label>
+                    )}
                     {/* Filter */}
                     <div className="relative" ref={filterRef}>
                         <button onClick={() => setShowFilter(!showFilter)} className="inline-flex items-center px-3 py-1.5 border border-border-light dark:border-border-dark text-sm font-medium rounded-lg bg-surface-light dark:bg-surface-dark hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors">
@@ -1152,7 +1329,7 @@ export default function KanbanPage() {
                     )}
                 </div>
                 <div className="flex items-center gap-3">
-                    {lastReorderAttempt && (
+                    {lastReorderAttempt && !isReadOnlyUi && (
                         <button
                             onClick={() => { void persistStageOrder(lastReorderAttempt, [...stages]); }}
                             className="text-xs px-2 py-1 rounded border border-amber-300 text-amber-700 bg-amber-50 hover:bg-amber-100"
@@ -1174,7 +1351,8 @@ export default function KanbanPage() {
                         <span className="material-symbols-outlined mr-1 text-lg">trending_up</span>
                         Relatório
                     </button>
-                    {/* Add menu */}
+                    {/* Add menu — oculto para read_only (S13) */}
+                    {!isReadOnlyUi && (
                     <div className="relative" ref={showAddMenu ? menuRef : null}>
                         <button onClick={() => setShowAddMenu(!showAddMenu)} className="inline-flex items-center px-4 py-2 text-sm font-medium rounded-lg text-white bg-primary hover:bg-primary-hover transition-colors shadow-sm">
                             <span className="material-symbols-outlined mr-1 text-lg">add</span>
@@ -1193,11 +1371,12 @@ export default function KanbanPage() {
                             </div>
                         )}
                     </div>
+                    )}
                 </div>
             </header>
 
             {/* Main content */}
-            {isLoading ? (
+            {showBlockingLoading ? (
                 <div className="flex-1 flex items-center justify-center">
                     <div className="text-center">
                         <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary mx-auto mb-3"></div>
@@ -1219,12 +1398,13 @@ export default function KanbanPage() {
                             {stages.map((stage) => {
                                 const stageCards = filteredCards.filter((c) => c.stageId === stage.id);
                                 return (
-                                    <SortableStageShell key={stage.id} stageId={stage.id}>
+                                    <SortableStageShell key={stage.id} stageId={stage.id} disabled={isReadOnlyUi}>
                                     {({ attributes, listeners }) => (
                                     <div data-stage-id={stage.id} className="w-[310px] flex flex-col flex-shrink-0 bg-slate-50/50 dark:bg-slate-800/30 rounded-xl border border-border-light/60 dark:border-border-dark/60">
                                         {/* Stage header */}
                                         <div className="p-3 flex items-center justify-between border-b border-border-light/50 dark:border-border-dark/50">
                                             <div className="flex items-center gap-2 flex-1 min-w-0">
+                                                {!isReadOnlyUi && (
                                                 <button
                                                     type="button"
                                                     {...attributes}
@@ -1234,6 +1414,7 @@ export default function KanbanPage() {
                                                 >
                                                     <span className="material-symbols-outlined text-base">drag_indicator</span>
                                                 </button>
+                                                )}
                                                 {editStage === stage.id ? (
                                                     <form onSubmit={(e) => { e.preventDefault(); void renameStage(stage.id); }} className="flex items-center gap-2 flex-1 min-w-0">
                                                         <input autoFocus value={editStageName} onChange={(e) => setEditStageName(e.target.value)}
@@ -1248,8 +1429,11 @@ export default function KanbanPage() {
                                                 ) : (
                                                     <div className="flex items-center gap-2 min-w-0 flex-1 overflow-hidden">
                                                         <span
-                                                            onClick={() => { setEditStage(stage.id); setEditStageName(stage.title); }}
-                                                            className="text-sm font-semibold truncate hover:text-primary transition-colors cursor-pointer block min-w-0 flex-1"
+                                                            onClick={() => {
+                                                                if (isReadOnlyUi) return;
+                                                                setEditStage(stage.id); setEditStageName(stage.title);
+                                                            }}
+                                                            className={`text-sm font-semibold truncate block min-w-0 flex-1 ${isReadOnlyUi ? "cursor-default" : "hover:text-primary transition-colors cursor-pointer"}`}
                                                             title={stage.title}
                                                         >
                                                             {stage.title}
@@ -1269,6 +1453,7 @@ export default function KanbanPage() {
                                                 {isSavingStageOrder && <span className="mr-1 text-[10px]">Salvando</span>}
                                                 {isSavingCardMove && <span className="mr-1 text-[10px]">Movendo</span>}
                                                 {formatCurrency(stageCards.reduce((acc, c) => acc + parseCurrency(c.value), 0))}
+                                                {!isReadOnlyUi && (
                                                 <button
                                                     onClick={() => { void deleteStage(stage.id); }}
                                                     className="ml-1 p-0.5 hover:bg-red-100 dark:hover:bg-red-900/20 rounded-full text-red-500"
@@ -1276,9 +1461,12 @@ export default function KanbanPage() {
                                                 >
                                                     <span className="material-symbols-outlined text-lg">delete</span>
                                                 </button>
+                                                )}
+                                                {!isReadOnlyUi && (
                                                 <button onClick={() => { setShowNewStage(true); setShowNewStageAsConversion(false); }} className="ml-1 p-0.5 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-full text-primary" title="Nova etapa">
                                                     <span className="material-symbols-outlined text-lg">add</span>
                                                 </button>
+                                                )}
                                             </div>
                                         </div>
                                         {/* Cards */}
@@ -1288,6 +1476,8 @@ export default function KanbanPage() {
                                                     <div key={card.id} className="relative">
                                                         <SortableCard
                                                             card={card}
+                                                            readOnly={isReadOnlyUi}
+                                                            showInboxBadge={showInboxBadge}
                                                             onOpenChat={(id) => openChat(id)}
                                                             onOpenMenu={(id, anchor) => {
                                                                 if (editCardMenu === id) {
@@ -1308,6 +1498,7 @@ export default function KanbanPage() {
                                         </SortableContext>
                                         {/* Add card */}
                                         <div className="p-3 border-t border-border-light/50 dark:border-border-dark/50 bg-slate-50/50 dark:bg-slate-800/30 space-y-2">
+                                            {!isReadOnlyUi && (
                                             <button
                                                 type="button"
                                                 onClick={() => void openAutomationModal(stage.id, stage.title)}
@@ -1315,7 +1506,8 @@ export default function KanbanPage() {
                                             >
                                                 Automação
                                             </button>
-                                            {showNewCard === stage.id ? (
+                                            )}
+                                            {!isReadOnlyUi && showNewCard === stage.id ? (
                                                 <div className="bg-surface-light dark:bg-surface-dark p-3 rounded-lg border border-primary/40 shadow-sm space-y-2">
                                                     <input value={newCard.name} onChange={(e) => setNewCard({ ...newCard, name: e.target.value })} placeholder="Nome do negócio" className="w-full px-3 py-1.5 border border-border-light dark:border-border-dark rounded-lg text-sm bg-white dark:bg-slate-800 focus:ring-1 focus:ring-primary focus:border-transparent" />
                                                     <input value={newCard.contact} onChange={(e) => setNewCard({ ...newCard, contact: e.target.value })} placeholder="Nome do contato" className="w-full px-3 py-1.5 border border-border-light dark:border-border-dark rounded-lg text-sm bg-white dark:bg-slate-800 focus:ring-1 focus:ring-primary focus:border-transparent" />
@@ -1363,12 +1555,12 @@ export default function KanbanPage() {
                                                         <button onClick={() => setShowNewCard(null)} className="flex-1 py-1.5 border border-border-light dark:border-border-dark rounded-lg text-xs font-medium hover:bg-slate-50">Cancelar</button>
                                                     </div>
                                                 </div>
-                                            ) : (
+                                            ) : !isReadOnlyUi ? (
                                                 <button onClick={() => setShowNewCard(stage.id)} className="w-full py-2.5 border-2 border-dashed border-border-light dark:border-border-dark rounded-lg text-text-secondary-light hover:text-primary hover:border-primary/50 hover:bg-primary/5 transition-all flex items-center justify-center gap-2 group">
                                                     <span className="material-symbols-outlined text-lg group-hover:scale-110 transition-transform">add_circle_outline</span>
                                                     <span className="text-xs font-semibold uppercase tracking-wide">Adicionar</span>
                                                 </button>
-                                            )}
+                                            ) : null}
                                         </div>
                                     </div>
                                     )}
@@ -1377,7 +1569,7 @@ export default function KanbanPage() {
                             })}
 
                             {/* New stage inline */}
-                            {showNewStage && (
+                            {showNewStage && !isReadOnlyUi && (
                                 <div className="w-[310px] flex flex-col flex-shrink-0 bg-surface-light dark:bg-surface-dark rounded-xl border-2 border-dashed border-primary/40 p-4 space-y-3">
                                     <input autoFocus value={newStageName} onChange={(e) => setNewStageName(e.target.value)}
                                         placeholder="Nome da etapa" className="px-3 py-2 border border-border-light dark:border-border-dark rounded-lg text-sm bg-white dark:bg-slate-800 focus:ring-1 focus:ring-primary focus:border-transparent" />
@@ -1440,16 +1632,22 @@ export default function KanbanPage() {
                     className="fixed w-48 bg-surface-light dark:bg-surface-dark rounded-xl shadow-2xl border border-border-light dark:border-border-dark z-[80] py-1"
                     style={{ top: editCardMenuPosition.top, left: editCardMenuPosition.left }}
                 >
+                    {!isReadOnlyUi && (
                     <button onClick={() => { openEditCard(activeMenuCard); setEditCardMenu(null); setEditCardMenuPosition(null); }} className="w-full px-4 py-2 text-sm hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-2">
                         <span className="material-symbols-outlined text-base">edit</span> Editar Card
                     </button>
+                    )}
                     <button onClick={() => { openChat(activeMenuCard.id); setEditCardMenu(null); setEditCardMenuPosition(null); }} className="w-full px-4 py-2 text-sm hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-2">
                         <span className="material-symbols-outlined text-base">chat</span> Ver Chat
                     </button>
+                    {!isReadOnlyUi && (
+                    <>
                     <div className="h-px bg-border-light dark:bg-border-dark mx-2 my-1" />
                     <button onClick={() => { setDeleteCardId(activeMenuCard.id); setEditCardMenu(null); setEditCardMenuPosition(null); }} className="w-full px-4 py-2 text-sm hover:bg-red-50 dark:hover:bg-red-900/20 text-red-600 flex items-center gap-2">
                         <span className="material-symbols-outlined text-base">delete</span> Excluir
                     </button>
+                    </>
+                    )}
                 </div>,
                 document.body
             )}

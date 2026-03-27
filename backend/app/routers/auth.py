@@ -10,7 +10,7 @@ from supabase import Client as SupabaseClient
 
 from app.dependencies import get_supabase, get_current_user, require_org_admin, require_superadmin
 from app.models.user import LoginRequest, OTPVerifyRequest, TokenResponse, RefreshRequest, UserProfile
-from app.authz import EffectiveRole
+from app.authz import EffectiveRole, fetch_effective_role
 
 router = APIRouter()
 
@@ -130,13 +130,13 @@ async def get_me(
     user=Depends(get_current_user),
     supabase: SupabaseClient = Depends(get_supabase),
 ):
-    """Perfil atual + flags RBAC (`is_superadmin`, `organization_id`) a partir de `profiles`."""
-    is_superadmin = False
-    organization_id: Optional[str] = None
+    """Perfil atual + flags RBAC (superadmin, org, read_only, funil atribuído)."""
+    eff = fetch_effective_role(supabase, user)
+    full_name: Optional[str] = None
     try:
         res = (
             supabase.table("profiles")
-            .select("is_superadmin, organization_id")
+            .select("full_name, is_superadmin, organization_id")
             .eq("id", str(user.id))
             .limit(1)
             .execute()
@@ -144,20 +144,24 @@ async def get_me(
         rows = res.data or []
         if rows:
             row = rows[0]
-            is_superadmin = bool(row.get("is_superadmin"))
-            oid = row.get("organization_id")
-            organization_id = str(oid) if oid is not None else None
+            full_name = row.get("full_name")
     except Exception:
         pass
+
+    oid = eff.profile_organization_id
+    organization_id = str(oid) if oid is not None else None
 
     return UserProfile(
         id=str(user.id),
         email=user.email or "",
-        full_name=user.user_metadata.get("full_name") if user.user_metadata else None,
+        full_name=full_name or (user.user_metadata.get("full_name") if user.user_metadata else None),
         role=user.role,
         avatar_url=user.user_metadata.get("avatar_url") if user.user_metadata else None,
-        is_superadmin=is_superadmin,
+        is_superadmin=eff.is_superadmin,
         organization_id=organization_id,
+        is_read_only=eff.is_read_only,
+        assigned_funnel_id=eff.assigned_funnel_id,
+        is_org_admin=eff.is_org_admin,
     )
 
 

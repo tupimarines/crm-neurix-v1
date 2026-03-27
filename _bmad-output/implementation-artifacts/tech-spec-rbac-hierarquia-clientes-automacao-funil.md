@@ -365,15 +365,15 @@ Este plano incorpora o documento complementar **`tech-spec-admin-console-ui-rbac
 
 #### Sprint 13 — Kanban UI funil + inbox + read_only (3 tasks) + Console Admin — entrada global
 
-- [ ] **S13-T1:** **Admin:** seletor de funil + badge inbox se >1 caixa no funil. **Read_only:** **sem** seletor de funil; board fixo no funil atribuído.
-- [ ] **S13-T2:** Desabilitar criar/editar card e etapas para read_only.
-- [ ] **S13-T3:** Garantir que nenhuma rota/front permita read_only “trocar” de funil (URL com `funnel_id` diferente → 403 ou redirect seguro).
+- [x] **S13-T1:** **Admin:** seletor de funil + badge inbox se >1 caixa no funil. **Read_only:** **sem** seletor de funil; board fixo no funil atribuído.
+- [x] **S13-T2:** Desabilitar criar/editar card e etapas para read_only.
+- [x] **S13-T3:** Garantir que nenhuma rota/front permita read_only “trocar” de funil (URL com `funnel_id` diferente → 403 ou redirect seguro).
 
 **Console Admin:**
 
-- [ ] **S13-UI-1:** Em **`frontend-next/components/sidebar.tsx`** (ou menu principal do dashboard), exibir link **“Console Admin”** **apenas** quando `is_superadmin` (obtido via hook/context que chama `/api/auth/me` uma vez por sessão ou cache). Ícone discreto (ex.: **shield / admin_panel_settings**).
-- [ ] **S13-UI-2:** Garantir **paridade**: superadmin consegue ir ao Kanban normal e ao console sem conflito de estado (tokens únicos).
-- [ ] **S13-UI-3:** Validar **AC15** no Kanban para read_only; o console **não** substitui essa validação — apenas documentação cruzada na ajuda do admin.
+- [x] **S13-UI-1:** Em **`frontend-next/components/sidebar.tsx`** (ou menu principal do dashboard), exibir link **“Console Admin”** **apenas** quando `is_superadmin` (obtido via hook/context que chama `/api/auth/me` uma vez por sessão ou cache). Ícone discreto (ex.: **shield / admin_panel_settings**).
+- [x] **S13-UI-2:** Garantir **paridade**: superadmin consegue ir ao Kanban normal e ao console sem conflito de estado (tokens únicos).
+- [x] **S13-UI-3:** Validar **AC15** no Kanban para read_only; o console **não** substitui essa validação — apenas documentação cruzada na ajuda do admin.
 
 #### Sprint 14 — Front API + deploy (3 tasks) + Console Admin — endurecimento e docs
 
