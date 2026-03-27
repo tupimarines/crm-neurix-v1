@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 
-import { getApiBase, getAuthMe } from "@/lib/api";
+import { getApiUrl, getAuthMe } from "@/lib/api";
 import { persistAuthSession } from "@/lib/supabase";
 
 export default function LoginPage() {
@@ -21,7 +21,7 @@ export default function LoginPage() {
         setLoading(true);
 
         try {
-            const res = await fetch(`${getApiBase()}/api/auth/login`, {
+            const res = await fetch(getApiUrl("/api/auth/login"), {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ email, password }),

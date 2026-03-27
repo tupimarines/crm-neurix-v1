@@ -28,27 +28,60 @@ export function getApiBase(): string {
     return normalizeConfiguredApiUrl(process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000");
 }
 
+/** Mesmo site que o front: path relativo herda HTTPS. Localhost com porta da API ≠ porta do Next usa URL absoluta. */
+function shouldUseRelativeApiPath(apiBase: string): boolean {
+    if (typeof window === "undefined") return false;
+    try {
+        const u = new URL(apiBase);
+        if (u.hostname !== window.location.hostname) return false;
+        const local =
+            u.hostname === "localhost" ||
+            u.hostname === "127.0.0.1" ||
+            u.hostname === "::1" ||
+            u.hostname === "[::1]";
+        if (local) {
+            return u.port === window.location.port;
+        }
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+/** Nunca devolver `http://` em página HTTPS (evita Mixed Content no fallback). */
+function upgradeHttpToHttpsIfSecurePage(absoluteUrl: string): string {
+    if (typeof window === "undefined") return absoluteUrl;
+    if (window.location.protocol !== "https:") return absoluteUrl;
+    try {
+        const u = new URL(absoluteUrl);
+        if (u.protocol === "http:") {
+            u.protocol = "https:";
+            return u.href;
+        }
+    } catch {
+        /* ignore */
+    }
+    return absoluteUrl;
+}
+
 /**
- * URL final para fetch. Quando API e página compartilham o mesmo `host` (hostname:porta),
- * usa path relativo — o browser resolve com o **mesmo esquema da página** (HTTPS), mesmo se
- * `NEXT_PUBLIC_API_URL` estiver em `http://` (evita Mixed Content).
- * Não usar só `origin`: http e https no mesmo host têm origins diferentes.
+ * URL final para fetch. Mesmo hostname (produção) → path relativo.
+ * Se precisar de URL absoluta, força https em página https.
  */
 export function getApiUrl(path: string): string {
     const pathNorm = path.startsWith("/") ? path : `/${path}`;
     if (typeof window !== "undefined") {
         try {
             const base = getApiBase();
-            const url = new URL(base);
-            if (url.host === window.location.host) {
+            if (shouldUseRelativeApiPath(base)) {
                 return pathNorm;
             }
         } catch {
-            /* fallback para full URL */
+            /* fallback abaixo */
         }
     }
     const base = getApiBase().replace(/\/$/, "");
-    return base + pathNorm;
+    return upgradeHttpToHttpsIfSecurePage(base + pathNorm);
 }
 
 interface ApiOptions extends RequestInit {
