@@ -20,6 +20,7 @@ from app.models.lead import (
 from app.models.chat_message import SendMessagePayload
 from app.observability import get_logger, metrics
 from app.services.uazapi_service import get_uazapi_service
+from app.services.webhook_lead_context import get_uazapi_instance_token_for_tenant
 from app.services.promotion_engine import apply_promotion_discount, round_money, select_best_promotion
 from app.services.lead_board import (
     apply_destination_mirror,
@@ -1491,7 +1492,7 @@ async def get_lead_chat_history(
     Returns messages fetched live from WhatsApp through the Uazapi integration.
     """
     lead_response = supabase.table("leads") \
-        .select("id, company_name, contact_name, whatsapp_chat_id") \
+        .select("id, company_name, contact_name, whatsapp_chat_id, inbox_id") \
         .eq("id", lead_id) \
         .eq("tenant_id", user.id) \
         .single() \
@@ -1512,19 +1513,11 @@ async def get_lead_chat_history(
             "hasMore": False,
         }
 
-    # Fetch instance_token for tenant
-    settings_response = supabase.table("settings") \
-        .select("value") \
-        .eq("key", "uazapi_instance_token") \
-        .eq("tenant_id", user.id) \
-        .limit(1) \
-        .execute()
-    
-    instance_token = None
-    if settings_response.data and len(settings_response.data) > 0:
-        val = settings_response.data[0].get("value")
-        if val:
-            instance_token = val.strip('"') if isinstance(val, str) else str(val)
+    instance_token = get_uazapi_instance_token_for_tenant(
+        supabase,
+        tenant_id=str(user.id),
+        inbox_id=str(lead["inbox_id"]) if lead.get("inbox_id") else None,
+    )
 
     # Fetch directly from Uazapi
     uazapi = get_uazapi_service()
@@ -1574,7 +1567,7 @@ async def send_message_to_lead(
 
     # Get the lead's WhatsApp chat ID
     lead_response = supabase.table("leads") \
-        .select("id, company_name, contact_name, whatsapp_chat_id, tenant_id") \
+        .select("id, company_name, contact_name, whatsapp_chat_id, tenant_id, inbox_id") \
         .eq("id", lead_id) \
         .eq("tenant_id", user.id) \
         .single() \
@@ -1592,19 +1585,11 @@ async def send_message_to_lead(
             detail="Este lead não possui WhatsApp vinculado (whatsapp_chat_id).",
         )
 
-    # Fetch instance_token for tenant
-    settings_response = supabase.table("settings") \
-        .select("value") \
-        .eq("key", "uazapi_instance_token") \
-        .eq("tenant_id", user.id) \
-        .limit(1) \
-        .execute()
-    
-    instance_token = None
-    if settings_response.data and len(settings_response.data) > 0:
-        val = settings_response.data[0].get("value")
-        if val:
-            instance_token = val.strip('"') if isinstance(val, str) else str(val)
+    instance_token = get_uazapi_instance_token_for_tenant(
+        supabase,
+        tenant_id=str(lead.get("tenant_id") or user.id),
+        inbox_id=str(lead["inbox_id"]) if lead.get("inbox_id") else None,
+    )
 
     # Extract the phone number from the JID
     phone_number = whatsapp_chat_id.replace("@s.whatsapp.net", "").replace("@g.us", "")

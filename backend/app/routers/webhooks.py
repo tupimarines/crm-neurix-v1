@@ -64,11 +64,15 @@ async def receive_uazapi_webhook(
     except Exception:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Payload JSON inválido.")
 
-    # Enqueue the event in Redis for the worker to process
-    event = {
+    # Enqueue the event in Redis for the worker to process.
+    # A Uazapi pode enviar o token da instância no header `token` (mesmo padrão da API), não só no JSON.
+    hdr_token = request.headers.get("token") or request.headers.get("Token")
+    event: dict = {
         "source": "uazapi",
         "payload": body,
     }
+    if hdr_token:
+        event["instance_token"] = hdr_token.strip()
 
     await redis.rpush("neurix:webhook_queue", json.dumps(event))
 
@@ -107,10 +111,12 @@ async def generate_webhook_secret():
     Use this to create a UAZAPI_WEBHOOK_SECRET value.
     """
     new_secret = secrets.token_urlsafe(32)
+    settings = get_settings()
+    base = settings.PUBLIC_API_BASE_URL.rstrip("/")
     return {
         "secret": new_secret,
         "info": "Salve este secret no .env como UAZAPI_WEBHOOK_SECRET e use na URL do webhook Uazapi.",
-        "example_webhook_url": f"https://crm.wbtech.dev/api/webhooks/uazapi?secret={new_secret}",
+        "example_webhook_url": f"{base}/api/webhooks/uazapi?secret={new_secret}",
     }
 
 

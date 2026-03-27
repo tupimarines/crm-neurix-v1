@@ -12,11 +12,24 @@ import redis.asyncio as aioredis
 from app.config import get_settings
 from app.services.keyword_engine import keyword_engine
 from app.services.webhook_lead_context import (
+    find_inbox_by_instance_name,
     find_inbox_by_instance_token,
     find_legacy_tenant_id_for_token,
     get_first_stage_slug_for_funnel,
     resolve_or_create_crm_client,
 )
+
+
+def _resolve_uazapi_instance_token(payload: dict, event: dict) -> str:
+    """Uazapi envia o token em campos diferentes (body vs header); webhooks de teste às vezes só têm instanceName."""
+    for key in ("token", "instanceToken", "instance_token"):
+        v = payload.get(key)
+        if v:
+            return str(v).strip()
+    v = event.get("instance_token")
+    if v:
+        return str(v).strip()
+    return ""
 
 
 def _extract_content_type(message_data: dict) -> tuple[str, str, str | None, str | None, str | None]:
@@ -229,9 +242,13 @@ async def process_uazapi_event(event: dict, supabase_client, redis_client):
         if not content_text:
             content_text = f"[{content_type.upper()}]"
 
-    instance_token = payload.get("token") or event.get("token")
+    instance_token = _resolve_uazapi_instance_token(payload, event)
 
     inbox_row = find_inbox_by_instance_token(supabase_client, instance_token or "")
+    if not inbox_row:
+        inst_name = payload.get("instanceName") or payload.get("instance_name")
+        if inst_name:
+            inbox_row = find_inbox_by_instance_name(supabase_client, str(inst_name))
     legacy_tenant_id: str | None = None
     if not inbox_row and instance_token:
         legacy_tenant_id = find_legacy_tenant_id_for_token(supabase_client, instance_token)

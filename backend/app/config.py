@@ -32,10 +32,20 @@ class Settings(BaseSettings):
     TWO_FACTOR_ENABLED: bool = True
 
     # ── Uazapi (WhatsApp) ──
+    # URL pública do backend (sem barra final) — usada em POST /webhook na Uazapi e na doc do endpoint.
+    PUBLIC_API_BASE_URL: str = "https://crm.wbtech.dev"
     UAZAPI_URL: str = ""
     UAZAPI_ADMIN_TOKEN: str = ""  # For /instance/all and admin endpoints
     UAZAPI_INSTANCE_TOKEN: str = ""  # For /send/* endpoints (per-instance)
     UAZAPI_WEBHOOK_SECRET: str = ""  # URL-based secret for webhook validation
+
+    @property
+    def uazapi_webhook_callback_url(self) -> str:
+        """URL completa do webhook Uazapi → Neurix (inclui ?secret= se UAZAPI_WEBHOOK_SECRET estiver definido)."""
+        base = f"{self.PUBLIC_API_BASE_URL.rstrip('/')}/api/webhooks/uazapi"
+        if self.UAZAPI_WEBHOOK_SECRET:
+            return f"{base}?secret={self.UAZAPI_WEBHOOK_SECRET}"
+        return base
 
     # ── SMTP (for Supabase Auth 2FA emails) ──
     SMTP_HOST: str = ""

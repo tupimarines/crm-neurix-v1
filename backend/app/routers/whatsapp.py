@@ -32,6 +32,10 @@ class ConnectRequest(BaseModel):
 class TokenRequest(BaseModel):
     instance_token: str
     inbox_id: Optional[str] = Field(None, description="Se omitido, usa settings legado por tenant.")
+    instance_name: Optional[str] = Field(
+        None,
+        description="Nome da instância na Uazapi (o webhook envia em instanceName) — usado para resolver a caixa se o token não vier no payload.",
+    )
 
 
 def _legacy_settings_token(supabase: SupabaseClient, user_id: str) -> Optional[str]:
@@ -85,12 +89,16 @@ def _save_token_to_inbox(
     inbox_id: str,
     user_id: str,
     instance_token: str,
+    *,
+    instance_name: Optional[str] = None,
 ) -> None:
     row = _load_inbox_row(supabase, inbox_id, user_id)
     settings = dict(row.get("uazapi_settings") or {})
     if not isinstance(settings, dict):
         settings = {}
     settings[UAZAPI_TOKEN_KEY] = instance_token
+    if instance_name and str(instance_name).strip():
+        settings["instance_name"] = str(instance_name).strip()
     now = datetime.now(timezone.utc).isoformat()
     supabase.table("inboxes").update({"uazapi_settings": settings, "updated_at": now}).eq("id", inbox_id).eq(
         "tenant_id", user_id
@@ -108,9 +116,7 @@ def _configure_webhook(instance_token: str) -> None:
     from app.config import get_settings
 
     settings = get_settings()
-    webhook_url = "https://crm.wbtech.dev/api/webhooks/uazapi"
-    if settings.UAZAPI_WEBHOOK_SECRET:
-        webhook_url += f"?secret={settings.UAZAPI_WEBHOOK_SECRET}"
+    webhook_url = settings.uazapi_webhook_callback_url
     try:
         uazapi.set_webhook(url=webhook_url, instance_token=instance_token)
     except Exception as e:
@@ -184,7 +190,7 @@ async def init_instance_route(
         raise HTTPException(status_code=400, detail="Não foi possível obter ou criar um token para a instância.")
 
     if payload.inbox_id:
-        _save_token_to_inbox(supabase, payload.inbox_id, uid, instance_token)
+        _save_token_to_inbox(supabase, payload.inbox_id, uid, instance_token, instance_name=instance_name)
     else:
         _save_token_legacy(supabase, uid, instance_token)
 
@@ -226,7 +232,13 @@ async def save_manual_token(
     uid = str(user.id)
 
     if payload.inbox_id:
-        _save_token_to_inbox(supabase, payload.inbox_id, uid, payload.instance_token)
+        _save_token_to_inbox(
+            supabase,
+            payload.inbox_id,
+            uid,
+            payload.instance_token,
+            instance_name=payload.instance_name,
+        )
     else:
         _save_token_legacy(supabase, uid, payload.instance_token)
 
@@ -255,6 +267,8 @@ async def disconnect_instance(
         settings = dict(row.get("uazapi_settings") or {})
         if isinstance(settings, dict) and UAZAPI_TOKEN_KEY in settings:
             del settings[UAZAPI_TOKEN_KEY]
+        if isinstance(settings, dict) and "instance_name" in settings:
+            del settings["instance_name"]
         now = datetime.now(timezone.utc).isoformat()
         supabase.table("inboxes").update({"uazapi_settings": settings, "updated_at": now}).eq("id", inbox_id).eq(
             "tenant_id", uid

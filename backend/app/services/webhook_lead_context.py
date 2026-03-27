@@ -13,6 +13,15 @@ from app.services.phone_normalize import digits_only
 
 # Alinhado a backend/app/routers/whatsapp.py — token da instância na caixa
 UAZAPI_INSTANCE_TOKEN_KEY = "instance_token"
+# Gravado no init da instância — fallback quando o webhook só manda instanceName (sem token no body)
+UAZAPI_INSTANCE_NAME_KEY = "instance_name"
+
+
+def _token_from_uazapi_settings(settings: Any) -> Optional[str]:
+    if not isinstance(settings, dict):
+        return None
+    t = settings.get(UAZAPI_INSTANCE_TOKEN_KEY)
+    return str(t).strip() if t else None
 
 
 def find_inbox_by_instance_token(supabase: SupabaseClient, instance_token: str) -> Optional[dict[str, Any]]:
@@ -30,6 +39,72 @@ def find_inbox_by_instance_token(supabase: SupabaseClient, instance_token: str) 
                 return row
     except Exception:
         return None
+    return None
+
+
+def find_inbox_by_instance_name(supabase: SupabaseClient, instance_name: str) -> Optional[dict[str, Any]]:
+    """Correlaciona payload.instanceName (Uazapi) com uazapi_settings.instance_name gravado no init."""
+    name = (instance_name or "").strip()
+    if not name:
+        return None
+    name_lower = name.casefold()
+    try:
+        res = supabase.table("inboxes").select("id, tenant_id, funnel_id, name, uazapi_settings").execute()
+        for row in res.data or []:
+            settings = row.get("uazapi_settings") or {}
+            if not isinstance(settings, dict):
+                continue
+            stored = settings.get(UAZAPI_INSTANCE_NAME_KEY)
+            if stored is not None and str(stored).strip().casefold() == name_lower:
+                return row
+    except Exception:
+        return None
+    return None
+
+
+def get_uazapi_instance_token_for_tenant(
+    supabase: SupabaseClient,
+    *,
+    tenant_id: str,
+    inbox_id: Optional[str],
+) -> Optional[str]:
+    """
+    Token Uazapi para chamadas de API: prioriza caixa (inbox), senão settings legado por tenant.
+    Usado em GET chat-history e envio de mensagem quando o lead está ligado a uma inbox.
+    """
+    if inbox_id:
+        try:
+            r = (
+                supabase.table("inboxes")
+                .select("uazapi_settings")
+                .eq("id", inbox_id)
+                .eq("tenant_id", tenant_id)
+                .limit(1)
+                .execute()
+            )
+            if r.data:
+                t = _token_from_uazapi_settings(r.data[0].get("uazapi_settings"))
+                if t:
+                    return t
+        except Exception:
+            pass
+    try:
+        resp = (
+            supabase.table("settings")
+            .select("value")
+            .eq("tenant_id", tenant_id)
+            .eq("key", "uazapi_instance_token")
+            .limit(1)
+            .execute()
+        )
+        if resp.data:
+            val = resp.data[0].get("value")
+            if val is None:
+                return None
+            s = val.strip('"') if isinstance(val, str) else str(val)
+            return s.strip() or None
+    except Exception:
+        pass
     return None
 
 
