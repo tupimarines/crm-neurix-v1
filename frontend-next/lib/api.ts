@@ -1,23 +1,31 @@
 import { clearAuthSession, persistAuthSession } from "@/lib/supabase";
 
 /**
- * Base da API. Em produção HTTPS, nunca retorna `http://` no mesmo host (evita Mixed Content).
- * Usa `URL` para upgrade http→https; em dev (localhost portas diferentes) preserva a origem da API.
+ * Normaliza `NEXT_PUBLIC_API_URL`:
+ * - http→https na página HTTPS (evita Mixed Content)
+ * - remove path `/api` só (erro comum: `https://host/api` — as rotas já usam `/api/...`)
+ * Preferido: `https://crm.wbtech.dev` (sem `/api` no final).
  */
-export function getApiBase(): string {
-    const raw = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").trim();
-    if (typeof window === "undefined") {
-        return raw.replace(/\/$/, "");
-    }
+function normalizeConfiguredApiUrl(raw: string): string {
+    const trimmed = raw.trim();
     try {
-        const u = new URL(raw);
-        if (window.location.protocol === "https:" && u.protocol === "http:") {
+        const u = new URL(trimmed);
+        if (typeof window !== "undefined" && window.location.protocol === "https:" && u.protocol === "http:") {
             u.protocol = "https:";
+        }
+        const p = u.pathname.replace(/\/$/, "") || "";
+        if (p === "/api") {
+            u.pathname = "";
         }
         return u.toString().replace(/\/$/, "");
     } catch {
-        return raw.replace(/\/$/, "");
+        return trimmed.replace(/\/api\/?$/i, "").replace(/\/$/, "");
     }
+}
+
+/** Origem da API (scheme + host + porta), sem `/api` final. */
+export function getApiBase(): string {
+    return normalizeConfiguredApiUrl(process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000");
 }
 
 /** URL para chamadas à API. Usa path relativo quando mesmo origin (herda HTTPS da página). */
