@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 
 from app.dependencies import get_supabase, get_current_user
 from app.authz import EffectiveRole, get_effective_role, require_org_admin
-from app.org_scope import funnel_ids_for_organization
+from app.org_scope import funnel_ids_for_organization, list_funnels_for_organization
 from app.models.lead import (
     LeadCreate, LeadUpdate, LeadMoveStage, LeadResponse,
     KanbanBoard, KanbanColumn, LeadStage,
@@ -395,6 +395,22 @@ def _default_funnel_id_for_tenant(supabase: SupabaseClient, tenant_id: str) -> s
     return str(rows[0]["id"])
 
 
+def _default_funnel_for_organization(supabase: SupabaseClient, org_id: str) -> tuple[str, str]:
+    """Fallback do Kanban para admins da organização quando o tenant próprio não tem funis."""
+    rows = list_funnels_for_organization(supabase, org_id)
+    if not rows:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Nenhum funil cadastrado para esta organização. Crie um funil ou execute a migração de funil Default.",
+        )
+    for r in rows:
+        if str(r.get("name") or "").strip().lower() == "default":
+            return str(r["tenant_id"]), str(r["id"])
+    rows.sort(key=lambda r: str(r.get("created_at") or ""))
+    chosen = rows[0]
+    return str(chosen["tenant_id"]), str(chosen["id"])
+
+
 def _resolve_kanban_scope(
     supabase: SupabaseClient,
     user_id: str,
@@ -453,14 +469,26 @@ def _resolve_kanban_scope(
         rows = fres.data or []
         if not rows:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Funil não encontrado.")
-        if str(rows[0]["tenant_id"]) != tenant_id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Funil não pertence a este tenant.",
-            )
-        return tenant_id, str(rows[0]["id"])
+        resolved_tenant_id = str(rows[0]["tenant_id"])
+        if resolved_tenant_id == tenant_id:
+            return tenant_id, str(rows[0]["id"])
+        if eff.is_org_admin and eff.org_member_organization_id:
+            allowed = funnel_ids_for_organization(supabase, eff.org_member_organization_id)
+            if q in allowed:
+                return resolved_tenant_id, str(rows[0]["id"])
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Funil não pertence a este tenant.",
+        )
 
-    return tenant_id, _default_funnel_id_for_tenant(supabase, tenant_id)
+    try:
+        return tenant_id, _default_funnel_id_for_tenant(supabase, tenant_id)
+    except HTTPException as exc:
+        if exc.status_code != status.HTTP_404_NOT_FOUND:
+            raise
+        if eff.is_org_admin and eff.org_member_organization_id:
+            return _default_funnel_for_organization(supabase, eff.org_member_organization_id)
+        raise
 
 
 def _fetch_pipeline_stages_for_funnel(

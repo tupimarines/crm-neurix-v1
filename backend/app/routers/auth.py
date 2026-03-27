@@ -154,7 +154,7 @@ async def get_me(
     except Exception:
         pass
 
-    oid = eff.profile_organization_id
+    oid = eff.effective_organization_id
     organization_id = str(oid) if oid is not None else None
 
     return UserProfile(

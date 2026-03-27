@@ -42,6 +42,11 @@ class EffectiveRole:
     def is_read_only(self) -> bool:
         return self.org_member_role == "read_only"
 
+    @property
+    def effective_organization_id(self) -> Optional[str]:
+        """Org efetiva preferindo o vínculo explícito no perfil e caindo para membership."""
+        return self.profile_organization_id or self.org_member_organization_id
+
 
 def compute_effective_role(
     user_id: str,

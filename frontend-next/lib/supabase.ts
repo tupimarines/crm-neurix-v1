@@ -19,3 +19,15 @@ export async function setSupabaseSession() {
         });
     }
 }
+
+export async function persistAuthSession(accessToken: string, refreshToken?: string | null) {
+    localStorage.setItem("access_token", accessToken);
+    localStorage.setItem("refresh_token", refreshToken || "");
+    await setSupabaseSession();
+}
+
+export async function clearAuthSession() {
+    localStorage.removeItem("access_token");
+    localStorage.removeItem("refresh_token");
+    await supabase.auth.signOut().catch(() => undefined);
+}

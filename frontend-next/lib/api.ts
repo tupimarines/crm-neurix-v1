@@ -1,3 +1,5 @@
+import { clearAuthSession, persistAuthSession } from "@/lib/supabase";
+
 export function getApiBase(): string {
     const base = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
     if (typeof window !== "undefined" && base.startsWith("http://") && window.location.protocol === "https:") {
@@ -28,31 +30,106 @@ interface ApiOptions extends RequestInit {
     token?: string;
 }
 
+let refreshInFlight: Promise<string | null> | null = null;
+
+function resolveRequestUrl(endpoint: string): string {
+    if (/^https?:\/\//i.test(endpoint)) {
+        return endpoint;
+    }
+    return getApiUrl(endpoint);
+}
+
+function buildHeaders(customHeaders: HeadersInit | undefined, token?: string, body?: BodyInit | null): Headers {
+    const headers = new Headers(customHeaders);
+    if (!(body instanceof FormData) && !headers.has("Content-Type")) {
+        headers.set("Content-Type", "application/json");
+    }
+    if (token) {
+        headers.set("Authorization", `Bearer ${token}`);
+    }
+    return headers;
+}
+
+function getStoredAccessToken(): string | undefined {
+    if (typeof window === "undefined") {
+        return undefined;
+    }
+    return localStorage.getItem("access_token") || undefined;
+}
+
+async function redirectToLogin() {
+    if (typeof window === "undefined") {
+        return;
+    }
+    await clearAuthSession();
+    window.location.href = "/login";
+}
+
+async function refreshAccessToken(): Promise<string | null> {
+    if (typeof window === "undefined") {
+        return null;
+    }
+    const refreshToken = localStorage.getItem("refresh_token");
+    if (!refreshToken) {
+        return null;
+    }
+    if (!refreshInFlight) {
+        refreshInFlight = (async () => {
+            const res = await fetch(resolveRequestUrl("/api/auth/refresh"), {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ refresh_token: refreshToken }),
+            });
+            if (!res.ok) {
+                return null;
+            }
+            const data = (await res.json()) as { access_token?: string; refresh_token?: string | null };
+            if (!data.access_token) {
+                return null;
+            }
+            await persistAuthSession(data.access_token, data.refresh_token ?? refreshToken);
+            return data.access_token;
+        })()
+            .catch(() => null)
+            .finally(() => {
+                refreshInFlight = null;
+            });
+    }
+    return refreshInFlight;
+}
+
+export async function apiFetch(
+    endpoint: string,
+    options: ApiOptions = {},
+    allowRetry = true
+): Promise<Response> {
+    const { token, headers: customHeaders, body, ...rest } = options;
+    const authToken = token || getStoredAccessToken();
+    const headers = buildHeaders(customHeaders, authToken, body);
+    const res = await fetch(resolveRequestUrl(endpoint), {
+        headers,
+        body,
+        ...rest,
+    });
+
+    if (res.status === 401 && allowRetry && typeof window !== "undefined") {
+        const refreshedToken = await refreshAccessToken();
+        if (refreshedToken) {
+            return apiFetch(endpoint, { ...options, token: refreshedToken }, false);
+        }
+        await redirectToLogin();
+    }
+
+    return res;
+}
+
 export async function api<T = unknown>(
     endpoint: string,
     options: ApiOptions = {}
 ): Promise<T> {
-    const { token, headers: customHeaders, ...rest } = options;
-
-    const headers: Record<string, string> = {
-        "Content-Type": "application/json",
-        ...((customHeaders as Record<string, string>) || {}),
-    };
-
-    if (token) {
-        headers["Authorization"] = `Bearer ${token}`;
-    }
-
-    const res = await fetch(`${getApiBase()}${endpoint}`, {
-        headers,
-        ...rest,
-    });
+    const res = await apiFetch(endpoint, options);
 
     if (!res.ok) {
-        if (res.status === 401 && typeof window !== 'undefined') {
-            localStorage.removeItem("access_token");
-            window.location.href = "/login";
-        }
         const raw = await res.text().catch(() => "");
         let detail: string = res.statusText;
         if (raw) {

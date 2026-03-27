@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { getApiBase, getAuthMe } from "@/lib/api";
+import { persistAuthSession } from "@/lib/supabase";
 
 export default function LoginPage() {
     const router = useRouter();
@@ -32,8 +33,7 @@ export default function LoginPage() {
             }
 
             const data = await res.json();
-            localStorage.setItem("access_token", data.access_token);
-            localStorage.setItem("refresh_token", data.refresh_token || "");
+            await persistAuthSession(data.access_token, data.refresh_token || "");
 
             try {
                 const me = await getAuthMe(data.access_token);

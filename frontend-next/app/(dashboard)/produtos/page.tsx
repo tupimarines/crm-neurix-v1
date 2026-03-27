@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { getApiUrl } from "@/lib/api";
+import { apiFetch, getApiUrl } from "@/lib/api";
 
 // #region agent log
 function debugLog(hypothesisId: string, location: string, message: string, data: Record<string, unknown>) {
@@ -172,7 +172,7 @@ export default function ProdutosPage() {
         const currentPromotion = promotions.find((p) => (p.product_ids || []).includes(productId));
         if (currentPromotion && currentPromotion.id !== selectedPromotionId) {
             const filtered = (currentPromotion.product_ids || []).filter((id) => id !== productId);
-            await fetch(getApiUrl(`/api/promotions/${currentPromotion.id}/products`), {
+            await apiFetch(getApiUrl(`/api/promotions/${currentPromotion.id}/products`), {
                 method: "PUT",
                 headers: { ...authHeaders(), "Content-Type": "application/json" },
                 body: JSON.stringify({ product_ids: filtered }),
@@ -182,14 +182,14 @@ export default function ProdutosPage() {
         if (selectedPromotionId) {
             const target = promotions.find((p) => p.id === selectedPromotionId);
             const nextIds = Array.from(new Set([...(target?.product_ids || []), productId]));
-            await fetch(getApiUrl(`/api/promotions/${selectedPromotionId}/products`), {
+            await apiFetch(getApiUrl(`/api/promotions/${selectedPromotionId}/products`), {
                 method: "PUT",
                 headers: { ...authHeaders(), "Content-Type": "application/json" },
                 body: JSON.stringify({ product_ids: nextIds }),
             });
         } else if (currentPromotion) {
             const filtered = (currentPromotion.product_ids || []).filter((id) => id !== productId);
-            await fetch(getApiUrl(`/api/promotions/${currentPromotion.id}/products`), {
+            await apiFetch(getApiUrl(`/api/promotions/${currentPromotion.id}/products`), {
                 method: "PUT",
                 headers: { ...authHeaders(), "Content-Type": "application/json" },
                 body: JSON.stringify({ product_ids: filtered }),
@@ -220,11 +220,10 @@ export default function ProdutosPage() {
         setLoading(true);
         setError(null);
         try {
-            const res = await fetch(getApiUrl("/api/products/"), {
+            const res = await apiFetch(getApiUrl("/api/products/"), {
                 headers: authHeaders(),
             });
             if (!res.ok) {
-                if (res.status === 401) { window.location.href = "/login"; return; }
                 throw new Error(`Erro ${res.status}`);
             }
             const data = await res.json();
@@ -238,7 +237,7 @@ export default function ProdutosPage() {
 
     const fetchCategories = useCallback(async () => {
         try {
-            const res = await fetch(getApiUrl("/api/product-categories/"), { headers: authHeaders() });
+            const res = await apiFetch(getApiUrl("/api/product-categories/"), { headers: authHeaders() });
             if (!res.ok) throw new Error(`Erro ${res.status}`);
             const data = await res.json();
             setCategories(data || []);
@@ -249,7 +248,7 @@ export default function ProdutosPage() {
 
     const fetchPromotions = useCallback(async () => {
         try {
-            const res = await fetch(getApiUrl("/api/promotions/"), { headers: authHeaders() });
+            const res = await apiFetch(getApiUrl("/api/promotions/"), { headers: authHeaders() });
             if (!res.ok) throw new Error(`Erro ${res.status}`);
             const data = await res.json();
             setPromotions(data || []);
@@ -288,7 +287,7 @@ export default function ProdutosPage() {
             if (selectedFile) {
                 const formData = new FormData();
                 formData.append("file", selectedFile);
-                const upRes = await fetch(getApiUrl("/api/upload/product-image"), {
+                const upRes = await apiFetch(getApiUrl("/api/upload/product-image"), {
                     method: "POST",
                     headers: authHeaders(),
                     body: formData,
@@ -315,7 +314,7 @@ export default function ProdutosPage() {
             const endpoint = isEditing ? getApiUrl(`/api/products/${editingProductId}`) : getApiUrl("/api/products/");
             const method = isEditing ? "PATCH" : "POST";
 
-            const res = await fetch(endpoint, {
+            const res = await apiFetch(endpoint, {
                 method,
                 headers: { ...authHeaders(), "Content-Type": "application/json" },
                 body: JSON.stringify(body),
@@ -346,7 +345,7 @@ export default function ProdutosPage() {
     // ── Delete product ────────────────────────────────────────────
     async function handleDelete(id: string) {
         if (!confirm("Deletar produto?")) return;
-        await fetch(getApiUrl(`/api/products/${id}`), {
+        await apiFetch(getApiUrl(`/api/products/${id}`), {
             method: "DELETE",
             headers: authHeaders(),
         });
@@ -364,7 +363,7 @@ export default function ProdutosPage() {
                 hasToken: Boolean(getToken()),
             });
             // #endregion
-            const res = await fetch(getApiUrl("/api/product-categories/"), {
+            const res = await apiFetch(getApiUrl("/api/product-categories/"), {
                 method: "POST",
                 headers: { ...authHeaders(), "Content-Type": "application/json" },
                 body: JSON.stringify({
@@ -403,7 +402,7 @@ export default function ProdutosPage() {
     async function handleToggleCategory(id: string, isActive: boolean) {
         setError(null);
         const endpoint = getApiUrl(`/api/product-categories/${id}`);
-        const res = await fetch(endpoint, {
+        const res = await apiFetch(endpoint, {
             method: isActive ? "DELETE" : "PATCH",
             headers: { ...authHeaders(), "Content-Type": "application/json" },
             body: isActive ? undefined : JSON.stringify({ is_active: true }),
@@ -429,7 +428,7 @@ export default function ProdutosPage() {
                 hasToken: Boolean(getToken()),
             });
             // #endregion
-            const res = await fetch(getApiUrl("/api/promotions/"), {
+            const res = await apiFetch(getApiUrl("/api/promotions/"), {
                 method: "POST",
                 headers: { ...authHeaders(), "Content-Type": "application/json" },
                 body: JSON.stringify({
@@ -471,7 +470,7 @@ export default function ProdutosPage() {
     }
 
     async function handleArchivePromotion(id: string) {
-        await fetch(getApiUrl(`/api/promotions/${id}`), {
+        await apiFetch(getApiUrl(`/api/promotions/${id}`), {
             method: "DELETE",
             headers: authHeaders(),
         });
