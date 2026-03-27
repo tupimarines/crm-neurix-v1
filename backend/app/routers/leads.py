@@ -836,14 +836,14 @@ async def rename_stage(
             "version": int(target_row.get("version") or 1),
         }
 
+    # postgrest-py 2.x: .update().eq(...) não encadeia .select() (só SyncSelectRequestBuilder tem select/single).
+    # PATCH com returning=representation (padrão) devolve a linha em response.data.
     try:
         response = (
             supabase.table("pipeline_stages")
             .update({"name": new_name})
             .eq("id", stage_id)
             .eq("tenant_id", data_tenant_id)
-            .select("id, name, order_position, version")
-            .single()
             .execute()
         )
     except Exception as exc:
@@ -856,7 +856,9 @@ async def rename_stage(
             detail=f"Erro ao renomear etapa: {detail}",
         ) from exc
 
-    if not response.data:
+    raw = response.data
+    rows = raw if isinstance(raw, list) else ([raw] if raw else [])
+    if not rows:
         raise HTTPException(status_code=404, detail="Etapa não encontrada.")
 
     # leads.stage armazena o nome da coluna — alinhar após renomear pipeline_stages
@@ -874,7 +876,7 @@ async def rename_stage(
         else:
             logger.warning("rename_stage_leads_update_failed", extra={"detail": d})
 
-    return response.data
+    return rows[0]
 
 
 @router.delete("/stages/{stage_id}")
