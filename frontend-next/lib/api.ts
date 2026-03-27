@@ -109,6 +109,102 @@ export const apiDelete = <T = unknown>(endpoint: string, token?: string) =>
 export const apiPatch = <T = unknown>(endpoint: string, body: unknown, token?: string) =>
     api<T>(endpoint, { method: "PATCH", body: JSON.stringify(body), token });
 
+// ── Pedidos, leads, produtos, busca (Sprint 14 — AC11: mutações via API) ──
+
+export type OrderDTO = {
+    id: string;
+    tenant_id: string;
+    lead_id?: string | null;
+    client_name: string;
+    client_company?: string | null;
+    product_summary: string;
+    products_json: unknown[];
+    applied_promotions_json?: unknown[];
+    subtotal?: number;
+    discount_total?: number;
+    total: number;
+    stage?: string | null;
+    notes?: string | null;
+    payment_status: string;
+    created_at: string;
+};
+
+export const listOrders = (limit = 20, token?: string) =>
+    apiGet<OrderDTO[]>(`/api/orders/?limit=${limit}`, token);
+
+export const getOrder = (orderId: string, token?: string) =>
+    apiGet<OrderDTO>(`/api/orders/${encodeURIComponent(orderId)}`, token);
+
+export const deleteOrder = (orderId: string, token?: string) =>
+    apiDelete<void>(`/api/orders/${encodeURIComponent(orderId)}`, token);
+
+export const archiveOrder = (orderId: string, token?: string) =>
+    apiPost<void>(`/api/orders/${encodeURIComponent(orderId)}/archive`, {}, token);
+
+export type GlobalSearchItem = {
+    id: string;
+    name: string;
+    type: "lead" | "order" | "product";
+};
+
+export const globalSearch = (q: string, token?: string) =>
+    apiGet<{ results: GlobalSearchItem[] }>(
+        `/api/dashboard/search?${new URLSearchParams({ q: q.trim() }).toString()}`,
+        token
+    );
+
+export type LeadDTO = {
+    id: string;
+    tenant_id: string;
+    contact_name: string;
+    company_name: string;
+    phone?: string | null;
+    stage: string;
+    priority?: string | null;
+    value: number;
+    notes?: string | null;
+    delivery_address?: string | null;
+    created_at: string;
+};
+
+export const getLeadById = (leadId: string, token?: string) =>
+    apiGet<LeadDTO>(`/api/leads/${encodeURIComponent(leadId)}`, token);
+
+export const listLeads = (opts?: { search?: string }, token?: string) => {
+    const p = new URLSearchParams();
+    if (opts?.search) p.set("search", opts.search);
+    const qs = p.toString();
+    return apiGet<LeadDTO[]>(`/api/leads${qs ? `?${qs}` : ""}`, token);
+};
+
+export const createLead = (body: Record<string, unknown>, token?: string) =>
+    apiPost<LeadDTO>("/api/leads/", body, token);
+
+export type ProductDTO = {
+    id: string;
+    name: string;
+    description?: string | null;
+    price: number;
+    weight?: string | null;
+    weight_grams?: number;
+    category?: string | null;
+    status?: string | null;
+    is_active: boolean;
+    image_url?: string | null;
+    created_at: string;
+};
+
+export const listProducts = (opts?: { active_only?: boolean; search?: string }, token?: string) => {
+    const p = new URLSearchParams();
+    if (opts?.active_only) p.set("active_only", "true");
+    if (opts?.search) p.set("search", opts.search);
+    const qs = p.toString();
+    return apiGet<ProductDTO[]>(`/api/products${qs ? `?${qs}` : ""}`, token);
+};
+
+export const getProduct = (productId: string, token?: string) =>
+    apiGet<ProductDTO>(`/api/products/${encodeURIComponent(productId)}`, token);
+
 // ── Auth / RBAC (Sprint 5 — Console Admin) ──
 
 export type AuthMe = {
@@ -399,7 +495,7 @@ export const listClients = (token: string, tenantId?: string) => {
 export const getClient = (clientId: string, token?: string) =>
     apiGet<CrmClientDTO>(`/api/clients/${clientId}`, token);
 
-export const createClient = (body: CreateCrmClientBody, token?: string) =>
+export const createCrmClient = (body: CreateCrmClientBody, token?: string) =>
     apiPost<CrmClientDTO>("/api/clients/", body, token);
 
 export const updateClient = (clientId: string, body: PatchCrmClientBody, token?: string) =>

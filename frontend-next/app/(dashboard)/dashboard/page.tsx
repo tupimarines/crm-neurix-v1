@@ -2,7 +2,16 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { supabase, setSupabaseSession } from "@/lib/supabase";
+import { setSupabaseSession } from "@/lib/supabase";
+import {
+    listOrders,
+    archiveOrder,
+    deleteOrder,
+    globalSearch,
+    getLeadById,
+    getOrder,
+    getProduct,
+} from "@/lib/api";
 import NewOrderModal from "@/components/NewOrderModal";
 import WhatsAppChat from "@/components/WhatsAppChat";
 
@@ -297,21 +306,10 @@ export default function DashboardPage() {
     async function loadRecentOrders() {
         setOrdersLoading(true);
         try {
-            const { data: { user } } = await supabase.auth.getUser();
-            if (!user) return;
-            const { data: profile } = await supabase.from("profiles").select("tenant_id").eq("id", user.id).single();
-            const tenantId = profile?.tenant_id || user.id;
-
-            const { data, error } = await supabase
-                .from("orders")
-                .select("*, leads(id, contact_name, company_name)")
-                .eq("tenant_id", tenantId)
-                .order("created_at", { ascending: false })
-                .limit(5);
-
-            if (!error && data) {
-                setRecentOrders(data as OrderDetail[]);
-            }
+            const token = localStorage.getItem("access_token") || undefined;
+            if (!token) return;
+            const data = await listOrders(5, token);
+            setRecentOrders(data as OrderDetail[]);
         } catch (err) {
             console.error("Error loading orders:", err);
         } finally {
@@ -320,64 +318,30 @@ export default function DashboardPage() {
     }
 
     const handleArchiveOrder = async (order: OrderDetail) => {
-        console.log("Iniciando processo de arquivamento", order);
         try {
-            const { data: archiveData, error: archiveError } = await supabase.from("orders_archived").insert({
-                original_order_id: order.id,
-                tenant_id: order.tenant_id,
-                lead_id: order.lead_id,
-                client_name: order.client_name,
-                total: order.total,
-                payment_status: order.payment_status
-            }).select();
-
-            if (archiveError) {
-                console.error("Erro no insert archive:", archiveError);
-                throw archiveError;
-            }
-            if (!archiveData || archiveData.length === 0) {
-                throw new Error("Falha silenciosa no insert (RLS bloqueou a inserção em orders_archived)");
-            }
-
-            console.log("Insert success, deleting order now");
-            const { data: deleteData, error: deleteError } = await supabase.from("orders").delete().eq("id", order.id).select();
-
-            if (deleteError) {
-                console.error("Erro no delete order:", deleteError);
-                throw deleteError;
-            }
-            if (!deleteData || deleteData.length === 0) {
-                throw new Error("Falha silenciosa no delete (RLS bloqueou exclusão em orders)");
-            }
-
-            console.log("Archive completely successful");
-
+            const token = localStorage.getItem("access_token") || undefined;
+            await archiveOrder(order.id, token);
             setOpenMenu(null);
             loadRecentOrders();
         } catch (err) {
             console.error("Archive error:", err);
-            alert("Erro ao arquivar pedido");
+            alert(
+                "Erro ao arquivar pedido: " +
+                    (err instanceof Error ? err.message : "verifique se a migração orders_archived foi aplicada no Supabase.")
+            );
         }
     };
 
     const handleDeleteOrder = async (order: OrderDetail) => {
-        console.log("Iniciando exclusão de pedido:", order.id);
         try {
-            const { data: deleteData, error } = await supabase.from("orders").delete().eq("id", order.id).select();
-            if (error) {
-                console.error("Erro no delete order:", error);
-                throw error;
-            }
-            if (!deleteData || deleteData.length === 0) {
-                throw new Error("Falha silenciosa no delete (RLS bloqueou exclusão em orders)");
-            }
-            console.log("Exclusão bem sucedida");
-            setRecentOrders(prev => prev.filter(o => o.id !== order.id));
+            const token = localStorage.getItem("access_token") || undefined;
+            await deleteOrder(order.id, token);
+            setRecentOrders((prev) => prev.filter((o) => o.id !== order.id));
             setShowDeleteConfirm(null);
             loadRecentOrders();
         } catch (err) {
             console.error("Delete error:", err);
-            alert("Erro ao excluir pedido");
+            alert("Erro ao excluir pedido: " + (err instanceof Error ? err.message : ""));
         }
     };
 
@@ -409,18 +373,9 @@ export default function DashboardPage() {
 
         setSearchLoading(true);
         try {
-            const { data, error } = await supabase
-                .from("global_search")
-                .select("id, name, type")
-                .ilike("name", `%${query.trim()}%`)
-                .limit(10);
-
-            if (error) {
-                console.error("Search error:", error.message);
-                setSearchResults([]);
-            } else {
-                setSearchResults((data as SearchResult[]) || []);
-            }
+            const token = localStorage.getItem("access_token") || undefined;
+            const res = await globalSearch(query.trim(), token);
+            setSearchResults((res.results || []) as SearchResult[]);
         } catch (err) {
             console.error("Search error:", err);
             setSearchResults([]);
@@ -444,30 +399,53 @@ export default function DashboardPage() {
         setSearchQuery("");
 
         try {
+            const token = localStorage.getItem("access_token") || undefined;
             if (result.type === "lead") {
-                const { data, error } = await supabase
-                    .from("leads")
-                    .select("id, contact_name, company_name, phone, stage, priority, value, notes, delivery_address, created_at")
-                    .eq("id", result.id)
-                    .single();
-                if (error) console.error("Lead fetch error:", error);
-                if (!error && data) setSelectedLead(data as LeadDetail);
+                const data = await getLeadById(result.id, token);
+                setSelectedLead({
+                    id: data.id,
+                    contact_name: data.contact_name,
+                    company_name: data.company_name,
+                    phone: data.phone || "",
+                    stage: data.stage,
+                    priority: data.priority || "",
+                    value: Number(data.value) || 0,
+                    notes: data.notes || "",
+                    delivery_address: data.delivery_address || "",
+                    created_at: data.created_at,
+                });
             } else if (result.type === "order") {
-                const { data, error } = await supabase
-                    .from("orders")
-                    .select("id, client_name, client_company, product_summary, total, subtotal, discount_total, applied_promotions_json, payment_status, stage, notes, created_at")
-                    .eq("id", result.id)
-                    .single();
-                if (error) console.error("Order fetch error:", error);
-                if (!error && data) setSelectedOrder(data as OrderDetail);
+                const data = await getOrder(result.id, token);
+                setSelectedOrder({
+                    id: data.id,
+                    client_name: data.client_name,
+                    client_company: data.client_company || "",
+                    product_summary: data.product_summary,
+                    total: data.total,
+                    payment_status: data.payment_status,
+                    stage: data.stage || "",
+                    notes: data.notes || "",
+                    subtotal: data.subtotal,
+                    discount_total: data.discount_total,
+                    applied_promotions_json: (data.applied_promotions_json || []) as OrderDetail["applied_promotions_json"],
+                    created_at: data.created_at,
+                    lead_id: data.lead_id || undefined,
+                    tenant_id: data.tenant_id,
+                });
             } else if (result.type === "product") {
-                const { data, error } = await supabase
-                    .from("products")
-                    .select("id, name, description, price, weight_grams, category, status, is_active, image_url, created_at")
-                    .eq("id", result.id)
-                    .single();
-                if (error) console.error("Product fetch error:", error);
-                if (!error && data) setSelectedProduct(data as ProductDetail);
+                const data = await getProduct(result.id, token);
+                setSelectedProduct({
+                    id: data.id,
+                    name: data.name,
+                    description: data.description || "",
+                    price: data.price,
+                    weight_grams: typeof data.weight_grams === "number" ? data.weight_grams : 0,
+                    category: data.category || "",
+                    status: data.status || "",
+                    is_active: data.is_active,
+                    image_url: data.image_url || "",
+                    created_at: data.created_at,
+                });
             }
         } catch (err) {
             console.error("Error fetching detail:", err);

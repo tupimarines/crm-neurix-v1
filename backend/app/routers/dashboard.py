@@ -3,11 +3,13 @@ Dashboard Router — KPIs and Aggregated Metrics.
 Maps to the Dashboard page (Taxa de Conversão, Faturamento, Volume de Mensagens).
 """
 
-from fastapi import APIRouter, Depends
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, Query, HTTPException
+from pydantic import BaseModel, Field
 from supabase import Client as SupabaseClient
 
+from app.authz import EffectiveRole, get_effective_role
 from app.dependencies import get_supabase, get_current_user
+from app.routers.leads import _resolve_kanban_scope
 
 router = APIRouter()
 
@@ -98,3 +100,76 @@ async def get_recent_orders(
         .execute()
 
     return response.data or []
+
+
+class GlobalSearchItem(BaseModel):
+    id: str
+    name: str
+    type: str = Field(..., description="lead | order | product")
+
+
+class GlobalSearchResponse(BaseModel):
+    results: list[GlobalSearchItem]
+
+
+@router.get("/search", response_model=GlobalSearchResponse)
+async def global_search(
+    q: str = Query(..., min_length=2, max_length=120),
+    user=Depends(get_current_user),
+    supabase: SupabaseClient = Depends(get_supabase),
+    eff: EffectiveRole = Depends(get_effective_role),
+):
+    """
+    Busca global para o painel (substitui view `global_search` no browser).
+    Respeita escopo de funil para `read_only` nos leads.
+    """
+    try:
+        data_tenant, resolved_funnel = _resolve_kanban_scope(supabase, user.id, eff, None)
+    except HTTPException:
+        raise
+    raw = q.strip()
+    term = f"%{raw}%"
+    per_kind = 5
+    results: list[GlobalSearchItem] = []
+
+    lq = (
+        supabase.table("leads")
+        .select("id, contact_name, company_name")
+        .eq("tenant_id", data_tenant)
+    )
+    if eff.is_read_only:
+        lq = lq.eq("funnel_id", resolved_funnel)
+    lr = lq.or_(f"contact_name.ilike.{term},company_name.ilike.{term}").limit(per_kind).execute()
+    for row in lr.data or []:
+        label = (row.get("contact_name") or row.get("company_name") or "").strip() or "Lead"
+        results.append(GlobalSearchItem(id=str(row["id"]), name=label, type="lead"))
+
+    ores = (
+        supabase.table("orders")
+        .select("id, client_name")
+        .eq("tenant_id", data_tenant)
+        .ilike("client_name", term)
+        .limit(per_kind)
+        .execute()
+    )
+    for row in ores.data or []:
+        results.append(
+            GlobalSearchItem(
+                id=str(row["id"]),
+                name=str(row.get("client_name") or "Pedido"),
+                type="order",
+            )
+        )
+
+    pres = (
+        supabase.table("products")
+        .select("id, name")
+        .eq("tenant_id", data_tenant)
+        .ilike("name", term)
+        .limit(per_kind)
+        .execute()
+    )
+    for row in pres.data or []:
+        results.append(GlobalSearchItem(id=str(row["id"]), name=str(row.get("name") or "Produto"), type="product"))
+
+    return GlobalSearchResponse(results=results[:15])

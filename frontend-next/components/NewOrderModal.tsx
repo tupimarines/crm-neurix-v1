@@ -1,8 +1,12 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { supabase } from "@/lib/supabase";
-import { api } from "@/lib/api";
+import {
+    api,
+    listProducts,
+    listLeads,
+    createLead,
+} from "@/lib/api";
 
 interface Lead {
     id: string;
@@ -44,7 +48,6 @@ interface NewOrderModalProps {
 }
 
 export default function NewOrderModal({ onClose, onCreated }: NewOrderModalProps) {
-    // Client state
     const [clientQuery, setClientQuery] = useState("");
     const [clientResults, setClientResults] = useState<Lead[]>([]);
     const [clientLoading, setClientLoading] = useState(false);
@@ -57,7 +60,6 @@ export default function NewOrderModal({ onClose, onCreated }: NewOrderModalProps
     const [creatingClient, setCreatingClient] = useState(false);
     const clientTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-    // Products state
     const [availableProducts, setAvailableProducts] = useState<Product[]>([]);
     const [selectedProducts, setSelectedProducts] = useState<SelectedProduct[]>([]);
     const [showProductDropdown, setShowProductDropdown] = useState(false);
@@ -68,15 +70,11 @@ export default function NewOrderModal({ onClose, onCreated }: NewOrderModalProps
     const [selectedCatalogHints, setSelectedCatalogHints] = useState<CatalogItem[]>([]);
     const catalogTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-    // Order state
     const [notes, setNotes] = useState("");
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState("");
-    const [tenantId, setTenantId] = useState<string | null>(null);
 
-    // Load tenant_id and products on mount
     useEffect(() => {
-        loadTenantId();
         loadProducts();
     }, []);
 
@@ -87,36 +85,18 @@ export default function NewOrderModal({ onClose, onCreated }: NewOrderModalProps
         };
     }, []);
 
-    async function loadTenantId() {
-        try {
-            const { data: { user } } = await supabase.auth.getUser();
-            if (user) {
-                const { data: profile } = await supabase
-                    .from("profiles")
-                    .select("tenant_id")
-                    .eq("id", user.id)
-                    .single();
-                if (profile?.tenant_id) {
-                    setTenantId(profile.tenant_id);
-                } else {
-                    // fallback: use user id as tenant_id
-                    setTenantId(user.id);
-                }
-            }
-        } catch (err) {
-            console.error("Error loading tenant_id:", err);
-        }
-    }
-
     async function loadProducts() {
         setProductsLoading(true);
         try {
-            const { data, error } = await supabase
-                .from("products")
-                .select("id, name, price")
-                .eq("is_active", true)
-                .order("name");
-            if (!error && data) setAvailableProducts(data);
+            const token = localStorage.getItem("access_token") || undefined;
+            const rows = await listProducts({ active_only: true }, token);
+            setAvailableProducts(
+                rows.map((r) => ({
+                    id: r.id,
+                    name: r.name,
+                    price: Number(r.price) || 0,
+                }))
+            );
         } catch (err) {
             console.error("Error loading products:", err);
         } finally {
@@ -167,7 +147,6 @@ export default function NewOrderModal({ onClose, onCreated }: NewOrderModalProps
         setCatalogResults([]);
     };
 
-    // Debounced client search
     const searchClients = useCallback(async (query: string) => {
         if (query.trim().length < 2) {
             setClientResults([]);
@@ -176,13 +155,16 @@ export default function NewOrderModal({ onClose, onCreated }: NewOrderModalProps
         }
         setClientLoading(true);
         try {
-            const { data, error } = await supabase
-                .from("leads")
-                .select("id, contact_name, company_name, phone")
-                .ilike("contact_name", `%${query.trim()}%`)
-                .limit(5);
-            if (!error && data) setClientResults(data);
-            else setClientResults([]);
+            const token = localStorage.getItem("access_token") || undefined;
+            const data = await listLeads({ search: query.trim() }, token);
+            setClientResults(
+                (data || []).slice(0, 5).map((row) => ({
+                    id: row.id,
+                    contact_name: row.contact_name,
+                    company_name: row.company_name || "",
+                    phone: row.phone || "",
+                }))
+            );
         } catch (err) {
             console.error("Client search error:", err);
             setClientResults([]);
@@ -211,68 +193,64 @@ export default function NewOrderModal({ onClose, onCreated }: NewOrderModalProps
         setCreatingClient(true);
         setError("");
         try {
-            const { data, error } = await supabase
-                .from("leads")
-                .insert({
-                    tenant_id: tenantId,
+            const token = localStorage.getItem("access_token") || undefined;
+            const data = await createLead(
+                {
+                    company_name: newClientCompany.trim() || "—",
                     contact_name: newClientName.trim(),
-                    company_name: newClientCompany.trim() || "",
-                    phone: newClientPhone.trim() || "",
+                    phone: newClientPhone.trim() || null,
                     stage: "contato_inicial",
                     priority: "media",
                     value: 0,
-                    archived: false,
-                    deleted: false,
-                })
-                .select("id, contact_name, company_name, phone")
-                .single();
-            if (error) {
-                console.error("Create client error:", error);
-                setError("Erro ao criar cliente: " + error.message);
-            } else if (data) {
-                setSelectedClient(data);
-                setClientQuery(data.contact_name);
-                setShowNewClientForm(false);
-                setNewClientName("");
-                setNewClientCompany("");
-                setNewClientPhone("");
-            }
+                },
+                token
+            );
+            setSelectedClient({
+                id: data.id,
+                contact_name: data.contact_name,
+                company_name: data.company_name || "",
+                phone: data.phone || "",
+            });
+            setClientQuery(data.contact_name);
+            setShowNewClientForm(false);
+            setNewClientName("");
+            setNewClientCompany("");
+            setNewClientPhone("");
         } catch (err) {
             console.error("Create client error:", err);
-            setError("Erro inesperado ao criar cliente");
+            setError(
+                "Erro ao criar cliente: " + (err instanceof Error ? err.message : "erro desconhecido")
+            );
         } finally {
             setCreatingClient(false);
         }
     };
 
-    // Product management
     const handleAddProduct = (product: Product) => {
-        const existing = selectedProducts.find(p => p.id === product.id);
+        const existing = selectedProducts.find((p) => p.id === product.id);
         if (existing) {
-            setSelectedProducts(prev =>
-                prev.map(p => p.id === product.id ? { ...p, qty: p.qty + 1 } : p)
+            setSelectedProducts((prev) =>
+                prev.map((p) => (p.id === product.id ? { ...p, qty: p.qty + 1 } : p))
             );
         } else {
-            setSelectedProducts(prev => [...prev, { ...product, qty: 1 }]);
+            setSelectedProducts((prev) => [...prev, { ...product, qty: 1 }]);
         }
         setShowProductDropdown(false);
     };
 
     const handleRemoveProduct = (productId: string) => {
-        setSelectedProducts(prev => prev.filter(p => p.id !== productId));
+        setSelectedProducts((prev) => prev.filter((p) => p.id !== productId));
     };
 
     const handleProductQtyChange = (productId: string, qty: number) => {
         if (qty < 1) return;
-        setSelectedProducts(prev =>
-            prev.map(p => p.id === productId ? { ...p, qty } : p)
-        );
+        setSelectedProducts((prev) => prev.map((p) => (p.id === productId ? { ...p, qty } : p)));
     };
 
     const total = selectedProducts.reduce((sum, p) => sum + p.price * p.qty, 0);
-    const fmt = (v: number) => new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(v);
+    const fmt = (v: number) =>
+        new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(v);
 
-    // Submit order
     const handleCreateOrder = async () => {
         setError("");
         if (!selectedClient) {
@@ -285,10 +263,13 @@ export default function NewOrderModal({ onClose, onCreated }: NewOrderModalProps
         }
         setSubmitting(true);
         try {
-            const productsJson = selectedProducts.map(p => ({
-                id: p.id, name: p.name, price: p.price, qty: p.qty,
+            const productsJson = selectedProducts.map((p) => ({
+                id: p.id,
+                name: p.name,
+                price: p.price,
+                qty: p.qty,
             }));
-            const productSummary = selectedProducts.map(p => `${p.name} (x${p.qty})`).join(", ");
+            const productSummary = selectedProducts.map((p) => `${p.name} (x${p.qty})`).join(", ");
             const hintNotes = selectedCatalogHints.length
                 ? selectedCatalogHints.map((h) => `${h.type}: ${h.label}`).join(" | ")
                 : "";
@@ -323,7 +304,6 @@ export default function NewOrderModal({ onClose, onCreated }: NewOrderModalProps
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
             <div className="absolute inset-0 bg-slate-900/30 dark:bg-slate-900/60 backdrop-blur-sm" onClick={onClose} />
             <div className="relative bg-surface-light dark:bg-surface-dark rounded-2xl shadow-2xl border border-border-light dark:border-border-dark w-full max-w-lg max-h-[90vh] overflow-y-auto">
-                {/* Header */}
                 <div className="p-6 border-b border-border-light dark:border-border-dark flex items-center justify-between">
                     <h3 className="text-lg font-bold font-display">Novo Pedido</h3>
                     <button onClick={onClose} className="text-text-secondary-light hover:text-text-main-light transition-colors">
@@ -332,16 +312,16 @@ export default function NewOrderModal({ onClose, onCreated }: NewOrderModalProps
                 </div>
 
                 <div className="p-6 space-y-5">
-                    {/* Error */}
                     {error && (
                         <div className="bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 text-sm px-4 py-3 rounded-xl border border-red-200 dark:border-red-800">
                             {error}
                         </div>
                     )}
 
-                    {/* CLIENT SECTION */}
                     <div>
-                        <label className="block text-xs font-semibold text-text-secondary-light uppercase tracking-wider mb-1.5">Cliente</label>
+                        <label className="block text-xs font-semibold text-text-secondary-light uppercase tracking-wider mb-1.5">
+                            Cliente
+                        </label>
 
                         {selectedClient ? (
                             <div className="flex items-center justify-between p-3 bg-blue-50 dark:bg-blue-900/20 rounded-xl border border-blue-200 dark:border-blue-800">
@@ -355,7 +335,10 @@ export default function NewOrderModal({ onClose, onCreated }: NewOrderModalProps
                                     </div>
                                 </div>
                                 <button
-                                    onClick={() => { setSelectedClient(null); setClientQuery(""); }}
+                                    onClick={() => {
+                                        setSelectedClient(null);
+                                        setClientQuery("");
+                                    }}
                                     className="text-text-secondary-light hover:text-red-500 transition-colors"
                                 >
                                     <span className="material-symbols-outlined text-base">close</span>
@@ -372,19 +355,27 @@ export default function NewOrderModal({ onClose, onCreated }: NewOrderModalProps
                                     placeholder="Buscar cliente existente..."
                                     type="text"
                                 />
-                                <span className="material-symbols-outlined absolute left-3 top-2.5 text-text-secondary-light text-lg">search</span>
+                                <span className="material-symbols-outlined absolute left-3 top-2.5 text-text-secondary-light text-lg">
+                                    search
+                                </span>
 
                                 {showClientDropdown && (
                                     <div className="absolute top-full left-0 right-0 mt-1 bg-surface-light dark:bg-surface-dark rounded-xl shadow-2xl border border-border-light dark:border-border-dark z-50 overflow-hidden">
                                         <div className="p-2">
                                             {clientLoading && (
-                                                <p className="px-3 py-2 text-xs text-text-secondary-light text-center">Buscando...</p>
+                                                <p className="px-3 py-2 text-xs text-text-secondary-light text-center">
+                                                    Buscando...
+                                                </p>
                                             )}
                                             {!clientLoading && clientResults.length === 0 && clientQuery.length >= 2 && (
-                                                <p className="px-3 py-2 text-xs text-text-secondary-light text-center">Nenhum cliente encontrado</p>
+                                                <p className="px-3 py-2 text-xs text-text-secondary-light text-center">
+                                                    Nenhum cliente encontrado
+                                                </p>
                                             )}
                                             {!clientLoading && clientQuery.length < 2 && (
-                                                <p className="px-3 py-2 text-xs text-text-secondary-light text-center">Digite ao menos 2 caracteres...</p>
+                                                <p className="px-3 py-2 text-xs text-text-secondary-light text-center">
+                                                    Digite ao menos 2 caracteres...
+                                                </p>
                                             )}
                                             {clientResults.map((lead) => (
                                                 <button
@@ -392,10 +383,14 @@ export default function NewOrderModal({ onClose, onCreated }: NewOrderModalProps
                                                     onMouseDown={() => handleSelectClient(lead)}
                                                     className="w-full px-3 py-2 text-sm text-left hover:bg-primary/5 rounded-lg flex items-center gap-2"
                                                 >
-                                                    <span className="material-symbols-outlined text-base text-blue-500">person</span>
+                                                    <span className="material-symbols-outlined text-base text-blue-500">
+                                                        person
+                                                    </span>
                                                     <div>
                                                         <p>{lead.contact_name}</p>
-                                                        {lead.company_name && <p className="text-xs text-text-secondary-light">{lead.company_name}</p>}
+                                                        {lead.company_name && (
+                                                            <p className="text-xs text-text-secondary-light">{lead.company_name}</p>
+                                                        )}
                                                     </div>
                                                 </button>
                                             ))}
@@ -404,7 +399,10 @@ export default function NewOrderModal({ onClose, onCreated }: NewOrderModalProps
                                 )}
 
                                 <button
-                                    onClick={() => { setShowNewClientForm(true); setShowClientDropdown(false); }}
+                                    onClick={() => {
+                                        setShowNewClientForm(true);
+                                        setShowClientDropdown(false);
+                                    }}
                                     className="mt-2 text-xs text-primary hover:underline flex items-center gap-1"
                                 >
                                     <span className="material-symbols-outlined text-sm">add</span>
@@ -412,7 +410,6 @@ export default function NewOrderModal({ onClose, onCreated }: NewOrderModalProps
                                 </button>
                             </div>
                         ) : (
-                            /* NEW CLIENT FORM */
                             <div className="space-y-3 p-4 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-border-light dark:border-border-dark">
                                 <div className="flex items-center justify-between mb-1">
                                     <p className="text-xs font-semibold text-primary uppercase tracking-wider">Novo Cliente</p>
@@ -452,9 +449,10 @@ export default function NewOrderModal({ onClose, onCreated }: NewOrderModalProps
                         )}
                     </div>
 
-                    {/* PRODUCTS SECTION */}
                     <div>
-                        <label className="block text-xs font-semibold text-text-secondary-light uppercase tracking-wider mb-1.5">Produtos</label>
+                        <label className="block text-xs font-semibold text-text-secondary-light uppercase tracking-wider mb-1.5">
+                            Produtos
+                        </label>
                         <div className="mb-2">
                             <input
                                 value={catalogQuery}
@@ -464,24 +462,32 @@ export default function NewOrderModal({ onClose, onCreated }: NewOrderModalProps
                             />
                             {(catalogLoading || catalogResults.length > 0) && (
                                 <div className="mt-1 border border-border-light dark:border-border-dark rounded-lg bg-surface-light dark:bg-surface-dark max-h-40 overflow-y-auto">
-                                    {catalogLoading && <p className="px-3 py-2 text-xs text-text-secondary-light">Buscando...</p>}
-                                    {!catalogLoading && catalogResults.map((item) => (
-                                        <button
-                                            key={`${item.type}-${item.id}`}
-                                            type="button"
-                                            onClick={() => handleSelectCatalogItem(item)}
-                                            className="w-full text-left px-3 py-2 text-sm hover:bg-primary/5 flex items-center justify-between"
-                                        >
-                                            <span>{item.label}</span>
-                                            <span className="text-[10px] uppercase text-text-secondary-light">{item.type}</span>
-                                        </button>
-                                    ))}
+                                    {catalogLoading && (
+                                        <p className="px-3 py-2 text-xs text-text-secondary-light">Buscando...</p>
+                                    )}
+                                    {!catalogLoading &&
+                                        catalogResults.map((item) => (
+                                            <button
+                                                key={`${item.type}-${item.id}`}
+                                                type="button"
+                                                onClick={() => handleSelectCatalogItem(item)}
+                                                className="w-full text-left px-3 py-2 text-sm hover:bg-primary/5 flex items-center justify-between"
+                                            >
+                                                <span>{item.label}</span>
+                                                <span className="text-[10px] uppercase text-text-secondary-light">
+                                                    {item.type}
+                                                </span>
+                                            </button>
+                                        ))}
                                 </div>
                             )}
                             {selectedCatalogHints.length > 0 && (
                                 <div className="mt-2 flex flex-wrap gap-1">
                                     {selectedCatalogHints.map((hint) => (
-                                        <span key={`${hint.type}-${hint.id}`} className="text-[10px] px-2 py-1 rounded bg-blue-50 text-blue-700 border border-blue-200">
+                                        <span
+                                            key={`${hint.type}-${hint.id}`}
+                                            className="text-[10px] px-2 py-1 rounded bg-blue-50 text-blue-700 border border-blue-200"
+                                        >
                                             {hint.type}: {hint.label}
                                         </span>
                                     ))}
@@ -505,7 +511,10 @@ export default function NewOrderModal({ onClose, onCreated }: NewOrderModalProps
                             ) : (
                                 <div>
                                     {selectedProducts.map((p) => (
-                                        <div key={p.id} className="flex items-center justify-between p-3 border-b border-border-light dark:border-border-dark last:border-b-0">
+                                        <div
+                                            key={p.id}
+                                            className="flex items-center justify-between p-3 border-b border-border-light dark:border-border-dark last:border-b-0"
+                                        >
                                             <div className="flex-1 min-w-0">
                                                 <p className="text-sm font-medium truncate">{p.name}</p>
                                                 <p className="text-xs text-text-secondary-light">{fmt(p.price)} /un</p>
@@ -514,12 +523,16 @@ export default function NewOrderModal({ onClose, onCreated }: NewOrderModalProps
                                                 <button
                                                     onClick={() => handleProductQtyChange(p.id, p.qty - 1)}
                                                     className="w-6 h-6 flex items-center justify-center rounded bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 text-xs font-bold"
-                                                >−</button>
+                                                >
+                                                    −
+                                                </button>
                                                 <span className="text-sm font-medium w-6 text-center">{p.qty}</span>
                                                 <button
                                                     onClick={() => handleProductQtyChange(p.id, p.qty + 1)}
                                                     className="w-6 h-6 flex items-center justify-center rounded bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 text-xs font-bold"
-                                                >+</button>
+                                                >
+                                                    +
+                                                </button>
                                                 <span className="text-sm font-medium w-20 text-right">{fmt(p.price * p.qty)}</span>
                                                 <button
                                                     onClick={() => handleRemoveProduct(p.id)}
@@ -549,7 +562,6 @@ export default function NewOrderModal({ onClose, onCreated }: NewOrderModalProps
                             )}
                         </div>
 
-                        {/* Product Dropdown */}
                         {showProductDropdown && (
                             <div className="mt-1 bg-surface-light dark:bg-surface-dark rounded-xl shadow-2xl border border-border-light dark:border-border-dark z-50 overflow-hidden max-h-48 overflow-y-auto">
                                 <div className="p-2">
@@ -557,7 +569,9 @@ export default function NewOrderModal({ onClose, onCreated }: NewOrderModalProps
                                         <p className="px-3 py-2 text-xs text-text-secondary-light text-center">Carregando...</p>
                                     )}
                                     {!productsLoading && availableProducts.length === 0 && (
-                                        <p className="px-3 py-2 text-xs text-text-secondary-light text-center">Nenhum produto cadastrado</p>
+                                        <p className="px-3 py-2 text-xs text-text-secondary-light text-center">
+                                            Nenhum produto cadastrado
+                                        </p>
                                     )}
                                     {availableProducts.map((product) => (
                                         <button
@@ -566,7 +580,9 @@ export default function NewOrderModal({ onClose, onCreated }: NewOrderModalProps
                                             className="w-full px-3 py-2 text-sm text-left hover:bg-primary/5 rounded-lg flex items-center justify-between"
                                         >
                                             <div className="flex items-center gap-2">
-                                                <span className="material-symbols-outlined text-base text-purple-500">inventory_2</span>
+                                                <span className="material-symbols-outlined text-base text-purple-500">
+                                                    inventory_2
+                                                </span>
                                                 {product.name}
                                             </div>
                                             <span className="text-xs text-text-secondary-light">{fmt(product.price)}</span>
@@ -577,9 +593,10 @@ export default function NewOrderModal({ onClose, onCreated }: NewOrderModalProps
                         )}
                     </div>
 
-                    {/* NOTES */}
                     <div>
-                        <label className="block text-xs font-semibold text-text-secondary-light uppercase tracking-wider mb-1.5">Observações</label>
+                        <label className="block text-xs font-semibold text-text-secondary-light uppercase tracking-wider mb-1.5">
+                            Observações
+                        </label>
                         <textarea
                             value={notes}
                             onChange={(e) => setNotes(e.target.value)}
@@ -590,7 +607,6 @@ export default function NewOrderModal({ onClose, onCreated }: NewOrderModalProps
                     </div>
                 </div>
 
-                {/* Footer */}
                 <div className="p-6 border-t border-border-light dark:border-border-dark flex gap-3">
                     <button
                         onClick={onClose}

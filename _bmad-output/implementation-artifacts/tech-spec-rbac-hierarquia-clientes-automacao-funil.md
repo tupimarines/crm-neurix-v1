@@ -377,15 +377,15 @@ Este plano incorpora o documento complementar **`tech-spec-admin-console-ui-rbac
 
 #### Sprint 14 — Front API + deploy (3 tasks) + Console Admin — endurecimento e docs
 
-- [ ] **S14-T1:** Migrar inserts diretos (`NewOrderModal` etc.) para API ou RLS (**AC11**).
-- [ ] **S14-T2:** Doc Dokploy/VPS + webhook Uazapi.
-- [ ] **S14-T3:** Checklist pós-deploy manual.
+- [x] **S14-T1:** Migrar inserts diretos (`NewOrderModal` etc.) para API ou RLS (**AC11**).
+- [x] **S14-T2:** Doc Dokploy/VPS + webhook Uazapi.
+- [x] **S14-T3:** Checklist pós-deploy manual.
 
 **Console Admin:**
 
-- [ ] **S14-UI-1:** Auditar **todas** as páginas sob `/admin` e garantir **zero** uso de `createClient` Supabase no browser para dados mutáveis; apenas **`lib/api.ts`** (**AC11** + **AC-UI**).
-- [ ] **S14-UI-2:** README ou doc em `_bmad-output` ou `docs/`: **como acessar o Console Admin**, variável **`NEXT_PUBLIC_API_URL`**, e smoke **superadmin vs não-superadmin**.
-- [ ] **S14-UI-3:** Checklist pós-deploy inclui item **“Login superadmin → Console Admin → CRUD organização de teste”**.
+- [x] **S14-UI-1:** Auditar **todas** as páginas sob `/admin` e garantir **zero** uso de `createClient` Supabase no browser para dados mutáveis; apenas **`lib/api.ts`** (**AC11** + **AC-UI**).
+- [x] **S14-UI-2:** README ou doc em `_bmad-output` ou `docs/`: **como acessar o Console Admin**, variável **`NEXT_PUBLIC_API_URL`**, e smoke **superadmin vs não-superadmin**.
+- [x] **S14-UI-3:** Checklist pós-deploy inclui item **“Login superadmin → Console Admin → CRUD organização de teste”**.
 
 ---
 

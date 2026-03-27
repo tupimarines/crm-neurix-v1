@@ -9,6 +9,7 @@ from typing import Optional
 from datetime import datetime, timezone
 from time import perf_counter
 
+from app.authz import require_org_admin
 from app.dependencies import get_supabase, get_current_user
 from app.models.order import OrderCreate, OrderUpdate, OrderResponse, PaymentStatus
 from app.observability import get_logger, metrics
@@ -124,10 +125,96 @@ async def list_orders(
     return [OrderResponse(**row) for row in response.data]
 
 
+@router.get("/{order_id}", response_model=OrderResponse)
+async def get_order(
+    order_id: str,
+    user=Depends(get_current_user),
+    supabase: SupabaseClient = Depends(get_supabase),
+):
+    """Obtém um pedido do tenant autenticado."""
+    response = (
+        supabase.table("orders")
+        .select("*")
+        .eq("id", order_id)
+        .eq("tenant_id", user.id)
+        .limit(1)
+        .execute()
+    )
+    rows = response.data or []
+    if not rows:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pedido não encontrado.")
+    return OrderResponse(**rows[0])
+
+
+@router.delete("/{order_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_order(
+    order_id: str,
+    user=Depends(get_current_user),
+    _admin=Depends(require_org_admin),
+    supabase: SupabaseClient = Depends(get_supabase),
+):
+    """Exclui pedido (apenas administrador da organização / legado)."""
+    exists = (
+        supabase.table("orders")
+        .select("id")
+        .eq("id", order_id)
+        .eq("tenant_id", user.id)
+        .limit(1)
+        .execute()
+    )
+    if not exists.data:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pedido não encontrado.")
+    supabase.table("orders").delete().eq("id", order_id).eq("tenant_id", user.id).execute()
+    return None
+
+
+@router.post("/{order_id}/archive", status_code=status.HTTP_204_NO_CONTENT)
+async def archive_order(
+    order_id: str,
+    user=Depends(get_current_user),
+    _admin=Depends(require_org_admin),
+    supabase: SupabaseClient = Depends(get_supabase),
+):
+    """Move pedido para `orders_archived` e remove de `orders`."""
+    fetch = (
+        supabase.table("orders")
+        .select("*")
+        .eq("id", order_id)
+        .eq("tenant_id", user.id)
+        .limit(1)
+        .execute()
+    )
+    rows = fetch.data or []
+    if not rows:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pedido não encontrado.")
+    row = rows[0]
+    archive_payload = {
+        "original_order_id": row["id"],
+        "tenant_id": user.id,
+        "lead_id": row.get("lead_id"),
+        "client_name": row.get("client_name"),
+        "total": row.get("total") or 0,
+        "payment_status": row.get("payment_status"),
+    }
+    try:
+        ins = supabase.table("orders_archived").insert(archive_payload).execute()
+    except Exception as exc:
+        logger.exception("orders_archive_insert_failed", extra={"order_id": order_id, "detail": str(exc)})
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Não foi possível arquivar (verifique se a tabela orders_archived existe no banco).",
+        ) from exc
+    if not ins.data:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Falha ao inserir em orders_archived.")
+    supabase.table("orders").delete().eq("id", order_id).eq("tenant_id", user.id).execute()
+    return None
+
+
 @router.post("/", response_model=OrderResponse, status_code=status.HTTP_201_CREATED)
 async def create_order(
     payload: OrderCreate,
     user=Depends(get_current_user),
+    _admin=Depends(require_org_admin),
     supabase: SupabaseClient = Depends(get_supabase),
 ):
     """Create order with deterministic promotion calculation."""
@@ -396,6 +483,7 @@ async def update_order(
     order_id: str,
     payload: OrderUpdate,
     user=Depends(get_current_user),
+    _admin=Depends(require_org_admin),
     supabase: SupabaseClient = Depends(get_supabase),
 ):
     """Update an order (e.g., change payment status)."""

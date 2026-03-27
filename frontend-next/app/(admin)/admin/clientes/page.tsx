@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { CrmClientForm } from "@/components/crm/CrmClientForm";
 import {
-    createClient,
+    createCrmClient,
     deleteClient,
     getOrganizations,
     listClients,
@@ -117,7 +117,7 @@ export default function AdminClientesPage() {
         setFormError(null);
         try {
             if (modalMode === "create") {
-                await createClient(payload as CreateCrmClientBody, token);
+                await createCrmClient(payload as CreateCrmClientBody, token);
             } else if (editing) {
                 await updateClient(editing.id, payload as PatchCrmClientBody, token);
             }

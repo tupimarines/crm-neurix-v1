@@ -1604,3 +1604,46 @@ async def send_message_to_lead(
         "uazapi_response": uazapi_response,
         "saved_message": saved.data[0] if saved and saved.data else message_record,
     }
+
+
+@router.get("/{lead_id}", response_model=LeadResponse)
+async def get_lead(
+    lead_id: str,
+    user=Depends(get_current_user),
+    supabase: SupabaseClient = Depends(get_supabase),
+    eff: EffectiveRole = Depends(get_effective_role),
+):
+    """
+    Retorna um lead se o usuário tiver acesso (tenant ou read_only no funil atribuído).
+    Registrado por último para não sombrear rotas estáticas (`/kanban`, `/stages`, …).
+    """
+    lead_chk = (
+        supabase.table("leads")
+        .select("*")
+        .eq("id", lead_id)
+        .limit(1)
+        .execute()
+    ).data or []
+    if not lead_chk:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead não encontrado.")
+    row0 = lead_chk[0]
+    if str(row0["tenant_id"]) != str(user.id):
+        allowed = False
+        if eff.is_read_only and eff.assigned_funnel_id:
+            if str(row0.get("funnel_id") or "") == str(eff.assigned_funnel_id):
+                allowed = True
+            else:
+                pos = (
+                    supabase.table("lead_pipeline_positions")
+                    .select("id")
+                    .eq("lead_id", lead_id)
+                    .eq("funnel_id", str(eff.assigned_funnel_id))
+                    .eq("board_owner_user_id", str(user.id))
+                    .limit(1)
+                    .execute()
+                )
+                if pos.data:
+                    allowed = True
+        if not allowed:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Sem acesso a este lead.")
+    return LeadResponse(**row0)
