@@ -342,14 +342,14 @@ Este plano incorpora o documento complementar **`tech-spec-admin-console-ui-rbac
 
 #### Sprint 11 — Posições + automação + auditoria (3 tasks) + Console Admin — leitura / links
 
-- [ ] **S11-T1:** `lead_pipeline_positions` + `move_lead_stage` (ADR-001).
-- [ ] **S11-T2:** `stage_automations` + UI “Automação” no Kanban.
-- [ ] **S11-T3:** `lead_activity` insert + timeline no card.
+- [x] **S11-T1:** `lead_pipeline_positions` + `move_lead_stage` (ADR-001).
+- [x] **S11-T2:** `stage_automations` + UI “Automação” no Kanban.
+- [x] **S11-T3:** `lead_activity` insert + timeline no card.
 
 **Console Admin:**
 
-- [ ] **S11-UI-1:** Página **“Automação / Auditoria”** no admin: **prioridade** — links para documentação e para **Kanban** (onde a automação é configurada — **S11-T2**). **Se** existir **`GET /api/.../lead_activity`** ou listagem por `lead_id`, tabela somente leitura com paginação; caso contrário, stub com dependência explícita.
-- [ ] **S11-UI-2:** Não reimplementar o **modal de automação** do Kanban no console — evitar duplicação; o console é **hub** operacional, não segundo editor de regras, salvo decisão de produto futura.
+- [x] **S11-UI-1:** Página **“Automação / Auditoria”** no admin: **prioridade** — links para documentação e para **Kanban** (onde a automação é configurada — **S11-T2**). **Se** existir **`GET /api/.../lead_activity`** ou listagem por `lead_id`, tabela somente leitura com paginação; caso contrário, stub com dependência explícita.
+- [x] **S11-UI-2:** Não reimplementar o **modal de automação** do Kanban no console — evitar duplicação; o console é **hub** operacional, não segundo editor de regras, salvo decisão de produto futura.
 
 #### Sprint 12 — Read-only + regressão estoque (3 tasks) + Console Admin — segurança
 

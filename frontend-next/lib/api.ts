@@ -439,3 +439,60 @@ export const saveWhatsappToken = (instanceToken: string, token?: string, inboxId
 
 export const disconnectWhatsappInstance = (token?: string, inboxId?: string) =>
     apiDelete<{ message: string }>(`/api/whatsapp/disconnect${whatsappInboxQuery(inboxId)}`, token);
+
+// ── Automação de etapa + auditoria (Sprint 11) ──
+
+export type StageAutomationDTO = {
+    id: string;
+    organization_id: string;
+    source_funnel_id: string;
+    source_stage_id: string;
+    target_user_id: string;
+    target_funnel_id: string;
+    target_stage_id: string;
+    created_at?: string | null;
+};
+
+export const getStageAutomation = (stageId: string, token?: string) =>
+    apiGet<StageAutomationDTO | null>(`/api/leads/stages/${encodeURIComponent(stageId)}/automation`, token);
+
+export const putStageAutomation = (
+    stageId: string,
+    body: {
+        organization_id: string;
+        target_user_id: string;
+        target_funnel_id: string;
+        target_stage_id: string;
+    },
+    token?: string
+) => apiPut<StageAutomationDTO>(`/api/leads/stages/${encodeURIComponent(stageId)}/automation`, body, token);
+
+export const deleteStageAutomation = (stageId: string, token?: string) =>
+    apiDelete<void>(`/api/leads/stages/${encodeURIComponent(stageId)}/automation`, token);
+
+export type LeadActivityDTO = {
+    id: string;
+    event_type: string;
+    from_stage_id?: string | null;
+    to_stage_id?: string | null;
+    actor_user_id?: string | null;
+    occurred_at: string;
+    metadata?: Record<string, unknown>;
+};
+
+export const getLeadActivity = (leadId: string, token?: string) =>
+    apiGet<LeadActivityDTO[]>(`/api/leads/${encodeURIComponent(leadId)}/activity`, token);
+
+export type PipelineStageBrief = {
+    id: string;
+    name: string;
+    order_position: number;
+    version: number;
+    is_conversion?: boolean;
+};
+
+export const listOrgFunnelStages = (orgId: string, funnelId: string, token?: string) =>
+    apiGet<PipelineStageBrief[]>(
+        `/api/organizations/${encodeURIComponent(orgId)}/funnels/${encodeURIComponent(funnelId)}/stages`,
+        token
+    );

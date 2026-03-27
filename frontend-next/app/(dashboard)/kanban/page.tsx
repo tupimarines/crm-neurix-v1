@@ -24,7 +24,20 @@ import {
     arrayMove,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { api } from "@/lib/api";
+import {
+    api,
+    deleteStageAutomation,
+    getAuthMe,
+    getLeadActivity,
+    getStageAutomation,
+    listOrgFunnelStages,
+    listOrgMembers,
+    listOrganizationFunnels,
+    putStageAutomation,
+    type LeadActivityDTO,
+    type OrganizationFunnelItem,
+    type OrganizationMemberDTO,
+} from "@/lib/api";
 import { supabase } from "@/lib/supabase";
 import WhatsAppChat from "@/components/WhatsAppChat";
 
@@ -166,6 +179,23 @@ export default function KanbanPage() {
     const [isLoading, setIsLoading] = useState(true);
     const [stages, setStages] = useState<KanbanStage[]>([]);
     const [cards, setCards] = useState<KanbanCard[]>([]);
+    const [resolvedFunnelId, setResolvedFunnelId] = useState<string | null>(null);
+
+    const [automationOpen, setAutomationOpen] = useState(false);
+    const [automationStageId, setAutomationStageId] = useState<string | null>(null);
+    const [automationStageTitle, setAutomationStageTitle] = useState("");
+    const [automationOrgId, setAutomationOrgId] = useState<string | null>(null);
+    const [automationMembers, setAutomationMembers] = useState<OrganizationMemberDTO[]>([]);
+    const [automationOrgFunnels, setAutomationOrgFunnels] = useState<OrganizationFunnelItem[]>([]);
+    const [automationTargetUserId, setAutomationTargetUserId] = useState("");
+    const [automationTargetFunnelId, setAutomationTargetFunnelId] = useState("");
+    const [automationTargetStageId, setAutomationTargetStageId] = useState("");
+    const [automationTargetStages, setAutomationTargetStages] = useState<{ id: string; name: string }[]>([]);
+    const [automationLoading, setAutomationLoading] = useState(false);
+    const [automationSaving, setAutomationSaving] = useState(false);
+
+    const [leadActivity, setLeadActivity] = useState<LeadActivityDTO[]>([]);
+    const [leadActivityLoading, setLeadActivityLoading] = useState(false);
 
     const fetchKanban = useCallback(async ({ silent = false }: { silent?: boolean } = {}) => {
         if (isFetchingKanbanRef.current) return;
@@ -229,6 +259,7 @@ export default function KanbanPage() {
                 }
             }
             setCards(allCards);
+            setResolvedFunnelId(data.funnel_id ?? (funnelIdFromUrl && funnelIdFromUrl.trim() ? funnelIdFromUrl.trim() : null));
         } catch (err) {
             console.error("Failed to fetch kanban data:", err);
         } finally {
@@ -287,6 +318,19 @@ export default function KanbanPage() {
     const [editCardMenuPosition, setEditCardMenuPosition] = useState<{ top: number; left: number } | null>(null);
     const [editingCard, setEditingCard] = useState<KanbanCard | null>(null);
     const [editSuggestedValue, setEditSuggestedValue] = useState("R$ 0,00");
+
+    useEffect(() => {
+        if (!editingCard) {
+            setLeadActivity([]);
+            return;
+        }
+        const token = localStorage.getItem("access_token") || undefined;
+        setLeadActivityLoading(true);
+        getLeadActivity(editingCard.id, token)
+            .then(setLeadActivity)
+            .catch(() => setLeadActivity([]))
+            .finally(() => setLeadActivityLoading(false));
+    }, [editingCard?.id]);
     const [isManualValueConfirmed, setIsManualValueConfirmed] = useState(false);
     const [manualValueJustification, setManualValueJustification] = useState("");
     const [isSaving, setIsSaving] = useState(false);
@@ -574,6 +618,116 @@ export default function KanbanPage() {
         setManualValueJustification("");
     };
 
+    async function openAutomationModal(stageId: string, stageTitle: string) {
+        const token = localStorage.getItem("access_token") || undefined;
+        setAutomationStageId(stageId);
+        setAutomationStageTitle(stageTitle);
+        setAutomationOpen(true);
+        setAutomationLoading(true);
+        try {
+            const me = await getAuthMe(token);
+            const orgId = me.organization_id || null;
+            setAutomationOrgId(orgId);
+            if (!orgId) {
+                alert("Seu perfil não está vinculado a uma organização. Configure a organização no perfil para usar automação entre usuários.");
+                setAutomationLoading(false);
+                return;
+            }
+            const [members, funnels, existing] = await Promise.all([
+                listOrgMembers(orgId, token),
+                listOrganizationFunnels(orgId, token),
+                getStageAutomation(stageId, token),
+            ]);
+            setAutomationMembers(members);
+            setAutomationOrgFunnels(funnels);
+            if (existing) {
+                setAutomationTargetUserId(existing.target_user_id);
+                setAutomationTargetFunnelId(existing.target_funnel_id);
+                const st = await listOrgFunnelStages(orgId, existing.target_funnel_id, token);
+                setAutomationTargetStages(st.map((s) => ({ id: s.id, name: s.name })));
+                setAutomationTargetStageId(existing.target_stage_id);
+            } else {
+                setAutomationTargetUserId("");
+                setAutomationTargetFunnelId("");
+                setAutomationTargetStageId("");
+                setAutomationTargetStages([]);
+            }
+        } catch (e) {
+            console.error(e);
+            alert(`Erro ao carregar automação: ${e instanceof Error ? e.message : String(e)}`);
+        } finally {
+            setAutomationLoading(false);
+        }
+    }
+
+    async function onAutomationTargetUserChange(uid: string) {
+        setAutomationTargetUserId(uid);
+        setAutomationTargetFunnelId("");
+        setAutomationTargetStageId("");
+        setAutomationTargetStages([]);
+        if (!uid || !automationOrgId) return;
+        const token = localStorage.getItem("access_token") || undefined;
+        const funnelsForUser = automationOrgFunnels.filter((f) => f.tenant_id === uid);
+        if (funnelsForUser.length === 1) {
+            const fid = funnelsForUser[0].id;
+            setAutomationTargetFunnelId(fid);
+            const st = await listOrgFunnelStages(automationOrgId, fid, token);
+            setAutomationTargetStages(st.map((s) => ({ id: s.id, name: s.name })));
+        }
+    }
+
+    async function onAutomationTargetFunnelChange(fid: string) {
+        setAutomationTargetFunnelId(fid);
+        setAutomationTargetStageId("");
+        setAutomationTargetStages([]);
+        if (!fid || !automationOrgId) return;
+        const token = localStorage.getItem("access_token") || undefined;
+        const st = await listOrgFunnelStages(automationOrgId, fid, token);
+        setAutomationTargetStages(st.map((s) => ({ id: s.id, name: s.name })));
+    }
+
+    async function saveAutomation() {
+        if (!automationStageId || !automationOrgId) return;
+        if (!automationTargetUserId || !automationTargetFunnelId || !automationTargetStageId) {
+            alert("Preencha usuário de destino, funil e etapa.");
+            return;
+        }
+        const token = localStorage.getItem("access_token") || undefined;
+        setAutomationSaving(true);
+        try {
+            await putStageAutomation(
+                automationStageId,
+                {
+                    organization_id: automationOrgId,
+                    target_user_id: automationTargetUserId,
+                    target_funnel_id: automationTargetFunnelId,
+                    target_stage_id: automationTargetStageId,
+                },
+                token
+            );
+            setAutomationOpen(false);
+        } catch (e) {
+            alert(`Falha ao salvar: ${e instanceof Error ? e.message : String(e)}`);
+        } finally {
+            setAutomationSaving(false);
+        }
+    }
+
+    async function removeAutomation() {
+        if (!automationStageId) return;
+        if (!window.confirm("Remover automação desta etapa?")) return;
+        const token = localStorage.getItem("access_token") || undefined;
+        setAutomationSaving(true);
+        try {
+            await deleteStageAutomation(automationStageId, token);
+            setAutomationOpen(false);
+        } catch (e) {
+            alert(`Falha ao remover: ${e instanceof Error ? e.message : String(e)}`);
+        } finally {
+            setAutomationSaving(false);
+        }
+    }
+
     // DnD handlers
     function handleDragStart(event: DragStartEvent) {
         if (event.active.data.current?.type !== "card") return;
@@ -641,7 +795,8 @@ export default function KanbanPage() {
         setIsSavingCardMove(true);
         try {
             const token = localStorage.getItem("access_token") || undefined;
-            await api(`/api/leads/${cardId}/stage`, {
+            const qp = resolvedFunnelId ? `?funnel_id=${encodeURIComponent(resolvedFunnelId)}` : "";
+            await api(`/api/leads/${cardId}/stage${qp}`, {
                 method: "PATCH",
                 body: JSON.stringify({ stage: newStageName, stage_id: newStageId }),
                 token,
@@ -791,6 +946,7 @@ export default function KanbanPage() {
                     value: parseCurrency(newCard.value),
                     priority: priorityApiMap[newCard.priority] || null,
                     products_json: newCard.products_json,
+                    ...(resolvedFunnelId ? { funnel_id: resolvedFunnelId } : {}),
                 }),
                 token
             });
@@ -1151,7 +1307,14 @@ export default function KanbanPage() {
                                             </DroppableStage>
                                         </SortableContext>
                                         {/* Add card */}
-                                        <div className="p-3 border-t border-border-light/50 dark:border-border-dark/50 bg-slate-50/50 dark:bg-slate-800/30">
+                                        <div className="p-3 border-t border-border-light/50 dark:border-border-dark/50 bg-slate-50/50 dark:bg-slate-800/30 space-y-2">
+                                            <button
+                                                type="button"
+                                                onClick={() => void openAutomationModal(stage.id, stage.title)}
+                                                className="w-full py-2 text-xs font-semibold uppercase tracking-wide text-primary border border-primary/35 rounded-lg hover:bg-primary/5 transition-colors"
+                                            >
+                                                Automação
+                                            </button>
                                             {showNewCard === stage.id ? (
                                                 <div className="bg-surface-light dark:bg-surface-dark p-3 rounded-lg border border-primary/40 shadow-sm space-y-2">
                                                     <input value={newCard.name} onChange={(e) => setNewCard({ ...newCard, name: e.target.value })} placeholder="Nome do negócio" className="w-full px-3 py-1.5 border border-border-light dark:border-border-dark rounded-lg text-sm bg-white dark:bg-slate-800 focus:ring-1 focus:ring-primary focus:border-transparent" />
@@ -1289,6 +1452,108 @@ export default function KanbanPage() {
                     </button>
                 </div>,
                 document.body
+            )}
+
+            {/* Automação por etapa (Sprint 11) */}
+            {automationOpen && automationStageId && (
+                <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+                    <div
+                        className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm"
+                        onClick={() => {
+                            if (!automationSaving) setAutomationOpen(false);
+                        }}
+                    />
+                    <div className="relative bg-surface-light dark:bg-surface-dark rounded-xl shadow-2xl border border-border-light dark:border-border-dark w-full max-w-md p-6 space-y-4 max-h-[90vh] overflow-y-auto">
+                        <h3 className="text-lg font-bold">Automação — {automationStageTitle}</h3>
+                        {automationLoading ? (
+                            <p className="text-sm text-text-secondary-light">Carregando…</p>
+                        ) : !automationOrgId ? (
+                            <p className="text-sm text-amber-800 dark:text-amber-200/90">
+                                Associe uma organização ao seu perfil para configurar automação entre usuários.
+                            </p>
+                        ) : (
+                            <>
+                                <p className="text-xs text-text-secondary-light dark:text-text-secondary-dark">
+                                    Ao mover ou criar um card nesta etapa, o mesmo lead aparece também na etapa de destino do
+                                    usuário escolhido (visão dupla, um registro).
+                                </p>
+                                <div>
+                                    <label className="block text-xs font-semibold text-text-secondary-light mb-1">Usuário destino</label>
+                                    <select
+                                        value={automationTargetUserId}
+                                        onChange={(e) => void onAutomationTargetUserChange(e.target.value)}
+                                        className="w-full px-3 py-2 border border-border-light dark:border-border-dark rounded-lg text-sm bg-white dark:bg-slate-800"
+                                    >
+                                        <option value="">Selecione…</option>
+                                        {automationMembers.map((m) => (
+                                            <option key={m.user_id} value={m.user_id}>
+                                                {m.role} — {m.user_id.slice(0, 8)}…
+                                            </option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-semibold text-text-secondary-light mb-1">Funil destino</label>
+                                    <select
+                                        value={automationTargetFunnelId}
+                                        onChange={(e) => void onAutomationTargetFunnelChange(e.target.value)}
+                                        className="w-full px-3 py-2 border border-border-light dark:border-border-dark rounded-lg text-sm bg-white dark:bg-slate-800"
+                                        disabled={!automationTargetUserId}
+                                    >
+                                        <option value="">Selecione…</option>
+                                        {automationOrgFunnels.filter((f) => f.tenant_id === automationTargetUserId).map((f) => (
+                                            <option key={f.id} value={f.id}>
+                                                {f.name}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-semibold text-text-secondary-light mb-1">Etapa destino</label>
+                                    <select
+                                        value={automationTargetStageId}
+                                        onChange={(e) => setAutomationTargetStageId(e.target.value)}
+                                        className="w-full px-3 py-2 border border-border-light dark:border-border-dark rounded-lg text-sm bg-white dark:bg-slate-800"
+                                        disabled={!automationTargetFunnelId}
+                                    >
+                                        <option value="">Selecione…</option>
+                                        {automationTargetStages.map((s) => (
+                                            <option key={s.id} value={s.id}>
+                                                {s.name}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div className="flex flex-wrap gap-2 pt-2">
+                                    <button
+                                        type="button"
+                                        onClick={() => void saveAutomation()}
+                                        disabled={automationSaving}
+                                        className="flex-1 min-w-[120px] py-2 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-hover disabled:opacity-50"
+                                    >
+                                        {automationSaving ? "Salvando…" : "Salvar"}
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => void removeAutomation()}
+                                        disabled={automationSaving}
+                                        className="py-2 px-3 border border-red-300 dark:border-red-800 text-red-700 dark:text-red-300 rounded-lg text-sm disabled:opacity-50"
+                                    >
+                                        Remover
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setAutomationOpen(false)}
+                                        disabled={automationSaving}
+                                        className="flex-1 min-w-[100px] py-2 border border-border-light dark:border-border-dark rounded-lg text-sm hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50"
+                                    >
+                                        Fechar
+                                    </button>
+                                </div>
+                            </>
+                        )}
+                    </div>
+                </div>
             )}
 
             {/* Report Modal */}
@@ -1494,6 +1759,27 @@ export default function KanbanPage() {
                         <div>
                             <label className="block text-xs font-semibold text-text-secondary-light uppercase tracking-wider mb-1">Observações</label>
                             <textarea value={editingCard.desc || ""} onChange={(e) => setEditingCard({ ...editingCard, desc: e.target.value })} className="w-full px-3 py-2 border border-border-light dark:border-border-dark rounded-lg text-sm bg-white dark:bg-slate-800 focus:ring-1 focus:ring-primary focus:border-transparent min-h-[80px]" />
+                        </div>
+                        <div>
+                            <label className="block text-xs font-semibold text-text-secondary-light uppercase tracking-wider mb-1">Histórico (movimentações)</label>
+                            {leadActivityLoading ? (
+                                <p className="text-xs text-text-secondary-light">Carregando…</p>
+                            ) : leadActivity.length === 0 ? (
+                                <p className="text-xs text-text-secondary-light">Nenhum evento de movimentação ainda.</p>
+                            ) : (
+                                <ul className="space-y-2 max-h-44 overflow-y-auto text-xs border border-border-light dark:border-border-dark rounded-lg p-2 bg-slate-50/50 dark:bg-slate-800/30">
+                                    {leadActivity.map((ev) => (
+                                        <li key={ev.id} className="border-b border-border-light/40 dark:border-border-dark/40 pb-1.5 last:border-0 last:pb-0">
+                                            <span className="font-medium text-text-main-light dark:text-text-main-dark">
+                                                {ev.event_type === "stage_move" ? "Movimentação de etapa" : ev.event_type}
+                                            </span>
+                                            <span className="text-text-secondary-light dark:text-text-secondary-dark ml-2">
+                                                {new Date(ev.occurred_at).toLocaleString("pt-BR")}
+                                            </span>
+                                        </li>
+                                    ))}
+                                </ul>
+                            )}
                         </div>
                         <div className="flex gap-2 pt-2">
                             <button onClick={handleSaveEditCard} disabled={isSaving} className="flex-1 py-2 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed">

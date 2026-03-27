@@ -14,11 +14,12 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel
 from supabase import Client as SupabaseClient
 
 from app.authz import EffectiveRole, get_effective_role
 from app.dependencies import get_current_user, get_supabase, require_superadmin
-from app.org_scope import assert_funnel_assignable_to_org, list_funnels_for_organization
+from app.org_scope import assert_funnel_assignable_to_org, funnel_ids_for_organization, list_funnels_for_organization
 from app.models.organization import (
     OrganizationCreate,
     OrganizationFunnelItem,
@@ -30,6 +31,14 @@ from app.models.organization import (
 )
 
 router = APIRouter()
+
+
+class PipelineStageBrief(BaseModel):
+    id: str
+    name: str
+    order_position: int
+    version: int = 1
+    is_conversion: bool = False
 
 
 def _parse_ts(value: Any) -> datetime:
@@ -272,6 +281,71 @@ async def list_organization_funnels(
                 name=str(r["name"]),
                 created_at=_parse_ts(r.get("created_at")),
                 updated_at=_parse_ts(r.get("updated_at")),
+            )
+        )
+    return out
+
+
+@router.get("/{org_id}/funnels/{funnel_id}/stages", response_model=list[PipelineStageBrief])
+async def list_org_funnel_pipeline_stages(
+    org_id: str,
+    funnel_id: str,
+    user=Depends(get_current_user),
+    eff: EffectiveRole = Depends(get_effective_role),
+    supabase: SupabaseClient = Depends(get_supabase),
+):
+    """Etapas de um funil da organização (automação Kanban / destino)."""
+    uid = str(user.id)
+    membership = _membership_for_org(supabase, uid, org_id)
+    if not _can_read_org(eff, membership):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Sem acesso a esta organização.")
+
+    allowed = funnel_ids_for_organization(supabase, org_id)
+    if funnel_id not in allowed:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Funil não encontrado nesta organização.")
+
+    fres = (
+        supabase.table("funnels")
+        .select("tenant_id")
+        .eq("id", funnel_id)
+        .limit(1)
+        .execute()
+    ).data or []
+    if not fres:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Funil não encontrado.")
+    tenant_id = str(fres[0]["tenant_id"])
+
+    try:
+        sres = (
+            supabase.table("pipeline_stages")
+            .select("id, name, order_position, version, is_conversion")
+            .eq("tenant_id", tenant_id)
+            .eq("funnel_id", funnel_id)
+            .order("order_position")
+            .execute()
+        )
+    except Exception as exc:
+        detail = str(exc)
+        if "funnel_id" in detail.lower() and "does not exist" in detail.lower():
+            sres = (
+                supabase.table("pipeline_stages")
+                .select("id, name, order_position, version")
+                .eq("tenant_id", tenant_id)
+                .order("order_position")
+                .execute()
+            )
+        else:
+            raise
+
+    out: list[PipelineStageBrief] = []
+    for r in sres.data or []:
+        out.append(
+            PipelineStageBrief(
+                id=str(r["id"]),
+                name=str(r["name"]),
+                order_position=int(r.get("order_position") or 0),
+                version=int(r.get("version") or 1),
+                is_conversion=bool(r.get("is_conversion", False)),
             )
         )
     return out

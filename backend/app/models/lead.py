@@ -37,7 +37,10 @@ class LeadBase(BaseModel):
 
 
 class LeadCreate(LeadBase):
-    pass
+    funnel_id: Optional[str] = Field(
+        None,
+        description="Funil do board ao criar pelo Kanban; default = funil Default do tenant.",
+    )
 
 
 class LeadUpdate(BaseModel):

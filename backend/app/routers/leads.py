@@ -11,7 +11,7 @@ from time import perf_counter
 from datetime import datetime, timezone
 
 from app.dependencies import get_supabase, get_current_user
-from app.authz import EffectiveRole, get_effective_role
+from app.authz import EffectiveRole, get_effective_role, require_org_admin
 from app.org_scope import funnel_ids_for_organization
 from app.models.lead import (
     LeadCreate, LeadUpdate, LeadMoveStage, LeadResponse,
@@ -21,6 +21,16 @@ from app.models.chat_message import SendMessagePayload
 from app.observability import get_logger, metrics
 from app.services.uazapi_service import get_uazapi_service
 from app.services.promotion_engine import apply_promotion_discount, round_money, select_best_promotion
+from app.services.lead_board import (
+    apply_destination_mirror,
+    build_pos_by_lead,
+    fetch_stage_automation_for_source_stage,
+    insert_lead_activity,
+    merge_kanban_lead_rows,
+    resolve_stage_name_for_board,
+    upsert_pipeline_position,
+)
+from app.org_scope import assert_funnel_assignable_to_org
 
 router = APIRouter()
 logger = get_logger("leads")
@@ -336,6 +346,34 @@ class StageDeletePayload(BaseModel):
     fallback_stage_id: str | None = None
 
 
+class StageAutomationPayload(BaseModel):
+    organization_id: str
+    target_user_id: str
+    target_funnel_id: str
+    target_stage_id: str
+
+
+class StageAutomationOut(BaseModel):
+    id: str
+    organization_id: str
+    source_funnel_id: str
+    source_stage_id: str
+    target_user_id: str
+    target_funnel_id: str
+    target_stage_id: str
+    created_at: datetime | None = None
+
+
+class LeadActivityItem(BaseModel):
+    id: str
+    event_type: str
+    from_stage_id: str | None = None
+    to_stage_id: str | None = None
+    actor_user_id: str | None = None
+    occurred_at: datetime
+    metadata: dict = Field(default_factory=dict)
+
+
 def _default_funnel_id_for_tenant(supabase: SupabaseClient, tenant_id: str) -> str:
     """Preferência: funil nome 'Default'; senão o mais antigo por created_at."""
     res = (
@@ -509,20 +547,32 @@ async def get_kanban_board(
             {"id": "default-enviado", "name": "Enviado", "order_position": 3, "version": 1, "is_conversion": False},
         ]
 
-    lead_rows = _fetch_leads_for_funnel(supabase, data_tenant_id=data_tenant_id, funnel_id=resolved_funnel_id)
+    lead_rows_primary = _fetch_leads_for_funnel(supabase, data_tenant_id=data_tenant_id, funnel_id=resolved_funnel_id)
+    lead_rows = merge_kanban_lead_rows(
+        supabase=supabase,
+        primary_rows=lead_rows_primary,
+        data_tenant_id=data_tenant_id,
+        funnel_id=resolved_funnel_id,
+    )
+    pos_by_lead = build_pos_by_lead(supabase, funnel_id=resolved_funnel_id, data_tenant_id=data_tenant_id)
 
     leads_by_stage: dict[str, list] = {s["name"]: [] for s in stages_data}
 
     for row in lead_rows:
-        stage_val = row.get("stage", "Contato Inicial")
-        matched = False
-        for s_name in leads_by_stage.keys():
-            if str(stage_val).lower() == s_name.lower():
-                leads_by_stage[s_name].append(LeadResponse(**row))
-                matched = True
-                break
-
-        if not matched and stages_data:
+        col_name = resolve_stage_name_for_board(
+            row,
+            funnel_id=resolved_funnel_id,
+            data_tenant_id=data_tenant_id,
+            stages_data=stages_data,
+            pos_by_lead=pos_by_lead,
+        )
+        if not col_name:
+            col_name = stages_data[0]["name"] if stages_data else "Contato Inicial"
+        if col_name not in leads_by_stage and stages_data:
+            col_name = stages_data[0]["name"]
+        if col_name in leads_by_stage:
+            leads_by_stage[col_name].append(LeadResponse(**row))
+        elif stages_data:
             leads_by_stage[stages_data[0]["name"]].append(LeadResponse(**row))
 
     columns = []
@@ -768,6 +818,7 @@ async def create_lead(
 ):
     """Create a new lead/card."""
     data = payload.model_dump()
+    funnel_id_opt = data.pop("funnel_id", None)
     data["tenant_id"] = user.id
     previous_reserved: list[dict] = []
     rollback_needed = False
@@ -788,6 +839,19 @@ async def create_lead(
         data["value"] = priced_value
         data["products_json"] = resolved_lines
 
+        resolved_fid = (funnel_id_opt or "").strip() or _default_funnel_id_for_tenant(supabase, str(user.id))
+        if funnel_id_opt and funnel_id_opt.strip():
+            fcheck = (
+                supabase.table("funnels")
+                .select("id, tenant_id")
+                .eq("id", resolved_fid)
+                .limit(1)
+                .execute()
+            ).data or []
+            if not fcheck or str(fcheck[0]["tenant_id"]) != str(user.id):
+                raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Funil inválido.")
+        data["funnel_id"] = resolved_fid
+
         response = supabase.table("leads").insert(data).execute()
     except Exception:
         if rollback_needed and applied_delta:
@@ -805,7 +869,39 @@ async def create_lead(
                 logger.exception("lead_create_stock_rollback_failed", extra={"tenant_id": str(user.id)})
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Erro ao criar lead.")
 
-    return LeadResponse(**response.data[0])
+    lead_row = response.data[0]
+    lid = str(lead_row["id"])
+    try:
+        stages_f = _fetch_pipeline_stages_for_funnel(
+            supabase, data_tenant_id=str(user.id), funnel_id=str(lead_row.get("funnel_id") or resolved_fid)
+        )
+        st_match = next(
+            (
+                s
+                for s in stages_f
+                if str(s.get("name", "")).strip().lower() == str(lead_row.get("stage", "")).strip().lower()
+            ),
+            None,
+        )
+        if st_match:
+            upsert_pipeline_position(
+                supabase,
+                lead_id=lid,
+                funnel_id=str(lead_row.get("funnel_id") or resolved_fid),
+                stage_id=str(st_match["id"]),
+                board_owner_user_id=str(user.id),
+            )
+            auto = fetch_stage_automation_for_source_stage(
+                supabase,
+                source_funnel_id=str(lead_row.get("funnel_id") or resolved_fid),
+                source_stage_id=str(st_match["id"]),
+            )
+            if auto:
+                apply_destination_mirror(supabase, lead_id=lid, automation=auto)
+    except Exception:
+        logger.exception("lead_create_automation_hook_failed", extra={"tenant_id": str(user.id), "lead_id": lid})
+
+    return LeadResponse(**lead_row)
 
 
 @router.patch("/{lead_id}", response_model=LeadResponse)
@@ -882,46 +978,343 @@ async def update_lead(
     return LeadResponse(**lead_data)
 
 
+@router.get("/stages/{stage_id}/automation", response_model=Optional[StageAutomationOut])
+async def get_stage_automation(
+    stage_id: str,
+    user=Depends(get_current_user),
+    supabase: SupabaseClient = Depends(get_supabase),
+):
+    sres = (
+        supabase.table("pipeline_stages")
+        .select("id, tenant_id")
+        .eq("id", stage_id)
+        .limit(1)
+        .execute()
+    )
+    rows = sres.data or []
+    if not rows:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Etapa não encontrada.")
+    if str(rows[0]["tenant_id"]) != str(user.id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Sem acesso a esta etapa.")
+    ares = (
+        supabase.table("stage_automations")
+        .select("*")
+        .eq("source_stage_id", stage_id)
+        .limit(1)
+        .execute()
+    )
+    if not ares.data:
+        return None
+    r = ares.data[0]
+    return StageAutomationOut(
+        id=str(r["id"]),
+        organization_id=str(r["organization_id"]),
+        source_funnel_id=str(r["source_funnel_id"]),
+        source_stage_id=str(r["source_stage_id"]),
+        target_user_id=str(r["target_user_id"]),
+        target_funnel_id=str(r["target_funnel_id"]),
+        target_stage_id=str(r["target_stage_id"]),
+        created_at=r.get("created_at"),
+    )
+
+
+@router.put("/stages/{stage_id}/automation", response_model=StageAutomationOut)
+async def upsert_stage_automation(
+    stage_id: str,
+    payload: StageAutomationPayload,
+    user=Depends(get_current_user),
+    _eff: EffectiveRole = Depends(require_org_admin),
+    supabase: SupabaseClient = Depends(get_supabase),
+):
+    sres = (
+        supabase.table("pipeline_stages")
+        .select("id, tenant_id, funnel_id")
+        .eq("id", stage_id)
+        .limit(1)
+        .execute()
+    )
+    srows = sres.data or []
+    if not srows:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Etapa não encontrada.")
+    stage_row = srows[0]
+    if str(stage_row["tenant_id"]) != str(user.id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Sem permissão nesta etapa.")
+    try:
+        assert_funnel_assignable_to_org(supabase, payload.organization_id, str(stage_row.get("funnel_id")))
+        assert_funnel_assignable_to_org(supabase, payload.organization_id, payload.target_funnel_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+
+    tf = (
+        supabase.table("funnels")
+        .select("id, tenant_id")
+        .eq("id", payload.target_funnel_id)
+        .limit(1)
+        .execute()
+    ).data or []
+    if not tf or str(tf[0]["tenant_id"]) != str(payload.target_user_id):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Funil de destino não pertence ao usuário alvo.")
+
+    ts = (
+        supabase.table("pipeline_stages")
+        .select("id, funnel_id")
+        .eq("id", payload.target_stage_id)
+        .limit(1)
+        .execute()
+    ).data or []
+    if not ts or str(ts[0]["funnel_id"]) != str(payload.target_funnel_id):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Etapa de destino inválida para o funil.")
+
+    mem = (
+        supabase.table("organization_members")
+        .select("user_id")
+        .eq("organization_id", payload.organization_id)
+        .eq("user_id", payload.target_user_id)
+        .limit(1)
+        .execute()
+    ).data or []
+    if not mem:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Usuário alvo não pertence à organização.")
+
+    row_in = {
+        "organization_id": payload.organization_id,
+        "source_funnel_id": str(stage_row.get("funnel_id")),
+        "source_stage_id": stage_id,
+        "target_user_id": payload.target_user_id,
+        "target_funnel_id": payload.target_funnel_id,
+        "target_stage_id": payload.target_stage_id,
+        "created_by": str(user.id),
+    }
+    supabase.table("stage_automations").delete().eq("source_stage_id", stage_id).execute()
+    ins = supabase.table("stage_automations").insert(row_in).execute()
+    out = (ins.data or [None])[0]
+    if not out:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Não foi possível salvar automação.")
+    r = out
+    return StageAutomationOut(
+        id=str(r["id"]),
+        organization_id=str(r["organization_id"]),
+        source_funnel_id=str(r["source_funnel_id"]),
+        source_stage_id=str(r["source_stage_id"]),
+        target_user_id=str(r["target_user_id"]),
+        target_funnel_id=str(r["target_funnel_id"]),
+        target_stage_id=str(r["target_stage_id"]),
+        created_at=r.get("created_at"),
+    )
+
+
+@router.delete("/stages/{stage_id}/automation", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_stage_automation(
+    stage_id: str,
+    user=Depends(get_current_user),
+    _eff: EffectiveRole = Depends(require_org_admin),
+    supabase: SupabaseClient = Depends(get_supabase),
+):
+    sres = (
+        supabase.table("pipeline_stages")
+        .select("id, tenant_id")
+        .eq("id", stage_id)
+        .limit(1)
+        .execute()
+    )
+    srows = sres.data or []
+    if not srows:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Etapa não encontrada.")
+    if str(srows[0]["tenant_id"]) != str(user.id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Sem permissão nesta etapa.")
+    supabase.table("stage_automations").delete().eq("source_stage_id", stage_id).execute()
+    return None
+
+
+@router.get("/{lead_id}/activity", response_model=list[LeadActivityItem])
+async def list_lead_activity(
+    lead_id: str,
+    limit: int = Query(80, ge=1, le=200),
+    user=Depends(get_current_user),
+    supabase: SupabaseClient = Depends(get_supabase),
+    eff: EffectiveRole = Depends(get_effective_role),
+):
+    lead_chk = (
+        supabase.table("leads")
+        .select("id, tenant_id, funnel_id")
+        .eq("id", lead_id)
+        .limit(1)
+        .execute()
+    ).data or []
+    if not lead_chk:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead não encontrado.")
+    row0 = lead_chk[0]
+    if str(row0["tenant_id"]) != str(user.id):
+        allowed = False
+        if eff.is_read_only and eff.assigned_funnel_id:
+            if str(row0.get("funnel_id") or "") == str(eff.assigned_funnel_id):
+                allowed = True
+            else:
+                pos = (
+                    supabase.table("lead_pipeline_positions")
+                    .select("id")
+                    .eq("lead_id", lead_id)
+                    .eq("funnel_id", str(eff.assigned_funnel_id))
+                    .eq("board_owner_user_id", str(user.id))
+                    .limit(1)
+                    .execute()
+                )
+                if pos.data:
+                    allowed = True
+        if not allowed:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Sem acesso a este lead.")
+    ares = (
+        supabase.table("lead_activity")
+        .select("*")
+        .eq("lead_id", lead_id)
+        .order("occurred_at", desc=True)
+        .limit(limit)
+        .execute()
+    )
+    items: list[LeadActivityItem] = []
+    for r in ares.data or []:
+        items.append(
+            LeadActivityItem(
+                id=str(r["id"]),
+                event_type=str(r["event_type"]),
+                from_stage_id=str(r["from_stage_id"]) if r.get("from_stage_id") else None,
+                to_stage_id=str(r["to_stage_id"]) if r.get("to_stage_id") else None,
+                actor_user_id=str(r["actor_user_id"]) if r.get("actor_user_id") else None,
+                occurred_at=r["occurred_at"],
+                metadata=r.get("metadata") or {},
+            )
+        )
+    return items
+
+
 @router.patch("/{lead_id}/stage", response_model=LeadResponse)
 async def move_lead_stage(
     lead_id: str,
     payload: LeadMoveStage,
+    funnel_id: Optional[str] = Query(
+        None,
+        description="Funil do board (mesmo parâmetro do GET /kanban).",
+    ),
     user=Depends(get_current_user),
     supabase: SupabaseClient = Depends(get_supabase),
+    eff: EffectiveRole = Depends(get_effective_role),
 ):
-    """Move a lead to a different Kanban column/stage."""
-    # Canonicalize stage with tenant pipeline_stages to avoid case/label drift.
-    stages = (
-        supabase.table("pipeline_stages")
-        .select("id, name")
-        .eq("tenant_id", user.id)
-        .execute()
-    ).data or []
+    """Move o card; atualiza leads.stage e/ou lead_pipeline_positions; auditoria + automação de etapa."""
+    data_tenant_id, resolved_funnel_id = _resolve_kanban_scope(supabase, user.id, eff, funnel_id)
+
+    stages = _fetch_pipeline_stages_for_funnel(
+        supabase, data_tenant_id=data_tenant_id, funnel_id=resolved_funnel_id
+    )
+    if not stages:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Nenhuma etapa para este funil.")
 
     canonical_stage = payload.stage
-    if stages:
-        if payload.stage_id:
-            matched = next((s for s in stages if str(s.get("id")) == str(payload.stage_id)), None)
-            if not matched:
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Etapa inválida para este tenant.")
-            canonical_stage = matched["name"]
-        else:
-            target = payload.stage.strip().lower()
-            matched = next((s for s in stages if str(s.get("name", "")).strip().lower() == target), None)
-            if not matched:
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Etapa inválida para este tenant.")
-            canonical_stage = matched["name"]
+    to_stage_row: dict | None = None
+    if payload.stage_id:
+        to_stage_row = next((s for s in stages if str(s.get("id")) == str(payload.stage_id)), None)
+        if not to_stage_row:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Etapa inválida para este funil.")
+        canonical_stage = str(to_stage_row["name"])
+    else:
+        target = payload.stage.strip().lower()
+        to_stage_row = next(
+            (s for s in stages if str(s.get("name", "")).strip().lower() == target),
+            None,
+        )
+        if not to_stage_row:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Etapa inválida para este funil.")
+        canonical_stage = str(to_stage_row["name"])
 
-    response = supabase.table("leads") \
-        .update({"stage": canonical_stage}) \
-        .eq("id", lead_id) \
-        .eq("tenant_id", user.id) \
-        .execute()
+    to_stage_id = str(to_stage_row["id"])
 
-    if not response.data:
+    lead_res = supabase.table("leads").select("*").eq("id", lead_id).limit(1).execute()
+    lead_rows = lead_res.data or []
+    if not lead_rows:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead não encontrado.")
+    lead_row = lead_rows[0]
 
-    return LeadResponse(**response.data[0])
+    pos_existing = (
+        supabase.table("lead_pipeline_positions")
+        .select("id, stage_id")
+        .eq("lead_id", lead_id)
+        .eq("funnel_id", resolved_funnel_id)
+        .eq("board_owner_user_id", data_tenant_id)
+        .limit(1)
+        .execute()
+    )
+    has_pos = bool(pos_existing.data)
+    is_owner = str(lead_row.get("tenant_id")) == str(data_tenant_id)
+    is_primary = is_owner and str(lead_row.get("funnel_id") or "") == str(resolved_funnel_id)
+    if not is_owner and not has_pos:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Sem permissão para mover este card neste funil.")
+
+    from_stage_id: str | None = None
+    if is_primary:
+        prev_name = str(lead_row.get("stage") or "").strip()
+        prev_row = next(
+            (s for s in stages if str(s.get("name", "")).strip().lower() == prev_name.lower()),
+            None,
+        )
+        if prev_row:
+            from_stage_id = str(prev_row["id"])
+    elif pos_existing.data:
+        from_stage_id = str(pos_existing.data[0].get("stage_id"))
+
+    if is_primary:
+        upd = (
+            supabase.table("leads")
+            .update({"stage": canonical_stage})
+            .eq("id", lead_id)
+            .eq("tenant_id", data_tenant_id)
+            .execute()
+        )
+        if not upd.data:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead não encontrado.")
+        upsert_pipeline_position(
+            supabase,
+            lead_id=lead_id,
+            funnel_id=resolved_funnel_id,
+            stage_id=to_stage_id,
+            board_owner_user_id=data_tenant_id,
+        )
+    else:
+        upsert_pipeline_position(
+            supabase,
+            lead_id=lead_id,
+            funnel_id=resolved_funnel_id,
+            stage_id=to_stage_id,
+            board_owner_user_id=data_tenant_id,
+        )
+
+    insert_lead_activity(
+        supabase,
+        lead_id=lead_id,
+        event_type="stage_move",
+        actor_user_id=str(user.id),
+        from_stage_id=from_stage_id,
+        to_stage_id=to_stage_id,
+        metadata={"funnel_id": resolved_funnel_id, "primary": is_primary},
+    )
+
+    if is_primary:
+        auto = fetch_stage_automation_for_source_stage(
+            supabase,
+            source_funnel_id=resolved_funnel_id,
+            source_stage_id=to_stage_id,
+        )
+        if auto:
+            apply_destination_mirror(supabase, lead_id=lead_id, automation=auto)
+
+    refreshed = (
+        supabase.table("leads")
+        .select("*")
+        .eq("id", lead_id)
+        .limit(1)
+        .execute()
+    ).data or []
+    if not refreshed:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead não encontrado.")
+    return LeadResponse(**refreshed[0])
 
 
 @router.delete("/{lead_id}", status_code=status.HTTP_204_NO_CONTENT)
