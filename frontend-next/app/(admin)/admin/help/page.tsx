@@ -63,6 +63,25 @@ export default function AdminHelpPage() {
                 </p>
             </section>
 
+            <section className="space-y-2 rounded-xl border border-border-light dark:border-border-dark bg-black/[0.02] dark:bg-white/[0.03] p-4">
+                <h2 className="text-base font-semibold text-text-main-light dark:text-text-main-dark">
+                    Segurança do console e RBAC (Sprint 12)
+                </h2>
+                <p>
+                    O console só chama a API com o <strong>JWT do superadmin logado</strong>. Não há service role nem mutações
+                    &quot;em nome&quot; de outro usuário sem endpoints dedicados no backend (AC1 / S12-UI-1).
+                </p>
+                <p>
+                    Usuários <strong>read_only</strong> recebem <strong>403</strong> em POST/PATCH/DELETE de produtos,
+                    promoções e leads (exceto <code className="text-xs bg-black/5 px-1 rounded">PATCH …/stage</code>), para
+                    preservar estoque e dados do card (AC13).
+                </p>
+                <p>
+                    Para validar <strong>AC-UI-02</strong>: abra <code className="text-xs bg-black/5 px-1 rounded">/admin</code> com
+                    uma conta <em>sem</em> superadmin — o layout deve redirecionar para o dashboard.
+                </p>
+            </section>
+
             <section className="space-y-2">
                 <h2 className="text-base font-semibold text-text-main-light dark:text-text-main-dark">
                     Smoke: duas caixas no mesmo funil (AC6)

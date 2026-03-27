@@ -8,6 +8,7 @@ from supabase import Client as SupabaseClient
 from typing import Optional
 
 from app.dependencies import get_supabase, get_current_user
+from app.authz import EffectiveRole, require_org_admin
 from app.models.product import ProductCreate, ProductUpdate, ProductResponse
 
 router = APIRouter()
@@ -189,6 +190,7 @@ async def get_product(
 async def create_product(
     payload: ProductCreate,
     user=Depends(get_current_user),
+    _eff: EffectiveRole = Depends(require_org_admin),
     supabase: SupabaseClient = Depends(get_supabase),
 ):
     """Create a new product."""
@@ -271,6 +273,7 @@ async def update_product(
     product_id: str,
     payload: ProductUpdate,
     user=Depends(get_current_user),
+    _eff: EffectiveRole = Depends(require_org_admin),
     supabase: SupabaseClient = Depends(get_supabase),
 ):
     """Update a product."""
@@ -353,6 +356,7 @@ async def update_product(
 async def delete_product(
     product_id: str,
     user=Depends(get_current_user),
+    _eff: EffectiveRole = Depends(require_org_admin),
     supabase: SupabaseClient = Depends(get_supabase),
 ):
     """Delete a product."""

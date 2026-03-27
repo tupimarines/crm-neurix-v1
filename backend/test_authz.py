@@ -5,6 +5,7 @@ import unittest
 from fastapi.testclient import TestClient
 
 from app.authz import compute_effective_role, get_effective_role
+from app.dependencies import get_current_user
 from app.main import app
 
 
@@ -105,6 +106,88 @@ class TestRbacProbesHttp(unittest.TestCase):
         client = TestClient(app)
         r = client.get("/api/auth/rbac/org-admin")
         self.assertEqual(r.status_code, 403)
+
+
+class _FakeUser:
+    id = "00000000-0000-0000-0000-0000000000aa"
+
+
+async def _fake_current_user():
+    return _FakeUser()
+
+
+class TestReadOnlyBlocksMutations(unittest.TestCase):
+    """S12-T2 / AC13 / AC4: read_only não altera produtos, leads (PATCH), promoções — 403 antes do DB."""
+
+    def tearDown(self):
+        app.dependency_overrides.clear()
+
+    def test_read_only_patch_product_403(self):
+        eff = compute_effective_role(
+            "u1",
+            {"is_superadmin": False, "role": "admin", "organization_id": "o1"},
+            [{"organization_id": "o1", "role": "read_only"}],
+        )
+        app.dependency_overrides[get_effective_role] = lambda: eff
+        app.dependency_overrides[get_current_user] = _fake_current_user
+        client = TestClient(app)
+        r = client.patch(
+            "/api/products/00000000-0000-0000-0000-000000000001",
+            json={"name": "x"},
+        )
+        self.assertEqual(r.status_code, 403)
+
+    def test_read_only_patch_lead_with_products_json_403(self):
+        eff = compute_effective_role(
+            "u1",
+            {"is_superadmin": False, "role": "admin", "organization_id": "o1"},
+            [{"organization_id": "o1", "role": "read_only"}],
+        )
+        app.dependency_overrides[get_effective_role] = lambda: eff
+        app.dependency_overrides[get_current_user] = _fake_current_user
+        client = TestClient(app)
+        r = client.patch(
+            "/api/leads/00000000-0000-0000-0000-000000000002",
+            json={"products_json": [{"id": "p1", "quantity": 1}]},
+        )
+        self.assertEqual(r.status_code, 403)
+
+    def test_read_only_post_promotion_403(self):
+        eff = compute_effective_role(
+            "u1",
+            {"is_superadmin": False, "role": "admin", "organization_id": "o1"},
+            [{"organization_id": "o1", "role": "read_only"}],
+        )
+        app.dependency_overrides[get_effective_role] = lambda: eff
+        app.dependency_overrides[get_current_user] = _fake_current_user
+        client = TestClient(app)
+        r = client.post(
+            "/api/promotions/",
+            json={
+                "name": "x",
+                "slug": "x-slug-test",
+                "discount_type": "percent",
+                "discount_value": 10,
+                "starts_at": "2026-01-01T00:00:00Z",
+                "product_ids": [],
+            },
+        )
+        self.assertEqual(r.status_code, 403)
+
+    def test_org_admin_patch_product_not_forbidden_by_rbac(self):
+        eff = compute_effective_role(
+            "u1",
+            {"is_superadmin": False, "role": "admin", "organization_id": None},
+            [],
+        )
+        app.dependency_overrides[get_effective_role] = lambda: eff
+        app.dependency_overrides[get_current_user] = _fake_current_user
+        client = TestClient(app)
+        r = client.patch(
+            "/api/products/00000000-0000-0000-0000-000000000001",
+            json={"name": "x"},
+        )
+        self.assertNotEqual(r.status_code, 403)
 
 
 if __name__ == "__main__":

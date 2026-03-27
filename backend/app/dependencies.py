@@ -159,6 +159,7 @@ _AUTHZ_EXPORTS = frozenset(
         "fetch_effective_role",
         "get_effective_role",
         "require_org_admin",
+        "require_role",
         "require_superadmin",
     }
 )

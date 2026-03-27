@@ -601,6 +601,7 @@ async def get_kanban_board(
 async def reorder_stages(
     payload: ReorderStagesPayload,
     user=Depends(get_current_user),
+    _eff: EffectiveRole = Depends(require_org_admin),
     supabase: SupabaseClient = Depends(get_supabase),
 ):
     started = perf_counter()
@@ -679,6 +680,7 @@ async def reorder_stages(
 async def create_stage(
     payload: StageCreatePayload,
     user=Depends(get_current_user),
+    _eff: EffectiveRole = Depends(require_org_admin),
     supabase: SupabaseClient = Depends(get_supabase),
 ):
     tenant_id = str(user.id)
@@ -737,6 +739,7 @@ async def rename_stage(
     stage_id: str,
     payload: StageRenamePayload,
     user=Depends(get_current_user),
+    _eff: EffectiveRole = Depends(require_org_admin),
     supabase: SupabaseClient = Depends(get_supabase),
 ):
     response = (
@@ -758,6 +761,7 @@ async def delete_stage(
     stage_id: str,
     payload: StageDeletePayload,
     user=Depends(get_current_user),
+    _eff: EffectiveRole = Depends(require_org_admin),
     supabase: SupabaseClient = Depends(get_supabase),
 ):
     stages = (
@@ -814,6 +818,7 @@ async def list_leads(
 async def create_lead(
     payload: LeadCreate,
     user=Depends(get_current_user),
+    _eff: EffectiveRole = Depends(require_org_admin),
     supabase: SupabaseClient = Depends(get_supabase),
 ):
     """Create a new lead/card."""
@@ -910,6 +915,7 @@ async def update_lead(
     payload: LeadUpdate,
     background_tasks: BackgroundTasks,
     user=Depends(get_current_user),
+    _eff: EffectiveRole = Depends(require_org_admin),
     supabase: SupabaseClient = Depends(get_supabase),
 ):
     """Update a lead's data."""
@@ -1321,6 +1327,7 @@ async def move_lead_stage(
 async def delete_lead(
     lead_id: str,
     user=Depends(get_current_user),
+    _eff: EffectiveRole = Depends(require_org_admin),
     supabase: SupabaseClient = Depends(get_supabase),
 ):
     """Delete a lead."""

@@ -106,11 +106,39 @@ export default function AdminUserDetailPage() {
 
                     <div className="glass-effect rounded-2xl border border-border-light dark:border-border-dark p-6 space-y-4">
                         <h2 className="font-semibold">Memberships</h2>
-                        <ul className="text-sm space-y-2">
+                        <ul className="text-sm space-y-3">
                             {data.memberships.map((m) => (
-                                <li key={m.organization_id} className="font-mono text-xs break-all">
-                                    org {m.organization_id} — {m.role}{" "}
-                                    {m.assigned_funnel_id ? `— funnel ${m.assigned_funnel_id}` : ""}
+                                <li
+                                    key={m.organization_id}
+                                    className="rounded-lg border border-border-light dark:border-border-dark bg-white/50 dark:bg-surface-dark/50 px-3 py-2"
+                                >
+                                    <p className="font-mono text-xs break-all text-text-secondary-light">
+                                        Org: {m.organization_id}
+                                    </p>
+                                    <p className="mt-1">
+                                        <span className="font-semibold text-text-main-light dark:text-text-main-dark">
+                                            Papel:
+                                        </span>{" "}
+                                        <span
+                                            className={
+                                                m.role === "read_only"
+                                                    ? "text-amber-700 dark:text-amber-300"
+                                                    : "text-emerald-700 dark:text-emerald-300"
+                                            }
+                                        >
+                                            {m.role}
+                                        </span>
+                                        {m.role === "read_only" && (
+                                            <span className="text-xs text-text-secondary-light ml-2">
+                                                (edição de cards e catálogo bloqueada na API)
+                                            </span>
+                                        )}
+                                    </p>
+                                    {m.assigned_funnel_id ? (
+                                        <p className="mt-1 font-mono text-xs break-all">
+                                            Funil atribuído: {m.assigned_funnel_id}
+                                        </p>
+                                    ) : null}
                                 </li>
                             ))}
                         </ul>

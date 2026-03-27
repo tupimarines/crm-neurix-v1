@@ -124,9 +124,14 @@ def require_superadmin(
 def require_org_admin(
     eff: EffectiveRole = Depends(get_effective_role),
 ) -> EffectiveRole:
+    """Bloqueia `read_only`; permite superadmin, admin de org e legado admin sem membership."""
     if not eff.is_org_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Acesso restrito a administrador da organização.",
         )
     return eff
+
+
+# Alias explícito para specs que nomeiam a dependência como require_role (mutações tenant).
+require_role = require_org_admin

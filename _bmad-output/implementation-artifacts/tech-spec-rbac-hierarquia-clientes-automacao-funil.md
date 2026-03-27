@@ -353,15 +353,15 @@ Este plano incorpora o documento complementar **`tech-spec-admin-console-ui-rbac
 
 #### Sprint 12 — Read-only + regressão estoque (3 tasks) + Console Admin — segurança
 
-- [ ] **S12-T1:** `require_role` em produtos, promoções, leads (exceto PATCH stage), stages.
-- [ ] **S12-T2:** Teste: read_only PATCH produtos no lead → 403; admin OK; **estoque** consistente (**AC13**).
-- [ ] **S12-T3:** Documentar rotas legacy.
+- [x] **S12-T1:** `require_role` em produtos, promoções, leads (exceto PATCH stage), stages.
+- [x] **S12-T2:** Teste: read_only PATCH produtos no lead → 403; admin OK; **estoque** consistente (**AC13**).
+- [x] **S12-T3:** Documentar rotas legacy.
 
 **Console Admin:**
 
-- [ ] **S12-UI-1:** Verificar manualmente que **nenhuma** rota do console chama mutações “como outro usuário” sem backend permitir; superadmin só usa endpoints já protegidos (**AC1**).
-- [ ] **S12-UI-2:** Se existir **lista de usuários** no console, exibir **papel** (admin/read_only) e **não** oferecer ações que o backend negaria para não-superadmin ao testar com usuário errado.
-- [ ] **S12-UI-3:** Teste manual: usuário **sem** superadmin acessa `/admin` → bloqueio (**AC-UI-02**).
+- [x] **S12-UI-1:** Verificar manualmente que **nenhuma** rota do console chama mutações “como outro usuário” sem backend permitir; superadmin só usa endpoints já protegidos (**AC1**).
+- [x] **S12-UI-2:** Se existir **lista de usuários** no console, exibir **papel** (admin/read_only) e **não** oferecer ações que o backend negaria para não-superadmin ao testar com usuário errado.
+- [x] **S12-UI-3:** Teste manual: usuário **sem** superadmin acessa `/admin` → bloqueio (**AC-UI-02**).
 
 #### Sprint 13 — Kanban UI funil + inbox + read_only (3 tasks) + Console Admin — entrada global
 

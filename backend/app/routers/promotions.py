@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from supabase import Client as SupabaseClient
 
 from app.dependencies import get_current_user, get_supabase
+from app.authz import EffectiveRole, require_org_admin
 from app.models.catalog import (
     PromotionCreate,
     PromotionProductsPayload,
@@ -182,6 +183,7 @@ async def list_promotions(
 async def create_promotion(
     payload: PromotionCreate,
     user=Depends(get_current_user),
+    _eff: EffectiveRole = Depends(require_org_admin),
     supabase: SupabaseClient = Depends(get_supabase),
 ):
     _validate_period(payload.starts_at, payload.ends_at)
@@ -239,6 +241,7 @@ async def update_promotion(
     promotion_id: str,
     payload: PromotionUpdate,
     user=Depends(get_current_user),
+    _eff: EffectiveRole = Depends(require_org_admin),
     supabase: SupabaseClient = Depends(get_supabase),
 ):
     update_data = payload.model_dump(mode="json", exclude_unset=True)
@@ -290,6 +293,7 @@ async def update_promotion(
 async def delete_promotion(
     promotion_id: str,
     user=Depends(get_current_user),
+    _eff: EffectiveRole = Depends(require_org_admin),
     supabase: SupabaseClient = Depends(get_supabase),
 ):
     try:
@@ -311,6 +315,7 @@ async def set_promotion_products(
     promotion_id: str,
     payload: PromotionProductsPayload,
     user=Depends(get_current_user),
+    _eff: EffectiveRole = Depends(require_org_admin),
     supabase: SupabaseClient = Depends(get_supabase),
 ):
     try:
