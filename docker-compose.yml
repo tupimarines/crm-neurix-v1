@@ -9,13 +9,12 @@ services:
     build:
       context: ./frontend-next
       args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-https://crm.wbtech.dev}
         NEXT_PUBLIC_SUPABASE_URL: ${SUPABASE_PUBLIC_URL:-https://crm-supabase.wbtech.dev}
         NEXT_PUBLIC_SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY}
     container_name: neurix-crm-frontend
     expose:
       - "3000"
-    environment:
-      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-https://crm.wbtech.dev}
     depends_on:
       - backend
     restart: unless-stopped
