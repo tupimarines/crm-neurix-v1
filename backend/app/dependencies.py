@@ -112,12 +112,13 @@ async def get_redis(settings: Settings = Depends(get_settings)) -> aioredis.Redi
 
 # ── Auth Dependency ──
 
-# We need a separate anon-key client just for auth.get_user() token validation
+# We need a separate anon-key client for auth/session flows so database
+# queries using the service-role client are never contaminated by user sessions.
 _supabase_auth_client: SupabaseClient | None = None
 
 
 def _get_auth_client(settings: Settings = Depends(get_settings)) -> SupabaseClient:
-    """Returns a Supabase client with ANON key for auth validation only."""
+    """Returns a Supabase client with ANON key for auth/session operations."""
     global _supabase_auth_client
     if _supabase_auth_client is None:
         if not settings.SUPABASE_URL or not settings.SUPABASE_ANON_KEY:
@@ -127,6 +128,11 @@ def _get_auth_client(settings: Settings = Depends(get_settings)) -> SupabaseClie
             )
         _supabase_auth_client = create_client(settings.SUPABASE_URL, settings.SUPABASE_ANON_KEY)
     return _supabase_auth_client
+
+
+def get_supabase_auth(settings: Settings = Depends(get_settings)) -> SupabaseClient:
+    """Public dependency for Supabase Auth operations with anon key."""
+    return _get_auth_client(settings)
 
 
 async def get_current_user(
@@ -158,6 +164,7 @@ _AUTHZ_EXPORTS = frozenset(
         "compute_effective_role",
         "fetch_effective_role",
         "get_effective_role",
+        "get_supabase_auth",
         "require_org_admin",
         "require_role",
         "require_superadmin",

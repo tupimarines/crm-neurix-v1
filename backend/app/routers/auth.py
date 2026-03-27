@@ -8,7 +8,13 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from supabase import Client as SupabaseClient
 
-from app.dependencies import get_supabase, get_current_user, require_org_admin, require_superadmin
+from app.dependencies import (
+    get_current_user,
+    get_supabase,
+    get_supabase_auth,
+    require_org_admin,
+    require_superadmin,
+)
 from app.models.user import LoginRequest, OTPVerifyRequest, TokenResponse, RefreshRequest, UserProfile
 from app.authz import EffectiveRole, fetch_effective_role
 
@@ -16,7 +22,7 @@ router = APIRouter()
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(payload: LoginRequest, supabase: SupabaseClient = Depends(get_supabase)):
+async def login(payload: LoginRequest, supabase: SupabaseClient = Depends(get_supabase_auth)):
     """
     Authenticate with email + password.
     Returns JWT access_token and refresh_token.
@@ -53,7 +59,7 @@ async def login(payload: LoginRequest, supabase: SupabaseClient = Depends(get_su
 
 
 @router.post("/verify-otp")
-async def verify_otp(payload: OTPVerifyRequest, supabase: SupabaseClient = Depends(get_supabase)):
+async def verify_otp(payload: OTPVerifyRequest, supabase: SupabaseClient = Depends(get_supabase_auth)):
     """Verify the 2FA OTP code sent via email."""
     try:
         response = supabase.auth.verify_otp({
@@ -85,7 +91,7 @@ async def verify_otp(payload: OTPVerifyRequest, supabase: SupabaseClient = Depen
 
 
 @router.post("/refresh", response_model=TokenResponse)
-async def refresh_token(payload: RefreshRequest, supabase: SupabaseClient = Depends(get_supabase)):
+async def refresh_token(payload: RefreshRequest, supabase: SupabaseClient = Depends(get_supabase_auth)):
     """Refresh the JWT token using the refresh_token (for 14-day session persistence)."""
     try:
         response = supabase.auth.refresh_session(payload.refresh_token)
@@ -113,7 +119,7 @@ async def refresh_token(payload: RefreshRequest, supabase: SupabaseClient = Depe
 
 
 @router.post("/logout")
-async def logout(supabase: SupabaseClient = Depends(get_supabase), user=Depends(get_current_user)):
+async def logout(supabase: SupabaseClient = Depends(get_supabase_auth), user=Depends(get_current_user)):
     """Sign out the current user."""
     try:
         supabase.auth.sign_out()
