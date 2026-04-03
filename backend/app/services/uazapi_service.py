@@ -84,6 +84,16 @@ class UazapiService:
             resp.raise_for_status()
             return resp.json()
 
+    async def get_webhook(self, instance_token: str | None = None) -> dict:
+        """Read the current webhook configuration for the instance."""
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(
+                f"{self.base_url}/webhook",
+                headers=self._instance_headers(instance_token),
+            )
+            resp.raise_for_status()
+            return resp.json()
+
     async def set_webhook(self, url: str, instance_token: str | None = None) -> dict:
         """Set the webhook URL for the instance to receive incoming messages."""
         payload = {
@@ -91,6 +101,7 @@ class UazapiService:
             "events": ["messages"],
             "excludeMessages": ["wasSentByApi"]
         }
+        print(f"[webhook-config] Setting webhook URL: {url}")
         async with httpx.AsyncClient(timeout=15) as client:
             resp = await client.post(
                 f"{self.base_url}/webhook",

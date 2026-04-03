@@ -300,3 +300,35 @@ async def disconnect_instance(
         supabase.table("settings").delete().eq("tenant_id", uid).eq("key", "uazapi_instance_token").execute()
 
     return {"message": "Instância desconectada e token removido."}
+
+
+@router.get("/webhook-debug")
+async def webhook_debug(
+    inbox_id: Optional[str] = Query(None),
+    user=Depends(get_current_user),
+    supabase: SupabaseClient = Depends(get_supabase),
+):
+    """Diagnostico: mostra URL configurada e configuracao atual do webhook na Uazapi."""
+    from app.config import get_settings
+
+    uid = str(user.id)
+    instance_token, mode = _resolve_instance_token(supabase, uid, inbox_id)
+
+    settings = get_settings()
+    expected_url = settings.uazapi_webhook_callback_url
+
+    result: dict = {
+        "expected_webhook_url": expected_url,
+        "public_api_base_url": settings.PUBLIC_API_BASE_URL,
+        "has_instance_token": bool(instance_token),
+        "scope": mode,
+    }
+
+    if instance_token:
+        try:
+            current = await uazapi.get_webhook(instance_token=instance_token)
+            result["uazapi_current_webhook"] = current
+        except Exception as e:
+            result["uazapi_current_webhook_error"] = str(e)
+
+    return result
