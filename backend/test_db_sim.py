@@ -46,7 +46,7 @@ async def main():
                     "whatsapp_chat_id": chat_id,
                     "contact_name": "Augusto",
                     "company_name": "Novo Lead",
-                    "stage": "contato_inicial",
+                    "stage": "",
                     "value": 0
                 }
                 

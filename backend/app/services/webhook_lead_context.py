@@ -135,18 +135,8 @@ def find_legacy_tenant_id_for_token(supabase: SupabaseClient, instance_token: st
 
 
 def slugify_stage_name(name: str) -> str:
-    """Converte nome de coluna do funil em slug alinhado a LeadStage / keyword engine."""
+    """Converte nome de coluna do funil em slug."""
     return "_".join(name.strip().lower().split())
-
-
-# Alinhado ao CHECK legado em leads.stage (001) — evita INSERT inválido se o funil tiver nomes livres.
-_ALLOWED_LEAD_STAGES = frozenset(
-    {"contato_inicial", "escolhendo_sabores", "aguardando_pagamento", "enviado"}
-)
-
-
-def clamp_stage_slug(slug: str) -> str:
-    return slug if slug in _ALLOWED_LEAD_STAGES else "contato_inicial"
 
 
 def get_first_stage_slug_for_funnel(
@@ -155,7 +145,7 @@ def get_first_stage_slug_for_funnel(
     tenant_id: str,
     funnel_id: str,
 ) -> str:
-    """Primeiro estágio do funil (order_position); fallback contato_inicial; restringe aos slugs permitidos no DB legado."""
+    """Primeiro estágio do funil (order_position); retorna nome real do pipeline_stages."""
     try:
         res = (
             supabase.table("pipeline_stages")
@@ -168,10 +158,10 @@ def get_first_stage_slug_for_funnel(
         )
         rows = res.data or []
         if rows:
-            return clamp_stage_slug(slugify_stage_name(str(rows[0]["name"])))
+            return str(rows[0]["name"]).strip()
     except Exception:
         pass
-    return "contato_inicial"
+    return ""
 
 
 def resolve_or_create_crm_client(

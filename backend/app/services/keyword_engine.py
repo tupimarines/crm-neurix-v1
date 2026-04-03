@@ -1,43 +1,19 @@
 """
 Keyword Engine Service — Now loads rules from Supabase (editable).
-Falls back to hardcoded defaults if DB is unavailable.
+Falls back to empty list if DB is unavailable (legacy hardcoded rules removed).
 """
 
 from dataclasses import dataclass
-from app.models.lead import LeadStage
 
 
 @dataclass
 class KeywordRule:
     keywords: list[str]
-    target_stage: LeadStage
+    target_stage: str
     priority: int
 
 
-# Hardcoded fallback rules (used if DB is not reachable)
-FALLBACK_RULES: list[KeywordRule] = [
-    KeywordRule(
-        keywords=["cardápio", "sabores", "sabor", "catálogo", "tipos", "frutas",
-                  "morango", "damasco", "laranja", "figo", "me manda", "quais tem",
-                  "opções", "variedade"],
-        target_stage=LeadStage.ESCOLHENDO_SABORES,
-        priority=1,
-    ),
-    KeywordRule(
-        keywords=["quero comprar", "fechar", "pedido", "pagar", "pagamento",
-                  "pix", "transferência", "boleto", "nota fiscal",
-                  "quanto fica", "valor total", "preço", "desconto",
-                  "comprar", "encomenda", "encomendar"],
-        target_stage=LeadStage.AGUARDANDO_PAGAMENTO,
-        priority=2,
-    ),
-    KeywordRule(
-        keywords=["paguei", "comprovante", "transferi", "enviado",
-                  "entrega", "rastreio", "recebido", "obrigado"],
-        target_stage=LeadStage.ENVIADO,
-        priority=3,
-    ),
-]
+FALLBACK_RULES: list[KeywordRule] = []
 
 
 class KeywordEngine:
@@ -60,7 +36,7 @@ class KeywordEngine:
                 for row in response.data:
                     rules.append(KeywordRule(
                         keywords=row["keywords"],
-                        target_stage=LeadStage(row["target_stage"]),
+                        target_stage=str(row["target_stage"]),
                         priority=row["priority"],
                     ))
                 self._cached_rules = rules
@@ -70,7 +46,7 @@ class KeywordEngine:
 
         return FALLBACK_RULES
 
-    def analyze_message(self, message: str, rules: list[KeywordRule] | None = None) -> LeadStage | None:
+    def analyze_message(self, message: str, rules: list[KeywordRule] | None = None) -> str | None:
         """
         Analyze a message and return the suggested stage transition.
         Returns None if no keyword match is found.

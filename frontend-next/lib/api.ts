@@ -642,7 +642,7 @@ export type PatchCrmClientBody = Partial<Omit<CreateCrmClientBody, "tenant_id">>
 /** Superadmin: `tenant_id` obrigatório. Demais usuários: omitir (usa JWT). */
 export const listClients = (token: string, tenantId?: string) => {
     const q = tenantId ? `?${new URLSearchParams({ tenant_id: tenantId }).toString()}` : "";
-    return apiGet<CrmClientDTO[]>(`/api/clients${q}`, token);
+    return apiGet<CrmClientDTO[]>(`/api/clients/${q}`, token);
 };
 
 export const getClient = (clientId: string, token?: string) =>

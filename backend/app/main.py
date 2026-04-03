@@ -2,9 +2,12 @@
 Neurix CRM — FastAPI Application Entry Point
 """
 
+import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
+logger = logging.getLogger(__name__)
 
 from app.config import get_settings
 from app.observability import metrics
@@ -18,6 +21,7 @@ from app.routers import (
     inboxes,
     keyword_rules,
     leads,
+    n8n_webhook,
     orders,
     organizations,
     product_categories,
@@ -39,6 +43,10 @@ async def lifespan(app: FastAPI):
     print(f"   Redis: {cfg.REDIS_HOST}:{cfg.REDIS_PORT}")
     print(f"   Supabase: {'✅ Configured' if cfg.SUPABASE_URL else '⚠️ Not configured'}")
     print(f"   Uazapi: {'✅ Configured' if cfg.UAZAPI_URL else '⚠️ Not configured'}")
+    if not cfg.N8N_API_KEY:
+        logger.warning(
+            "N8N_API_KEY não configurada — endpoint /api/n8n/webhook rejeitará todos os requests"
+        )
     yield
     print(f"👋 {cfg.APP_NAME} shutting down...")
 
@@ -79,6 +87,7 @@ def create_app() -> FastAPI:
     app.include_router(dashboard.router, prefix="/api/dashboard", tags=["Dashboard"])
     app.include_router(settings_router.router, prefix="/api/settings", tags=["Configurações"])
     app.include_router(webhooks.router, prefix="/api/webhooks", tags=["Webhooks"])
+    app.include_router(n8n_webhook.router, prefix="/api/n8n", tags=["N8n Integration"])
     app.include_router(keyword_rules.router, prefix="/api/keyword-rules", tags=["Regras de Keywords"])
     app.include_router(upload.router, prefix="/api/upload", tags=["Upload"])
     app.include_router(whatsapp.router, prefix="/api/whatsapp", tags=["WhatsApp"])

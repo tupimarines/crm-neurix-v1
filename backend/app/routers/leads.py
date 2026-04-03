@@ -17,7 +17,7 @@ from app.authz import EffectiveRole, get_effective_role, require_org_admin
 from app.org_scope import funnel_ids_for_organization, list_funnels_for_organization
 from app.models.lead import (
     LeadCreate, LeadUpdate, LeadMoveStage, LeadResponse,
-    KanbanBoard, KanbanColumn, LeadStage,
+    KanbanBoard, KanbanColumn,
 )
 from app.models.chat_message import SendMessagePayload
 from app.observability import get_logger, metrics
@@ -38,13 +38,6 @@ from app.org_scope import assert_funnel_assignable_to_org
 
 router = APIRouter()
 logger = get_logger("leads")
-
-STAGE_LABELS = {
-    LeadStage.CONTATO_INICIAL: "Contato Inicial",
-    LeadStage.ESCOLHENDO_SABORES: "Escolhendo Sabores",
-    LeadStage.AGUARDANDO_PAGAMENTO: "Aguardando Pagamento",
-    LeadStage.ENVIADO: "Enviado",
-}
 
 
 def _db_error_detail(exc: Exception) -> str:
@@ -591,12 +584,9 @@ async def get_kanban_board(
     )
 
     if not stages_data:
-        stages_data = [
-            {"id": "default-contato", "name": "Contato Inicial", "order_position": 0, "version": 1, "is_conversion": False},
-            {"id": "default-escolhendo", "name": "Escolhendo Sabores", "order_position": 1, "version": 1, "is_conversion": False},
-            {"id": "default-aguardando", "name": "Aguardando Pagamento", "order_position": 2, "version": 1, "is_conversion": False},
-            {"id": "default-enviado", "name": "Enviado", "order_position": 3, "version": 1, "is_conversion": False},
-        ]
+        elapsed_ms = (perf_counter() - started) * 1000.0
+        metrics.observe("kanban_board", elapsed_ms, ok=True)
+        return KanbanBoard(columns=[], funnel_id=resolved_funnel_id)
 
     lead_rows_primary = _fetch_leads_for_funnel(supabase, data_tenant_id=data_tenant_id, funnel_id=resolved_funnel_id)
     lead_rows = merge_kanban_lead_rows(

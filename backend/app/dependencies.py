@@ -7,11 +7,12 @@ This bypasses RLS — the backend is responsible for enforcing tenant isolation
 by filtering queries on tenant_id after validating the user's JWT.
 """
 
+import hmac
 import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import redis.asyncio as aioredis
 from supabase import create_client, Client as SupabaseClient
@@ -154,6 +155,28 @@ async def get_current_user(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=f"Falha na autenticação: {str(e)}",
         )
+
+
+# ── n8n API Key Auth ──
+
+
+async def verify_n8n_api_key(
+    x_crm_api_key: str | None = Header(None, alias="X-CRM-API-Key"),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    """Validates the X-CRM-API-Key header for the n8n webhook endpoint.
+    Returns a lightweight caller descriptor on success."""
+    if not settings.N8N_API_KEY:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Endpoint temporariamente indisponível.",
+        )
+    if not x_crm_api_key or not hmac.compare_digest(x_crm_api_key, settings.N8N_API_KEY):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="API key inválida ou ausente. Envie o header X-CRM-API-Key.",
+        )
+    return {"source": "n8n"}
 
 
 # ── RBAC (Sprint 2) — lazy export (evita import circular com app.authz) ──

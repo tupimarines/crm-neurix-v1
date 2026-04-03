@@ -14,6 +14,9 @@ class Settings(BaseSettings):
     DEBUG: bool = False
     CORS_ORIGINS: str = "*"  # Comma-separated origins in production
 
+    # ── n8n Integration ──
+    N8N_API_KEY: str = ""
+
     # ── Supabase ──
     SUPABASE_URL: str = ""
     SUPABASE_PUBLIC_URL: str = ""  # Browser-accessible URL (e.g. https://your-supabase.domain)

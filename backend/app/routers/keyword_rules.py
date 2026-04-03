@@ -35,7 +35,6 @@ async def create_keyword_rule(
     """Create a new keyword rule."""
     data = payload.model_dump()
     data["tenant_id"] = user.id
-    data["target_stage"] = data["target_stage"].value  # enum → string
 
     response = supabase.table("keyword_rules").insert(data).execute()
 
@@ -54,8 +53,6 @@ async def update_keyword_rule(
 ):
     """Update a keyword rule."""
     update_data = payload.model_dump(exclude_unset=True)
-    if "target_stage" in update_data and update_data["target_stage"]:
-        update_data["target_stage"] = update_data["target_stage"].value
 
     if not update_data:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Nenhum campo para atualizar.")
@@ -87,7 +84,22 @@ async def seed_default_rules(
     user=Depends(get_current_user),
     supabase: SupabaseClient = Depends(get_supabase),
 ):
-    """Populate default keyword rules for a new tenant (jam factory context)."""
+    """Populate default keyword rules for a new tenant.
+    Uses dynamic stage names from the tenant's pipeline_stages instead of legacy hardcoded slugs.
+    If no pipeline_stages exist, creates rules with empty target_stage (inactive until stages are configured).
+    """
+    stages_res = (
+        supabase.table("pipeline_stages")
+        .select("name, order_position")
+        .eq("tenant_id", user.id)
+        .order("order_position")
+        .execute()
+    )
+    stage_names = [str(row["name"]).strip() for row in (stages_res.data or [])]
+
+    def _stage_at(index: int) -> str:
+        return stage_names[index] if index < len(stage_names) else ""
+
     defaults = [
         {
             "tenant_id": user.id,
@@ -95,9 +107,9 @@ async def seed_default_rules(
             "keywords": ["cardápio", "sabores", "sabor", "catálogo", "tipos", "frutas",
                          "morango", "damasco", "laranja", "figo", "me manda", "quais tem",
                          "opções", "variedade"],
-            "target_stage": "escolhendo_sabores",
+            "target_stage": _stage_at(1),
             "priority": 1,
-            "is_active": True,
+            "is_active": bool(_stage_at(1)),
         },
         {
             "tenant_id": user.id,
@@ -106,18 +118,18 @@ async def seed_default_rules(
                          "pix", "transferência", "boleto", "nota fiscal",
                          "quanto fica", "valor total", "preço", "desconto",
                          "comprar", "encomenda", "encomendar"],
-            "target_stage": "aguardando_pagamento",
+            "target_stage": _stage_at(2),
             "priority": 2,
-            "is_active": True,
+            "is_active": bool(_stage_at(2)),
         },
         {
             "tenant_id": user.id,
             "label": "Pagamento / Entrega Confirmada",
             "keywords": ["paguei", "comprovante", "transferi", "enviado",
                          "entrega", "rastreio", "recebido", "obrigado"],
-            "target_stage": "enviado",
+            "target_stage": _stage_at(3),
             "priority": 3,
-            "is_active": True,
+            "is_active": bool(_stage_at(3)),
         },
     ]
 

@@ -15,18 +15,11 @@ class LeadPriority(str, Enum):
     BAIXA = "baixa"
 
 
-class LeadStage(str, Enum):
-    CONTATO_INICIAL = "contato_inicial"
-    ESCOLHENDO_SABORES = "escolhendo_sabores"
-    AGUARDANDO_PAGAMENTO = "aguardando_pagamento"
-    ENVIADO = "enviado"
-
-
 class LeadBase(BaseModel):
     company_name: str = Field(..., min_length=1, max_length=200, description="Nome da empresa")
     contact_name: str = Field(..., min_length=1, max_length=200, description="Nome do contato")
     phone: Optional[str] = Field(None, max_length=50, description="Telefone do contato")
-    stage: str = "contato_inicial"
+    stage: str = ""
     priority: Optional[LeadPriority] = None
     value: float = Field(default=0.0, ge=0, description="Valor estimado em R$")
     notes: Optional[str] = Field(None, max_length=1000, description="Observações sobre o lead")

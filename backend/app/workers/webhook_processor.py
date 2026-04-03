@@ -396,21 +396,12 @@ async def process_uazapi_event(event: dict, supabase_client, redis_client):
         if not suggested_stage:
             return
 
-        # Only move forward, never backward in the funnel
-        stage_order = {
-            "contato_inicial": 0,
-            "escolhendo_sabores": 1,
-            "aguardando_pagamento": 2,
-            "enviado": 3,
-        }
-        current_order = stage_order.get(lead_data["stage"], 0)
-        suggested_order = stage_order.get(suggested_stage.value, 0)
-
-        if suggested_order > current_order:
-            supabase_client.table("leads").update({"stage": suggested_stage.value}).eq("id", lead_data["id"]).execute()
+        current_stage = (lead_data.get("stage") or "").strip()
+        if suggested_stage != current_stage:
+            supabase_client.table("leads").update({"stage": suggested_stage}).eq("id", lead_data["id"]).execute()
             await log_error_to_redis(
                 redis_client,
-                f"Lead {lead_data['id']} moved: {lead_data['stage']} -> {suggested_stage.value}",
+                f"Lead {lead_data['id']} moved: {current_stage} -> {suggested_stage}",
             )
     except Exception as e:
         await log_error_to_redis(redis_client, f"Failed keyword engine / moving lead: {e}")

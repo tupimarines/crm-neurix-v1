@@ -199,7 +199,6 @@ export default function NewOrderModal({ onClose, onCreated }: NewOrderModalProps
                     company_name: newClientCompany.trim() || "—",
                     contact_name: newClientName.trim(),
                     phone: newClientPhone.trim() || null,
-                    stage: "contato_inicial",
                     priority: "media",
                     value: 0,
                 },
