@@ -121,25 +121,41 @@ async def generate_webhook_secret():
 
 
 @router.get("/debug")
-async def debug_queue(redis: aioredis.Redis = Depends(get_redis)):
+async def debug_queue(
+    redis: aioredis.Redis = Depends(get_redis),
+    settings: Settings = Depends(get_settings),
+):
+    from app.services.uazapi_service import get_uazapi_service
+
     try:
         queue_len = await redis.llen("neurix:webhook_queue")
         items = []
         if queue_len > 0:
             raw_items = await redis.lrange("neurix:webhook_queue", 0, 5)
-            # Parse json if possible
             for it in raw_items:
                 try:
                     items.append(json.loads(it))
-                except:
+                except Exception:
                     items.append(it)
-                    
+
         errors = await redis.lrange("neurix:webhook_errors", 0, 20)
-        
+
+        uazapi_svc = get_uazapi_service()
+        webhook_info: dict = {
+            "expected_url": settings.uazapi_webhook_callback_url,
+            "public_api_base_url": settings.PUBLIC_API_BASE_URL,
+        }
+        try:
+            current = await uazapi_svc.get_webhook()
+            webhook_info["uazapi_current_config"] = current
+        except Exception as e:
+            webhook_info["uazapi_current_config_error"] = str(e)
+
         return {
             "queue_length": queue_len,
             "recent_items": items,
-            "worker_logs": errors
+            "worker_logs": errors,
+            "webhook": webhook_info,
         }
     except Exception as e:
         return {"error": str(e)}
