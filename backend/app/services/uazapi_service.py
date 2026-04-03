@@ -98,6 +98,7 @@ class UazapiService:
         """Set the webhook URL for the instance to receive incoming messages."""
         payload = {
             "url": url,
+            "enabled": True,
             "events": ["messages"],
             "excludeMessages": ["wasSentByApi"]
         }
