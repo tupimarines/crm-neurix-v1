@@ -145,11 +145,26 @@ async def debug_queue(
             "expected_url": settings.uazapi_webhook_callback_url,
             "public_api_base_url": settings.PUBLIC_API_BASE_URL,
         }
+
+        from supabase import create_client
+        sb = create_client(settings.SUPABASE_URL, settings.SUPABASE_SERVICE_ROLE_KEY)
+        inbox_webhooks = []
         try:
-            current = await uazapi_svc.get_webhook()
-            webhook_info["uazapi_current_config"] = current
+            all_inboxes = sb.table("inboxes").select("id, name, tenant_id, uazapi_settings").execute()
+            for row in all_inboxes.data or []:
+                us = row.get("uazapi_settings") or {}
+                token = us.get("instance_token") if isinstance(us, dict) else None
+                entry: dict = {"inbox_id": row["id"], "name": row.get("name"), "has_token": bool(token)}
+                if token:
+                    try:
+                        cfg = await uazapi_svc.get_webhook(instance_token=str(token))
+                        entry["current_webhook"] = cfg
+                    except Exception as e:
+                        entry["current_webhook_error"] = str(e)
+                inbox_webhooks.append(entry)
         except Exception as e:
-            webhook_info["uazapi_current_config_error"] = str(e)
+            webhook_info["inbox_scan_error"] = str(e)
+        webhook_info["inboxes"] = inbox_webhooks
 
         return {
             "queue_length": queue_len,
