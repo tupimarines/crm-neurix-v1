@@ -1607,7 +1607,12 @@ async def get_lead_chat_history(
         inbox_id=str(lead["inbox_id"]) if lead.get("inbox_id") else None,
     )
 
-    # Fetch directly from Uazapi
+    if not instance_token:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Nenhum token Uazapi configurado. Configure uma caixa de entrada com token válido.",
+        )
+
     uazapi = get_uazapi_service()
     try:
         uazapi_response = await uazapi.find_messages(
@@ -1678,6 +1683,12 @@ async def send_message_to_lead(
         tenant_id=str(lead.get("tenant_id") or user.id),
         inbox_id=str(lead["inbox_id"]) if lead.get("inbox_id") else None,
     )
+
+    if not instance_token:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Nenhum token Uazapi configurado. Configure uma caixa de entrada com token válido.",
+        )
 
     # Extract the phone number from the JID
     phone_number = whatsapp_chat_id.replace("@s.whatsapp.net", "").replace("@g.us", "")

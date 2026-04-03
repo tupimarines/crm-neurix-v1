@@ -112,13 +112,13 @@ def _save_token_legacy(supabase: SupabaseClient, user_id: str, instance_token: s
     ).execute()
 
 
-def _configure_webhook(instance_token: str) -> None:
+async def _configure_webhook(instance_token: str) -> None:
     from app.config import get_settings
 
     settings = get_settings()
     webhook_url = settings.uazapi_webhook_callback_url
     try:
-        uazapi.set_webhook(url=webhook_url, instance_token=instance_token)
+        await uazapi.set_webhook(url=webhook_url, instance_token=instance_token)
     except Exception as e:
         print(f"Error setting webhook: {e}")
 
@@ -194,7 +194,7 @@ async def init_instance_route(
     else:
         _save_token_legacy(supabase, uid, instance_token)
 
-    _configure_webhook(instance_token)
+    await _configure_webhook(instance_token)
 
     return {"message": "Instância inicializada e webhook configurado", "token": instance_token}
 
@@ -242,7 +242,7 @@ async def save_manual_token(
     else:
         _save_token_legacy(supabase, uid, payload.instance_token)
 
-    _configure_webhook(payload.instance_token)
+    await _configure_webhook(payload.instance_token)
 
     return {"message": "Token salvo com sucesso", "status": "saved"}
 

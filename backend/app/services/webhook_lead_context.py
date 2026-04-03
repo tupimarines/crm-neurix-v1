@@ -69,8 +69,8 @@ def get_uazapi_instance_token_for_tenant(
     inbox_id: Optional[str],
 ) -> Optional[str]:
     """
-    Token Uazapi para chamadas de API: prioriza caixa (inbox), senão settings legado por tenant.
-    Usado em GET chat-history e envio de mensagem quando o lead está ligado a uma inbox.
+    Token Uazapi para chamadas de API.
+    Prioridade: 1) inbox específico, 2) settings legado, 3) qualquer inbox do tenant com token.
     """
     if inbox_id:
         try:
@@ -99,10 +99,25 @@ def get_uazapi_instance_token_for_tenant(
         )
         if resp.data:
             val = resp.data[0].get("value")
-            if val is None:
-                return None
-            s = val.strip('"') if isinstance(val, str) else str(val)
-            return s.strip() or None
+            if val is not None:
+                s = val.strip('"') if isinstance(val, str) else str(val)
+                if s.strip():
+                    return s.strip()
+    except Exception:
+        pass
+
+    # Fallback: scan all inboxes for this tenant and return first valid token
+    try:
+        all_inboxes = (
+            supabase.table("inboxes")
+            .select("id, uazapi_settings")
+            .eq("tenant_id", tenant_id)
+            .execute()
+        )
+        for row in all_inboxes.data or []:
+            t = _token_from_uazapi_settings(row.get("uazapi_settings"))
+            if t:
+                return t
     except Exception:
         pass
     return None
