@@ -169,7 +169,7 @@ function SortableStageShell({
         opacity: isDragging ? 0.75 : 1,
     };
     return (
-        <div ref={setNodeRef} style={style}>
+        <div ref={setNodeRef} style={style} className="h-full">
             {children({ attributes, listeners })}
         </div>
     );
@@ -1500,7 +1500,7 @@ function KanbanContent() {
             ) : viewMode === "kanban" ? (
                 <DndContext id={dndId} sensors={sensors} collisionDetection={pointerWithin} onDragStart={handleDragStart} onDragOver={handleDragOver} onDragEnd={handleDragEnd}>
                     <div
-                        className="flex-1 overflow-x-auto overflow-y-hidden p-6 cursor-grab active:cursor-grabbing"
+                        className="flex-1 min-h-0 overflow-x-auto overflow-y-hidden p-6 cursor-grab active:cursor-grabbing"
                         ref={boardRef}
                         onMouseDown={onMouseDown}
                         onMouseMove={onMouseMove}
@@ -1514,7 +1514,7 @@ function KanbanContent() {
                                 return (
                                     <SortableStageShell key={stage.id} stageId={stage.id} disabled={isReadOnlyUi}>
                                     {({ attributes, listeners }) => (
-                                    <div data-stage-id={stage.id} className="w-[310px] flex flex-col flex-shrink-0 bg-slate-50/50 dark:bg-slate-800/30 rounded-xl border border-border-light/60 dark:border-border-dark/60">
+                                    <div data-stage-id={stage.id} className="w-[310px] h-full min-h-0 flex flex-col flex-shrink-0 bg-slate-50/50 dark:bg-slate-800/30 rounded-xl border border-border-light/60 dark:border-border-dark/60">
                                         {/* Stage header */}
                                         <div className="p-3 flex items-center justify-between border-b border-border-light/50 dark:border-border-dark/50">
                                             <div className="flex items-center gap-2 flex-1 min-w-0">
