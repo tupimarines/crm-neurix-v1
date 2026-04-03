@@ -231,13 +231,25 @@ async def save_manual_token(
     """Salva token manual (Leads Infinitos / instância existente)."""
     uid = str(user.id)
 
+    resolved_name = payload.instance_name
+    if not resolved_name and payload.inbox_id:
+        try:
+            status_data = await uazapi.get_instance_status(instance_token=payload.instance_token)
+            resolved_name = (
+                status_data.get("instance", {}).get("instanceName")
+                or status_data.get("instanceName")
+                or status_data.get("name")
+            )
+        except Exception:
+            pass
+
     if payload.inbox_id:
         _save_token_to_inbox(
             supabase,
             payload.inbox_id,
             uid,
             payload.instance_token,
-            instance_name=payload.instance_name,
+            instance_name=resolved_name,
         )
     else:
         _save_token_legacy(supabase, uid, payload.instance_token)

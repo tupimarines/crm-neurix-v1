@@ -123,6 +123,21 @@ def get_uazapi_instance_token_for_tenant(
     return None
 
 
+def find_inbox_for_tenant(supabase: SupabaseClient, tenant_id: str) -> Optional[dict[str, Any]]:
+    """Retorna a primeira inbox do tenant que possua token Uazapi configurado."""
+    if not tenant_id:
+        return None
+    try:
+        res = supabase.table("inboxes").select("id, tenant_id, funnel_id, name, uazapi_settings").eq("tenant_id", tenant_id).execute()
+        for row in res.data or []:
+            t = _token_from_uazapi_settings(row.get("uazapi_settings"))
+            if t:
+                return row
+    except Exception:
+        return None
+    return None
+
+
 def find_legacy_tenant_id_for_token(supabase: SupabaseClient, instance_token: str) -> Optional[str]:
     """Resolve tenant_id pela linha legada em settings (valor pode ser string JSON ou texto)."""
     if not instance_token:

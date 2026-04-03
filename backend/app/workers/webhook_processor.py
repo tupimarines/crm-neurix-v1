@@ -14,6 +14,7 @@ from app.services.keyword_engine import keyword_engine
 from app.services.webhook_lead_context import (
     find_inbox_by_instance_name,
     find_inbox_by_instance_token,
+    find_inbox_for_tenant,
     find_legacy_tenant_id_for_token,
     get_first_stage_slug_for_funnel,
     resolve_or_create_crm_client,
@@ -243,15 +244,26 @@ async def process_uazapi_event(event: dict, supabase_client, redis_client):
             content_text = f"[{content_type.upper()}]"
 
     instance_token = _resolve_uazapi_instance_token(payload, event)
+    inst_name = payload.get("instanceName") or payload.get("instance_name") or ""
+
+    await log_error_to_redis(
+        redis_client,
+        f"Inbox resolve: token={bool(instance_token)}, instanceName={inst_name}",
+    )
 
     inbox_row = find_inbox_by_instance_token(supabase_client, instance_token or "")
-    if not inbox_row:
-        inst_name = payload.get("instanceName") or payload.get("instance_name")
-        if inst_name:
-            inbox_row = find_inbox_by_instance_name(supabase_client, str(inst_name))
+    if not inbox_row and inst_name:
+        inbox_row = find_inbox_by_instance_name(supabase_client, str(inst_name))
     legacy_tenant_id: str | None = None
     if not inbox_row and instance_token:
         legacy_tenant_id = find_legacy_tenant_id_for_token(supabase_client, instance_token)
+    if not inbox_row and legacy_tenant_id:
+        inbox_row = find_inbox_for_tenant(supabase_client, legacy_tenant_id)
+
+    await log_error_to_redis(
+        redis_client,
+        f"Inbox resolved: inbox={inbox_row['id'] if inbox_row else None}, legacy_tenant={legacy_tenant_id}",
+    )
 
     lead_id = None
     lead_data: dict | None = None
