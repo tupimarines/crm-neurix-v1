@@ -55,11 +55,32 @@ def parse_brl_to_float(val: str | None) -> float:
     Handles BRL ("1.112,00" → 1112.0) and plain ("112.00" → 112.0).
     If the string contains a comma, dots are thousands separators.
     If no comma, dots are treated as decimal separators.
+
+    When the agent appends notes (e.g. ``R$ 180,00 (produtos) | frete…``),
+    extracts the **first** ``R$ …`` monetary amount so ``lead.value`` updates.
     """
     if not val:
         return 0.0
+    s = str(val).strip()
+    m = re.search(
+        r"R\$\s*(\d{1,3}(?:\.\d{3})*,\d{2}|\d+,\d{2})",
+        s,
+        re.IGNORECASE,
+    )
+    if m:
+        chunk = m.group(1)
+        try:
+            if "," in chunk:
+                chunk = chunk.replace(".", "").replace(",", ".")
+            parsed = float(chunk)
+            if parsed > 0:
+                return parsed
+        except (ValueError, TypeError):
+            pass
     try:
-        cleaned = _BRL_STRIP_RE.sub("", val)
+        cleaned = _BRL_STRIP_RE.sub("", s)
+        if not cleaned:
+            return 0.0
         if "," in cleaned:
             cleaned = cleaned.replace(".", "").replace(",", ".")
         return float(cleaned)

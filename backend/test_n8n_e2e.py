@@ -109,6 +109,12 @@ class TestParseBrlToFloat(unittest.TestCase):
 
     def test_decimal_cents(self):
         self.assertAlmostEqual(parse_brl_to_float("R$ 54,50"), 54.5)
+        self.assertAlmostEqual(
+            parse_brl_to_float(
+                "R$ 180,00 (produtos) | frete a confirmar pelo atendente"
+            ),
+            180.0,
+        )
 
 
 # ═══════════════════════════════════════════════════════════════

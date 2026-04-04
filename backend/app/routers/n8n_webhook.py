@@ -211,6 +211,11 @@ def _update_products_json(
     products_json, warnings = build_products_json(payload.order_summary, products_db, tenant_id)
 
     total_value = parse_brl_to_float(payload.total_value)
+    if total_value <= 0 and products_json:
+        total_value = round(
+            sum(float(line.get("line_total") or 0) for line in products_json),
+            2,
+        )
     update_data: dict = {"products_json": products_json}
     if total_value > 0:
         update_data["value"] = total_value
@@ -375,6 +380,11 @@ async def n8n_webhook(
         client_name = generate_client_name(lead_row, payload, client_row)
         product_summary = generate_product_summary(payload.order_summary or [])
         total = parse_brl_to_float(payload.total_value)
+        if total <= 0 and products_json:
+            total = round(
+                sum(float(line.get("line_total") or 0) for line in products_json),
+                2,
+            )
 
         # Idempotency: check for recent pending order on same lead
         order_id: str | None = None
