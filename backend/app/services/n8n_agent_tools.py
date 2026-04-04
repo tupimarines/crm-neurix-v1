@@ -111,6 +111,84 @@ def resolve_tenant_id_for_n8n(supabase: SupabaseClient, instance_token: str) -> 
     return str(inbox.get("tenant_id") or "").strip() or None
 
 
+def resolve_inbox_row_for_n8n(supabase: SupabaseClient, instance_token: str) -> Optional[dict[str, Any]]:
+    """Inbox completa (id, tenant_id, funnel_id) para lookup de lead."""
+    row = find_inbox_by_instance_token(supabase, instance_token)
+    if not row:
+        return None
+    return row
+
+
+def normalize_whatsapp_chat_id(phone_or_jid: str | None) -> str:
+    """RemoteJid completo ou só dígitos → JID padrão leads.whatsapp_chat_id."""
+    if not phone_or_jid:
+        return ""
+    s = str(phone_or_jid).strip()
+    if "@" in s:
+        return s
+    d = digits_only(s)
+    if len(d) >= 4:
+        return f"{d}@s.whatsapp.net"
+    return s
+
+
+def find_lead_by_whatsapp_chat(
+    supabase: SupabaseClient,
+    *,
+    inbox_id: str,
+    tenant_id: str,
+    whatsapp_chat_id: str,
+) -> Optional[dict[str, Any]]:
+    """Mesma resolução que o webhook n8n — lead por inbox + chat, fallback tenant + chat."""
+    chat = (whatsapp_chat_id or "").strip()
+    if not chat:
+        return None
+    try:
+        r = (
+            supabase.table("leads")
+            .select("id, stage, client_id, tenant_id, contact_name, inbox_id, whatsapp_chat_id")
+            .eq("inbox_id", inbox_id)
+            .eq("whatsapp_chat_id", chat)
+            .limit(1)
+            .execute()
+        )
+        if r.data:
+            return r.data[0]
+    except Exception:
+        pass
+    try:
+        r2 = (
+            supabase.table("leads")
+            .select("id, stage, client_id, tenant_id, contact_name, inbox_id, whatsapp_chat_id")
+            .eq("tenant_id", tenant_id)
+            .eq("whatsapp_chat_id", chat)
+            .limit(1)
+            .execute()
+        )
+        if r2.data:
+            return r2.data[0]
+    except Exception:
+        pass
+    return None
+
+
+def route_hint_from_stage(stage_name: str | None) -> str:
+    """
+    Valor estável para Switch no n8n (sem Redis).
+    Alinhado aos nomes usados em POST /api/n8n/webhook (INTENT_TO_STAGE).
+    """
+    s = (stage_name or "").strip().lower()
+    if s == "b2b":
+        return "b2b"
+    if s == "b2c":
+        return "b2c"
+    if s == "quero vender":
+        return "revenda"
+    if s == "pedido feito":
+        return "pedido_feito"
+    return "other"
+
+
 def build_client_tool_payload(row: dict[str, Any]) -> dict[str, Any]:
     cnpj = row.get("cnpj")
     cnpj_d = digits_only(str(cnpj)) if cnpj else ""

@@ -53,6 +53,27 @@ class TestN8nAgentToolHelpers(unittest.TestCase):
 
         self.assertEqual(format_cnpj_display("47992051000100"), "47.992.051/0001-00")
 
+    def test_normalize_whatsapp_chat_id(self):
+        from app.services.n8n_agent_tools import normalize_whatsapp_chat_id
+
+        self.assertEqual(
+            normalize_whatsapp_chat_id("554197889864@s.whatsapp.net"),
+            "554197889864@s.whatsapp.net",
+        )
+        self.assertEqual(
+            normalize_whatsapp_chat_id("554197889864"),
+            "554197889864@s.whatsapp.net",
+        )
+
+    def test_route_hint_from_stage(self):
+        from app.services.n8n_agent_tools import route_hint_from_stage
+
+        self.assertEqual(route_hint_from_stage("B2B"), "b2b")
+        self.assertEqual(route_hint_from_stage("b2c"), "b2c")
+        self.assertEqual(route_hint_from_stage("Quero Vender"), "revenda")
+        self.assertEqual(route_hint_from_stage("Pedido Feito"), "pedido_feito")
+        self.assertEqual(route_hint_from_stage("Novo"), "other")
+
 
 class TestN8nToolsHttp(unittest.TestCase):
     def setUp(self):
@@ -132,6 +153,56 @@ class TestN8nToolsHttp(unittest.TestCase):
             params={"instance_token": "tok", "phone": "554137984741@s.whatsapp.net"},
         )
         self.assertIn(r.status_code, (401, 503))
+
+    @patch("app.routers.n8n_tools.resolve_inbox_row_for_n8n", return_value=None)
+    def test_lead_context_inbox_missing(self, _mock_inbox):
+        r = self.client.get(
+            "/api/n8n/tools/lead-context",
+            params={"instance_token": "bad", "phone": "554197889864@s.whatsapp.net"},
+            headers={"X-CRM-API-Key": "ignored"},
+        )
+        self.assertEqual(r.status_code, 404)
+
+    @patch(
+        "app.routers.n8n_tools.resolve_inbox_row_for_n8n",
+        return_value={"id": "inbox-1", "tenant_id": FAKE_TENANT, "funnel_id": "f1"},
+    )
+    @patch("app.routers.n8n_tools.find_lead_by_whatsapp_chat", return_value=None)
+    def test_lead_context_no_lead(self, _mock_lead, _mock_inbox):
+        r = self.client.get(
+            "/api/n8n/tools/lead-context",
+            params={"instance_token": "tok", "phone": "554197889864@s.whatsapp.net"},
+            headers={"X-CRM-API-Key": "ignored"},
+        )
+        self.assertEqual(r.status_code, 200)
+        self.assertFalse(r.json()["found"])
+        self.assertEqual(r.json()["route_hint"], "no_lead")
+
+    @patch(
+        "app.routers.n8n_tools.resolve_inbox_row_for_n8n",
+        return_value={"id": "inbox-1", "tenant_id": FAKE_TENANT, "funnel_id": "f1"},
+    )
+    @patch(
+        "app.routers.n8n_tools.find_lead_by_whatsapp_chat",
+        return_value={
+            "id": "lead-x",
+            "stage": "B2B",
+            "client_id": FAKE_CLIENT_ID,
+            "contact_name": "Aurora",
+            "whatsapp_chat_id": "554197889864@s.whatsapp.net",
+        },
+    )
+    def test_lead_context_b2b(self, _mock_lead, _mock_inbox):
+        r = self.client.get(
+            "/api/n8n/tools/lead-context",
+            params={"instance_token": "tok", "phone": "554197889864@s.whatsapp.net"},
+            headers={"X-CRM-API-Key": "ignored"},
+        )
+        self.assertEqual(r.status_code, 200)
+        b = r.json()
+        self.assertTrue(b["found"])
+        self.assertEqual(b["route_hint"], "b2b")
+        self.assertEqual(b["stage"], "B2B")
 
 
 if __name__ == "__main__":
