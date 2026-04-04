@@ -3,11 +3,15 @@ Neurix CRM — Application Configuration
 Loads settings from environment variables.
 """
 
-from pydantic_settings import BaseSettings
 from functools import lru_cache
+
+from pydantic import AliasChoices, Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+
     # ── Application ──
     APP_NAME: str = "Neurix CRM"
     APP_VERSION: str = "1.0.0"
@@ -15,7 +19,15 @@ class Settings(BaseSettings):
     CORS_ORIGINS: str = "*"  # Comma-separated origins in production
 
     # ── n8n Integration ──
-    N8N_API_KEY: str = ""
+    # Dokploy/UIs às vezes usam outro nome; o backend só lia N8N_API_KEY antes.
+    N8N_API_KEY: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "N8N_API_KEY",
+            "n8n_api_key",
+            "N8N_APIKEY",
+        ),
+    )
 
     # ── Supabase ──
     SUPABASE_URL: str = ""
@@ -65,9 +77,6 @@ class Settings(BaseSettings):
     @property
     def cors_origins_list(self) -> list[str]:
         return [origin.strip() for origin in self.CORS_ORIGINS.split(",")]
-
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
-
 
 @lru_cache
 def get_settings() -> Settings:
