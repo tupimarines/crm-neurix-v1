@@ -27,11 +27,19 @@ CLIENT_ROW_PJ = {
 
 ORDER_ROW = {
     "id": "order-1",
+    "tenant_id": FAKE_TENANT,
     "lead_id": "lead-1",
     "client_id": FAKE_CLIENT_ID,
+    "client_name": "Aurora",
+    "client_company": "WBT Solutions",
     "product_summary": "2x Geleia de Amora",
-    "products_json": [],
+    "products_json": [{"sku": "GEL-AMO", "qty": 2}],
+    "applied_promotions_json": {"code": "VIP10", "pct": 10},
+    "subtotal": 40.0,
+    "discount_total": 4.0,
     "total": 36.0,
+    "stage": "pedido_feito",
+    "notes": "Entregar na recepção",
     "payment_status": "pago",
     "payment_method": "PIX",
     "created_at": "2026-03-01T12:00:00+00:00",
@@ -72,6 +80,8 @@ class TestN8nAgentToolHelpers(unittest.TestCase):
         self.assertEqual(route_hint_from_stage("b2c"), "b2c")
         self.assertEqual(route_hint_from_stage("Quero Vender"), "revenda")
         self.assertEqual(route_hint_from_stage("Pedido Feito"), "pedido_feito")
+        self.assertEqual(route_hint_from_stage("FINALIZADO"), "finalizado")
+        self.assertEqual(route_hint_from_stage("Finalizado"), "finalizado")
         self.assertEqual(route_hint_from_stage("Novo"), "other")
 
 
@@ -144,7 +154,41 @@ class TestN8nToolsHttp(unittest.TestCase):
         body = r.json()
         self.assertTrue(body["client_found"])
         self.assertTrue(body["has_previous_order"])
-        self.assertEqual(body["order"]["product_summary"], "2x Geleia de Amora")
+        o = body["order"]
+        self.assertEqual(o["product_summary"], "2x Geleia de Amora")
+        self.assertEqual(o["id"], "order-1")
+        self.assertEqual(o["tenant_id"], FAKE_TENANT)
+        self.assertEqual(o["client_name"], "Aurora")
+        self.assertEqual(o["client_company"], "WBT Solutions")
+        self.assertEqual(o["notes"], "Entregar na recepção")
+        self.assertEqual(o["subtotal"], 40.0)
+        self.assertEqual(o["discount_total"], 4.0)
+        self.assertEqual(o["total"], 36.0)
+        self.assertEqual(o["stage"], "pedido_feito")
+        self.assertEqual(o["applied_promotions_json"], {"code": "VIP10", "pct": 10})
+        self.assertEqual(o["products_json"], [{"sku": "GEL-AMO", "qty": 2}])
+        self.assertEqual(o["payment_status"], "pago")
+        self.assertEqual(o["payment_method"], "PIX")
+
+    def test_fetch_last_order_for_client_excludes_canceled(self):
+        """AC1: query chain must filter out payment_status = cancelado."""
+        from app.services.n8n_agent_tools import fetch_last_order_for_client
+
+        mock_sb = MagicMock()
+        chain = MagicMock()
+        mock_sb.table.return_value = chain
+        for name in ("select", "eq", "neq", "order", "limit", "in_"):
+            getattr(chain, name).return_value = chain
+        exec_result = MagicMock()
+        exec_result.data = [ORDER_ROW]
+        chain.execute.return_value = exec_result
+
+        out = fetch_last_order_for_client(
+            mock_sb, tenant_id=FAKE_TENANT, client_id=FAKE_CLIENT_ID
+        )
+        self.assertIsNotNone(out)
+        self.assertEqual(out["id"], "order-1")
+        chain.neq.assert_called_with("payment_status", "cancelado")
 
     def test_tools_require_api_key(self):
         app.dependency_overrides.pop(verify_n8n_api_key, None)
@@ -203,6 +247,32 @@ class TestN8nToolsHttp(unittest.TestCase):
         self.assertTrue(b["found"])
         self.assertEqual(b["route_hint"], "b2b")
         self.assertEqual(b["stage"], "B2B")
+
+    @patch(
+        "app.routers.n8n_tools.resolve_inbox_row_for_n8n",
+        return_value={"id": "inbox-1", "tenant_id": FAKE_TENANT, "funnel_id": "f1"},
+    )
+    @patch(
+        "app.routers.n8n_tools.find_lead_by_whatsapp_chat",
+        return_value={
+            "id": "lead-final",
+            "stage": "FINALIZADO",
+            "client_id": FAKE_CLIENT_ID,
+            "contact_name": "Aurora",
+            "whatsapp_chat_id": "554197889864@s.whatsapp.net",
+        },
+    )
+    def test_lead_context_finalizado(self, _mock_lead, _mock_inbox):
+        r = self.client.get(
+            "/api/n8n/tools/lead-context",
+            params={"instance_token": "tok", "phone": "554197889864@s.whatsapp.net"},
+            headers={"X-CRM-API-Key": "ignored"},
+        )
+        self.assertEqual(r.status_code, 200)
+        b = r.json()
+        self.assertTrue(b["found"])
+        self.assertEqual(b["route_hint"], "finalizado")
+        self.assertEqual(b["stage"], "FINALIZADO")
 
 
 if __name__ == "__main__":

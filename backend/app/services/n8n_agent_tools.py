@@ -5,12 +5,43 @@ Resolve tenant pelo instance_token da inbox Uazapi e consulta Supabase com servi
 
 from __future__ import annotations
 
+from datetime import date, datetime
+from decimal import Decimal
 from typing import Any, Optional
+from uuid import UUID
 
 from supabase import Client as SupabaseClient
 
 from app.services.phone_normalize import digits_only
 from app.services.webhook_lead_context import find_inbox_by_instance_token
+
+# public.orders — mesma ordem que information_schema (validação no Supabase).
+_ORDERS_FULL_SELECT = (
+    "id, tenant_id, lead_id, client_name, client_company, product_summary, "
+    "total, payment_status, created_at, stage, notes, products_json, "
+    "applied_promotions_json, subtotal, discount_total, payment_method, client_id"
+)
+
+
+def _json_safe_for_n8n(value: Any) -> Any:
+    """Normaliza valores vindos do Supabase para JSON (tool HTTP / n8n)."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, UUID):
+        return str(value)
+    if isinstance(value, Decimal):
+        return float(value)
+    if isinstance(value, dict):
+        return {str(k): _json_safe_for_n8n(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_json_safe_for_n8n(v) for v in value]
+    if isinstance(value, (str, int, float, bool)):
+        return value
+    return str(value)
 
 
 def phone_from_whatsapp_jid_or_raw(value: str | None) -> str:
@@ -65,12 +96,10 @@ def fetch_last_order_for_client(
     try:
         r = (
             supabase.table("orders")
-            .select(
-                "id, lead_id, client_id, product_summary, products_json, total, "
-                "payment_status, payment_method, created_at",
-            )
+            .select(_ORDERS_FULL_SELECT)
             .eq("tenant_id", tenant_id)
             .eq("client_id", client_id)
+            .neq("payment_status", "cancelado")
             .order("created_at", desc=True)
             .limit(1)
             .execute()
@@ -87,12 +116,10 @@ def fetch_last_order_for_client(
             return None
         r2 = (
             supabase.table("orders")
-            .select(
-                "id, lead_id, client_id, product_summary, products_json, total, "
-                "payment_status, payment_method, created_at",
-            )
+            .select(_ORDERS_FULL_SELECT)
             .eq("tenant_id", tenant_id)
             .in_("lead_id", lead_ids)
+            .neq("payment_status", "cancelado")
             .order("created_at", desc=True)
             .limit(1)
             .execute()
@@ -186,6 +213,8 @@ def route_hint_from_stage(stage_name: str | None) -> str:
         return "revenda"
     if s == "pedido feito":
         return "pedido_feito"
+    if s == "finalizado":
+        return "finalizado"
     return "other"
 
 
@@ -212,19 +241,16 @@ def build_last_order_tool_payload(order: dict[str, Any] | None) -> dict[str, Any
             "order": None,
             "message": "Nenhum pedido anterior encontrado para este cadastro.",
         }
-    summary = str(order.get("product_summary") or "").strip()
-    total = order.get("total")
-    created = order.get("created_at")
+    order_out: dict[str, Any] = {}
+    for key, raw in order.items():
+        if key == "product_summary":
+            order_out[key] = str(raw or "").strip()
+        else:
+            order_out[key] = _json_safe_for_n8n(raw)
+    if order_out.get("id") is not None:
+        order_out["id"] = str(order_out["id"])
     return {
         "has_previous_order": True,
-        "order": {
-            "id": str(order.get("id", "")),
-            "product_summary": summary,
-            "total": total,
-            "payment_status": order.get("payment_status"),
-            "payment_method": order.get("payment_method"),
-            "created_at": str(created) if created is not None else None,
-            "products_json": order.get("products_json"),
-        },
+        "order": order_out,
         "message": "Use product_summary e products_json para recapitular o pedido ao lojista.",
     }
