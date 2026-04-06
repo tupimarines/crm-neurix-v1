@@ -214,19 +214,41 @@ class TestSpawnFreshLeadHelper(unittest.TestCase):
         )
         sb.table.assert_not_called()
 
-    def test_spawn_noop_without_inbox_ac4(self):
-        sb = MagicMock()
-        row = _lead_row_base()
-        row["inbox_id"] = None
+    @patch("app.services.lead_finalized_spawn.upsert_pipeline_position")
+    @patch("app.services.lead_finalized_spawn.get_first_stage_slug_for_funnel", return_value="Novo")
+    def test_spawn_legacy_null_inbox_clears_jid_and_inserts(self, _gf, mock_upsert):
+        """Lead legado sem inbox_id ainda deve liberar JID e clonar (unique tenant+chat)."""
+        base = _lead_row_base()
+        base["inbox_id"] = None
+        insert_caps: list = []
+        sb = _make_queue_supabase(
+            [
+                _FakeExec([{"id": base["id"]}]),
+                _FakeExec(
+                    [
+                        {
+                            "id": "lead-new",
+                            "tenant_id": base["tenant_id"],
+                            "funnel_id": base["funnel_id"],
+                            "whatsapp_chat_id": base["whatsapp_chat_id"],
+                            "stage": "Novo",
+                        }
+                    ]
+                ),
+            ],
+            insert_captures=insert_caps,
+        )
         _spawn_fresh_lead_after_finalized(
             supabase=sb,
-            original_lead_id=row["id"],
-            lead_snapshot=row,
-            data_tenant_id=row["tenant_id"],
-            resolved_funnel_id=row["funnel_id"],
+            original_lead_id=base["id"],
+            lead_snapshot=base,
+            data_tenant_id=base["tenant_id"],
+            resolved_funnel_id=base["funnel_id"],
             stages=_STAGES,
         )
-        sb.table.assert_not_called()
+        self.assertEqual(len(insert_caps), 1)
+        self.assertNotIn("inbox_id", insert_caps[0])
+        mock_upsert.assert_called_once()
 
     @patch("app.services.lead_finalized_spawn.upsert_pipeline_position")
     @patch("app.services.lead_finalized_spawn.get_first_stage_slug_for_funnel", return_value="Novo")

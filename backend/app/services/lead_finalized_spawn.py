@@ -79,9 +79,9 @@ def spawn_fresh_lead_after_finalized(
     Chamado só quando o move já foi persistido; falhas no insert são logadas sem exceção (AC6).
     """
     jid = str(lead_snapshot.get("whatsapp_chat_id") or "").strip()
-    inbox_raw = lead_snapshot.get("inbox_id")
-    if not jid or not inbox_raw:
+    if not jid:
         return
+    inbox_raw = lead_snapshot.get("inbox_id")
 
     funnel_id = str(lead_snapshot.get("funnel_id") or resolved_funnel_id)
     tenant_id = str(lead_snapshot.get("tenant_id") or data_tenant_id)
@@ -141,7 +141,6 @@ def spawn_fresh_lead_after_finalized(
 
     new_lead: dict = {
         "tenant_id": tenant_id,
-        "inbox_id": str(inbox_raw),
         "funnel_id": funnel_id,
         "whatsapp_chat_id": jid,
         "contact_name": (lead_snapshot.get("contact_name") or "Desconhecido"),
@@ -153,6 +152,9 @@ def spawn_fresh_lead_after_finalized(
         "stock_reserved_json": [],
         "purchase_history_json": [],
     }
+    if inbox_raw:
+        new_lead["inbox_id"] = str(inbox_raw)
+
     cid = lead_snapshot.get("client_id")
     if cid:
         new_lead["client_id"] = str(cid)
@@ -246,7 +248,7 @@ def maybe_spawn_inbound_whatsapp_lead_if_finalized(
     if not is_primary:
         return lead_data
 
-    if not lead_row.get("whatsapp_chat_id") or not lead_row.get("inbox_id"):
+    if not lead_row.get("whatsapp_chat_id"):
         return lead_data
 
     jid = str(lead_row.get("whatsapp_chat_id") or "").strip()
@@ -272,16 +274,30 @@ def maybe_spawn_inbound_whatsapp_lead_if_finalized(
         stages=stages,
     )
 
+    inbox_pk = str(inbox_row["id"])
     refreshed = (
         supabase.table("leads")
         .select(_MIN_LEAD_COLS)
-        .eq("inbox_id", str(inbox_row["id"]))
+        .eq("inbox_id", inbox_pk)
         .eq("whatsapp_chat_id", chat_id)
         .limit(1)
         .execute()
     ).data or []
     if refreshed:
         return refreshed[0]
+
+    # Lead legado (inbox_id NULL no CRM): o clone novo também fica sem inbox_id.
+    legacy = (
+        supabase.table("leads")
+        .select(_MIN_LEAD_COLS)
+        .eq("tenant_id", tenant_id)
+        .eq("whatsapp_chat_id", chat_id)
+        .limit(20)
+        .execute()
+    ).data or []
+    for cand in legacy:
+        if cand.get("inbox_id") is None:
+            return cand
     return lead_data
 
 

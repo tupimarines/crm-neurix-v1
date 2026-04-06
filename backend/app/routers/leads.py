@@ -1455,7 +1455,6 @@ async def move_lead_stage(
         is_primary
         and canonical_stage.strip().lower() == "finalizado"
         and lead_row.get("whatsapp_chat_id")
-        and lead_row.get("inbox_id")
     ):
         _spawn_fresh_lead_after_finalized(
             supabase=supabase,
