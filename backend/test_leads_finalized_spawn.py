@@ -15,7 +15,7 @@ from fastapi.testclient import TestClient
 from app.authz import compute_effective_role, get_effective_role
 from app.dependencies import get_current_user, get_supabase
 from app.main import app
-from app.routers.leads import _spawn_fresh_lead_after_finalized
+from app.services.lead_finalized_spawn import spawn_fresh_lead_after_finalized as _spawn_fresh_lead_after_finalized
 
 
 class _FakeExec:
@@ -107,8 +107,8 @@ _STAGES = [
 class TestSpawnFreshLeadHelper(unittest.TestCase):
     """AC3 / AC4 / AC6 no helper isolado."""
 
-    @patch("app.routers.leads.upsert_pipeline_position")
-    @patch("app.routers.leads.get_first_stage_slug_for_funnel", return_value="Novo")
+    @patch("app.services.lead_finalized_spawn.upsert_pipeline_position")
+    @patch("app.services.lead_finalized_spawn.get_first_stage_slug_for_funnel", return_value="Novo")
     def test_spawn_clears_jid_inserts_clone_and_upserts_ac3(self, _gf, mock_upsert):
         base = _lead_row_base()
         insert_caps: list = []
@@ -183,8 +183,8 @@ class TestSpawnFreshLeadHelper(unittest.TestCase):
         )
         sb.table.assert_not_called()
 
-    @patch("app.routers.leads.upsert_pipeline_position")
-    @patch("app.routers.leads.get_first_stage_slug_for_funnel", return_value="Novo")
+    @patch("app.services.lead_finalized_spawn.upsert_pipeline_position")
+    @patch("app.services.lead_finalized_spawn.get_first_stage_slug_for_funnel", return_value="Novo")
     def test_spawn_insert_failure_no_raise_ac6(self, _gf, mock_upsert):
         base = _lead_row_base()
         sb = _make_queue_supabase(
@@ -224,13 +224,14 @@ class TestMoveLeadStageFinalizedHttp(unittest.TestCase):
             [],
         )
 
+    @patch("app.services.lead_finalized_spawn.upsert_pipeline_position")
     @patch("app.routers.leads.upsert_pipeline_position")
     @patch("app.routers.leads.apply_destination_mirror")
     @patch("app.routers.leads.fetch_stage_automation_for_source_stage", return_value=None)
     @patch("app.routers.leads.insert_lead_activity")
     @patch("app.routers.leads._fetch_pipeline_stages_for_funnel", return_value=_STAGES)
     @patch("app.routers.leads._resolve_kanban_scope", return_value=("tenant-1", "funnel-1"))
-    @patch("app.routers.leads.get_first_stage_slug_for_funnel", return_value="Novo")
+    @patch("app.services.lead_finalized_spawn.get_first_stage_slug_for_funnel", return_value="Novo")
     def test_patch_finalizado_primary_spawns_ac3(
         self,
         _gf,
@@ -240,6 +241,7 @@ class TestMoveLeadStageFinalizedHttp(unittest.TestCase):
         _auto,
         _mirror,
         _upsert_move,
+        _spawn_upsert,
     ):
         lead_row = _lead_row_base()
         refreshed = {**lead_row, "stage": "FINALIZADO", "whatsapp_chat_id": None}
@@ -267,7 +269,8 @@ class TestMoveLeadStageFinalizedHttp(unittest.TestCase):
         self.assertEqual(body["id"], "lead-old")
         self.assertEqual(body["stage"], "FINALIZADO")
         self.assertIsNone(body.get("whatsapp_chat_id"))
-        self.assertEqual(_upsert_move.call_count, 2)
+        self.assertEqual(_upsert_move.call_count, 1)
+        _spawn_upsert.assert_called_once()
 
     @patch("app.routers.leads._spawn_fresh_lead_after_finalized")
     @patch("app.routers.leads.upsert_pipeline_position")
@@ -316,7 +319,7 @@ class TestMoveLeadStageFinalizedHttp(unittest.TestCase):
     @patch("app.routers.leads.insert_lead_activity")
     @patch("app.routers.leads._fetch_pipeline_stages_for_funnel", return_value=_STAGES)
     @patch("app.routers.leads._resolve_kanban_scope", return_value=("tenant-1", "funnel-1"))
-    @patch("app.routers.leads.get_first_stage_slug_for_funnel", return_value="Novo")
+    @patch("app.services.lead_finalized_spawn.get_first_stage_slug_for_funnel", return_value="Novo")
     def test_patch_finalizado_insert_fails_still_200_ac6(
         self,
         _gf,

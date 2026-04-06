@@ -11,6 +11,7 @@ import json
 import redis.asyncio as aioredis
 from app.config import get_settings
 from app.services.keyword_engine import keyword_engine
+from app.services.lead_finalized_spawn import maybe_spawn_inbound_whatsapp_lead_if_finalized
 from app.services.webhook_lead_context import (
     find_inbox_by_instance_name,
     find_inbox_by_instance_token,
@@ -270,6 +271,13 @@ async def process_uazapi_event(event: dict, supabase_client, redis_client):
 
     if inbox_row:
         lead_data = _find_existing_lead_for_inbox(supabase_client, inbox_row=inbox_row, chat_id=chat_id)
+        if lead_data and not is_from_me:
+            lead_data = maybe_spawn_inbound_whatsapp_lead_if_finalized(
+                supabase_client,
+                inbox_row=inbox_row,
+                chat_id=chat_id,
+                lead_data=lead_data,
+            )
         if lead_data:
             lead_id = lead_data["id"]
     elif legacy_tenant_id:
