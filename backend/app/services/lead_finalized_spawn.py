@@ -8,6 +8,8 @@ spawn_fresh_lead_after_finalized antes de gravar a mensagem.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from supabase import Client as SupabaseClient
 
 from app.observability import get_logger
@@ -115,10 +117,11 @@ def spawn_fresh_lead_after_finalized(
     first_stage_id = str(first_stage_row["id"])
     first_stage_name = str(first_stage_row.get("name") or first_stage_name).strip() or first_stage_name
 
+    closed_at = datetime.now(timezone.utc).isoformat()
     try:
         upd = (
             supabase.table("leads")
-            .update({"whatsapp_chat_id": None})
+            .update({"whatsapp_chat_id": None, "chat_cycle_closed_at": closed_at})
             .eq("id", original_lead_id)
             .eq("tenant_id", data_tenant_id)
             .execute()
@@ -188,6 +191,21 @@ def spawn_fresh_lead_after_finalized(
 
 def is_stage_name_finalized(stage_name: str | None) -> bool:
     return (stage_name or "").strip().casefold() == "finalizado"
+
+
+def is_chat_mirror_closed_for_lead(lead: dict) -> bool:
+    """
+    True quando este card não deve expor o espelho WhatsApp (histórico/envio).
+    Cobre: sem JID, ciclo encerrado explicitamente (chat_cycle_closed_at) ou etapa Finalizado
+    (defesa se o JID ainda estiver inconsistente no banco).
+    """
+    if not (lead.get("whatsapp_chat_id") or "").strip():
+        return True
+    if lead.get("chat_cycle_closed_at"):
+        return True
+    if is_stage_name_finalized(str(lead.get("stage") or "")):
+        return True
+    return False
 
 
 def maybe_spawn_inbound_whatsapp_lead_if_finalized(

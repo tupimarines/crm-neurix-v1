@@ -66,6 +66,10 @@ class LeadResponse(LeadBase):
     funnel_id: Optional[str] = None
     inbox_id: Optional[str] = None
     client_id: Optional[str] = None
+    chat_cycle_closed_at: Optional[datetime] = Field(
+        None,
+        description="Ciclo WhatsApp deste card encerrado; espelho/envio não deve usar este lead.",
+    )
 
     model_config = {"from_attributes": True}
 

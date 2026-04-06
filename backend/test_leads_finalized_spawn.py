@@ -15,7 +15,10 @@ from fastapi.testclient import TestClient
 from app.authz import compute_effective_role, get_effective_role
 from app.dependencies import get_current_user, get_supabase
 from app.main import app
-from app.services.lead_finalized_spawn import spawn_fresh_lead_after_finalized as _spawn_fresh_lead_after_finalized
+from app.services.lead_finalized_spawn import (
+    is_chat_mirror_closed_for_lead,
+    spawn_fresh_lead_after_finalized as _spawn_fresh_lead_after_finalized,
+)
 
 
 class _FakeExec:
@@ -102,6 +105,48 @@ _STAGES = [
     {"id": "st-novo", "name": "Novo", "order_position": 0},
     {"id": "st-fin", "name": "FINALIZADO", "order_position": 10},
 ]
+
+
+class TestIsChatMirrorClosedForLead(unittest.TestCase):
+    def test_closed_without_jid(self):
+        self.assertTrue(
+            is_chat_mirror_closed_for_lead(
+                {"whatsapp_chat_id": None, "stage": "Novo", "chat_cycle_closed_at": None}
+            )
+        )
+
+    def test_open_active_lead(self):
+        self.assertFalse(
+            is_chat_mirror_closed_for_lead(
+                {
+                    "whatsapp_chat_id": "5511@s.whatsapp.net",
+                    "stage": "Novo",
+                    "chat_cycle_closed_at": None,
+                }
+            )
+        )
+
+    def test_closed_when_finalizado_even_if_jid_present(self):
+        self.assertTrue(
+            is_chat_mirror_closed_for_lead(
+                {
+                    "whatsapp_chat_id": "5511@s.whatsapp.net",
+                    "stage": "FINALIZADO",
+                    "chat_cycle_closed_at": None,
+                }
+            )
+        )
+
+    def test_closed_when_cycle_timestamp_set(self):
+        self.assertTrue(
+            is_chat_mirror_closed_for_lead(
+                {
+                    "whatsapp_chat_id": "5511@s.whatsapp.net",
+                    "stage": "Proposta",
+                    "chat_cycle_closed_at": "2026-01-02T00:00:00+00:00",
+                }
+            )
+        )
 
 
 class TestSpawnFreshLeadHelper(unittest.TestCase):

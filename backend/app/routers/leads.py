@@ -36,6 +36,7 @@ from app.services.lead_board import (
 )
 from app.services.lead_finalized_spawn import (
     fetch_pipeline_stages_for_funnel as _fetch_pipeline_stages_for_funnel,
+    is_chat_mirror_closed_for_lead,
     spawn_fresh_lead_after_finalized as _spawn_fresh_lead_after_finalized,
 )
 from app.org_scope import assert_funnel_assignable_to_org
@@ -1517,7 +1518,7 @@ async def get_lead_messages(
     """
     # First get the lead to find its whatsapp_chat_id
     lead_response = supabase.table("leads") \
-        .select("id, company_name, contact_name, whatsapp_chat_id") \
+        .select("id, company_name, contact_name, whatsapp_chat_id, stage, chat_cycle_closed_at") \
         .eq("id", lead_id) \
         .eq("tenant_id", user.id) \
         .single() \
@@ -1527,9 +1528,7 @@ async def get_lead_messages(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead não encontrado.")
 
     lead = lead_response.data
-    whatsapp_chat_id = lead.get("whatsapp_chat_id")
-
-    if not whatsapp_chat_id:
+    if is_chat_mirror_closed_for_lead(lead):
         return {
             "lead_id": lead_id,
             "lead_name": f"{lead['contact_name']} - {lead['company_name']}",
@@ -1537,6 +1536,8 @@ async def get_lead_messages(
             "messages": [],
             "total_messages": 0,
         }
+
+    whatsapp_chat_id = lead.get("whatsapp_chat_id")
 
     # Get messages for this chat, ordered chronologically
     messages_response = supabase.table("chat_messages") \
@@ -1569,7 +1570,7 @@ async def get_lead_chat_history(
     Returns messages fetched live from WhatsApp through the Uazapi integration.
     """
     lead_response = supabase.table("leads") \
-        .select("id, company_name, contact_name, whatsapp_chat_id, inbox_id") \
+        .select("id, company_name, contact_name, whatsapp_chat_id, inbox_id, stage, chat_cycle_closed_at") \
         .eq("id", lead_id) \
         .eq("tenant_id", user.id) \
         .single() \
@@ -1579,9 +1580,7 @@ async def get_lead_chat_history(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead não encontrado.")
 
     lead = lead_response.data
-    whatsapp_chat_id = lead.get("whatsapp_chat_id")
-
-    if not whatsapp_chat_id:
+    if is_chat_mirror_closed_for_lead(lead):
         return {
             "lead_id": lead_id,
             "lead_name": f"{lead['contact_name']} - {lead['company_name']}",
@@ -1589,6 +1588,8 @@ async def get_lead_chat_history(
             "messages": [],
             "hasMore": False,
         }
+
+    whatsapp_chat_id = lead.get("whatsapp_chat_id")
 
     instance_token = get_uazapi_instance_token_for_tenant(
         supabase,
@@ -1649,7 +1650,7 @@ async def send_message_to_lead(
 
     # Get the lead's WhatsApp chat ID
     lead_response = supabase.table("leads") \
-        .select("id, company_name, contact_name, whatsapp_chat_id, tenant_id, inbox_id") \
+        .select("id, company_name, contact_name, whatsapp_chat_id, tenant_id, inbox_id, stage, chat_cycle_closed_at") \
         .eq("id", lead_id) \
         .eq("tenant_id", user.id) \
         .single() \
@@ -1659,6 +1660,12 @@ async def send_message_to_lead(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead não encontrado.")
 
     lead = lead_response.data
+    if is_chat_mirror_closed_for_lead(lead):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Este card está com o ciclo WhatsApp encerrado (finalizado). Use o novo lead na etapa inicial para conversar.",
+        )
+
     whatsapp_chat_id = lead.get("whatsapp_chat_id")
 
     if not whatsapp_chat_id:
