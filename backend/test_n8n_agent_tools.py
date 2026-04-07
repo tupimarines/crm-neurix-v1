@@ -139,7 +139,10 @@ class TestN8nToolsHttp(unittest.TestCase):
             headers={"X-CRM-API-Key": "ignored"},
         )
         self.assertEqual(r.status_code, 200)
-        self.assertFalse(r.json()["client_found"])
+        body = r.json()
+        self.assertFalse(body["client_found"])
+        self.assertIn("message_last", body)
+        self.assertIn("cadastro", body["message_last"].lower())
 
     @patch("app.routers.n8n_tools.resolve_tenant_id_for_n8n", return_value=FAKE_TENANT)
     @patch("app.routers.n8n_tools.find_crm_client_row_by_phone", return_value=CLIENT_ROW_PJ)
@@ -169,6 +172,33 @@ class TestN8nToolsHttp(unittest.TestCase):
         self.assertEqual(o["products_json"], [{"sku": "GEL-AMO", "qty": 2}])
         self.assertEqual(o["payment_status"], "pago")
         self.assertEqual(o["payment_method"], "PIX")
+        ml = body["message_last"]
+        self.assertIn("Seu último pedido foi:", ml)
+        self.assertIn("2x Geleia de Amora", ml)
+        self.assertIn("R$", ml)
+        self.assertIn("36,00", ml)
+        self.assertIn("Gostaria de repetir", ml)
+
+    def test_last_order_message_last_no_order(self):
+        from app.services.n8n_agent_tools import build_last_order_tool_payload
+
+        out = build_last_order_tool_payload(None)
+        self.assertFalse(out["has_previous_order"])
+        self.assertIn("pedido anterior", out["message_last"].lower())
+
+    def test_format_last_order_client_message(self):
+        from app.services.n8n_agent_tools import format_last_order_client_message
+
+        msg = format_last_order_client_message(
+            {
+                "product_summary": "4x Geleia de Figo",
+                "total": 72,
+                "created_at": "2026-04-07T00:11:09.945359+00:00",
+            }
+        )
+        self.assertIn("4x Geleia de Figo", msg)
+        self.assertIn("72,00", msg)
+        self.assertRegex(msg, r"Data: \d{2}/\d{2}/2026")
 
     def test_fetch_last_order_for_client_excludes_canceled(self):
         """AC1: query chain must filter out payment_status = cancelado."""

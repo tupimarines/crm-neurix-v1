@@ -68,7 +68,10 @@ async def n8n_tool_last_order_by_phone(
     _caller: dict = Depends(verify_n8n_api_key),
     supabase: SupabaseClient = Depends(get_supabase),
 ):
-    """Último pedido do cliente identificado pelo telefone (mesmo critério de busca_cliente)."""
+    """
+    Último pedido do cliente identificado pelo telefone (mesmo critério de busca_cliente).
+    Inclui `message_last`: texto pronto para enviar no WhatsApp (resumo + CTA).
+    """
     tid = resolve_tenant_id_for_n8n(supabase, instance_token.strip())
     if not tid:
         raise HTTPException(
@@ -88,6 +91,10 @@ async def n8n_tool_last_order_by_phone(
             "has_previous_order": False,
             "order": None,
             "message": "Cliente não encontrado — não é possível buscar pedido.",
+            "message_last": (
+                "Não encontramos cadastro para este número no CRM. "
+                "Quer que eu te ajude a fazer um pedido do zero?"
+            ),
         }
     client_id = str(row["id"])
     order = fetch_last_order_for_client(supabase, tenant_id=tid, client_id=client_id)

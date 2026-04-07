@@ -5,10 +5,11 @@ Resolve tenant pelo instance_token da inbox Uazapi e consulta Supabase com servi
 
 from __future__ import annotations
 
-from datetime import date, datetime
-from decimal import Decimal
+from datetime import date, datetime, timezone
+from decimal import Decimal, InvalidOperation
 from typing import Any, Optional
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from supabase import Client as SupabaseClient
 
@@ -218,6 +219,61 @@ def route_hint_from_stage(stage_name: str | None) -> str:
     return "other"
 
 
+_BR_TZ = ZoneInfo("America/Sao_Paulo")
+
+
+def format_brl_pt(value: Any) -> str:
+    """Valor numérico → texto tipo R$ 1.234,56 (pt-BR)."""
+    try:
+        d = Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError):
+        d = Decimal("0")
+    neg = d < 0
+    d = abs(d).quantize(Decimal("0.01"))
+    s = f"{d:.2f}"
+    int_s, _, dec_s = s.partition(".")
+    rev = int_s[::-1]
+    parts = [rev[i : i + 3] for i in range(0, len(rev), 3)]
+    body = ".".join(p[::-1] for p in reversed(parts))
+    out = f"R$ {body},{dec_s}"
+    return f"- {out}" if neg else out
+
+
+def _created_at_to_br_date(value: Any) -> str:
+    if value is None:
+        return "—"
+    if isinstance(value, datetime):
+        dt = value
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+    else:
+        s = str(value).strip().replace("Z", "+00:00")
+        try:
+            dt = datetime.fromisoformat(s)
+        except ValueError:
+            return "—"
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(_BR_TZ).strftime("%d/%m/%Y")
+
+
+def format_last_order_client_message(order: dict[str, Any]) -> str:
+    """
+    Texto curto para WhatsApp (n8n: campo message_last).
+    Usa product_summary, total e created_at (fuso America/Sao_Paulo).
+    """
+    summary = str(order.get("product_summary") or "").strip() or "Itens do pedido"
+    total_txt = format_brl_pt(order.get("total"))
+    date_txt = _created_at_to_br_date(order.get("created_at"))
+    return (
+        f"Seu último pedido foi:\n"
+        f"{summary}\n"
+        f"Total {total_txt}\n"
+        f"Data: {date_txt}\n\n"
+        f"Gostaria de repetir este pedido ou adicionar um novo?"
+    )
+
+
 def build_client_tool_payload(row: dict[str, Any]) -> dict[str, Any]:
     cnpj = row.get("cnpj")
     cnpj_d = digits_only(str(cnpj)) if cnpj else ""
@@ -240,6 +296,10 @@ def build_last_order_tool_payload(order: dict[str, Any] | None) -> dict[str, Any
             "has_previous_order": False,
             "order": None,
             "message": "Nenhum pedido anterior encontrado para este cadastro.",
+            "message_last": (
+                "Não encontramos um pedido anterior para este cadastro. "
+                "Quer começar um pedido novo?"
+            ),
         }
     order_out: dict[str, Any] = {}
     for key, raw in order.items():
@@ -253,4 +313,5 @@ def build_last_order_tool_payload(order: dict[str, Any] | None) -> dict[str, Any
         "has_previous_order": True,
         "order": order_out,
         "message": "Use product_summary e products_json para recapitular o pedido ao lojista.",
+        "message_last": format_last_order_client_message(order),
     }
