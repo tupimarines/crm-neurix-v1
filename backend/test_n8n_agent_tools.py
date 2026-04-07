@@ -84,6 +84,203 @@ class TestN8nAgentToolHelpers(unittest.TestCase):
         self.assertEqual(route_hint_from_stage("Finalizado"), "finalizado")
         self.assertEqual(route_hint_from_stage("Novo"), "other")
 
+    def test_phone_lookup_canonical_and_match_ranks(self):
+        from app.services.n8n_agent_tools import (
+            PHONE_MATCH_RANK_LAST10,
+            PHONE_MATCH_RANK_LAST11,
+            PHONE_MATCH_RANK_NONE,
+            PHONE_MATCH_RANK_STRICT,
+            crm_phone_entry_digits,
+            is_insufficient_phone_lookup_digits,
+            phone_match_rank,
+            phone_match_tier,
+            to_canonical_br_phone_digits,
+        )
+
+        self.assertEqual(to_canonical_br_phone_digits("554137984741"), "554137984741")
+        self.assertEqual(to_canonical_br_phone_digits("4137984741"), "554137984741")
+        self.assertEqual(to_canonical_br_phone_digits("+55 41 3798-4741"), "554137984741")
+        self.assertEqual(to_canonical_br_phone_digits("04137984741"), "554137984741")
+
+        self.assertEqual(crm_phone_entry_digits("+55 41 3798-4741"), "554137984741")
+        self.assertEqual(crm_phone_entry_digits(None), "")
+
+        q = "554137984741"
+        self.assertEqual(phone_match_rank(q, "554137984741"), PHONE_MATCH_RANK_STRICT)
+        self.assertEqual(phone_match_rank(q, "+55 41 3798-4741"), PHONE_MATCH_RANK_STRICT)
+        self.assertEqual(phone_match_rank(q, "4137984741"), PHONE_MATCH_RANK_STRICT)
+        self.assertEqual(phone_match_tier(q, "4137984741"), "strict")
+
+        self.assertTrue(is_insufficient_phone_lookup_digits("123"))
+        self.assertFalse(is_insufficient_phone_lookup_digits("1234"))
+
+        long_a = "12000554137984741"
+        long_b = "99000554137984741"
+        self.assertEqual(phone_match_rank(long_a, long_b), PHONE_MATCH_RANK_LAST11)
+        self.assertEqual(phone_match_tier(long_a, long_b), "last11")
+
+        # Últimos 10 dígitos iguais; 11º a partir do fim diferente → apenas last10.
+        ten_a = "00141234567890"
+        ten_b = "00961234567890"
+        self.assertEqual(phone_match_rank(ten_a, ten_b), PHONE_MATCH_RANK_LAST10)
+        self.assertEqual(phone_match_tier(ten_a, ten_b), "last10")
+
+        self.assertEqual(phone_match_rank("5541999999999", "5541888888888"), PHONE_MATCH_RANK_NONE)
+        self.assertIsNone(phone_match_tier("5541999999999", "5541888888888"))
+
+    def test_best_phone_match_rank_for_client_row(self):
+        from app.services.n8n_agent_tools import (
+            PHONE_MATCH_RANK_STRICT,
+            best_phone_match_rank_for_client_row,
+        )
+
+        row = {"phones": ["+55 41 99999-9999", "5541888888888"]}
+        self.assertEqual(
+            best_phone_match_rank_for_client_row("5541999999999", row),
+            PHONE_MATCH_RANK_STRICT,
+        )
+
+    @patch("app.services.n8n_agent_tools.fetch_last_order_for_client")
+    def test_find_crm_client_row_by_phone_tie_break_latest_order(self, mock_fetch):
+        """Task 2: entre candidatos com mesmo score, vence quem tem pedido mais recente."""
+        from app.services.n8n_agent_tools import find_crm_client_row_by_phone
+
+        mock_sb = MagicMock()
+        chain = MagicMock()
+        mock_sb.table.return_value = chain
+        for name in ("select", "eq", "order", "execute"):
+            getattr(chain, name).return_value = chain
+        exec_result = MagicMock()
+        exec_result.data = [
+            {
+                "id": "client-newer",
+                "phones": ["5541999999999"],
+                "created_at": "2026-06-01T00:00:00+00:00",
+            },
+            {
+                "id": "client-older",
+                "phones": ["5541999999999"],
+                "created_at": "2025-01-01T00:00:00+00:00",
+            },
+        ]
+        chain.execute.return_value = exec_result
+
+        def fetch_side(_sb, *, tenant_id, client_id):
+            if client_id == "client-newer":
+                return {"created_at": "2026-03-15T00:00:00+00:00", "id": "o1"}
+            if client_id == "client-older":
+                return {"created_at": "2026-01-10T00:00:00+00:00", "id": "o2"}
+            return None
+
+        mock_fetch.side_effect = fetch_side
+
+        row = find_crm_client_row_by_phone(
+            mock_sb, tenant_id=FAKE_TENANT, phone_digits="5541999999999"
+        )
+        self.assertIsNotNone(row)
+        self.assertEqual(row["id"], "client-newer")
+
+    @patch("app.services.n8n_agent_tools.fetch_last_order_for_client")
+    def test_find_crm_client_row_by_phone_tie_break_prefers_history_over_newer_empty(
+        self, mock_fetch
+    ):
+        """Cenário raiz: cadastro novo sem pedido perde para o antigo com histórico."""
+        from app.services.n8n_agent_tools import find_crm_client_row_by_phone
+
+        mock_sb = MagicMock()
+        chain = MagicMock()
+        mock_sb.table.return_value = chain
+        for name in ("select", "eq", "order", "execute"):
+            getattr(chain, name).return_value = chain
+        exec_result = MagicMock()
+        exec_result.data = [
+            {
+                "id": "client-empty",
+                "phones": ["554137984966"],
+                "created_at": "2026-04-01T00:00:00+00:00",
+            },
+            {
+                "id": "client-with-orders",
+                "phones": ["554137984966"],
+                "created_at": "2024-01-01T00:00:00+00:00",
+            },
+        ]
+        chain.execute.return_value = exec_result
+
+        def fetch_side(_sb, *, tenant_id, client_id):
+            if client_id == "client-empty":
+                return None
+            if client_id == "client-with-orders":
+                return {"created_at": "2025-06-01T00:00:00+00:00", "id": "ord-x"}
+            return None
+
+        mock_fetch.side_effect = fetch_side
+
+        row = find_crm_client_row_by_phone(
+            mock_sb, tenant_id=FAKE_TENANT, phone_digits="554137984966"
+        )
+        self.assertEqual(row["id"], "client-with-orders")
+
+    @patch("app.services.n8n_agent_tools.fetch_last_order_for_client")
+    def test_find_crm_client_row_by_phone_no_orders_uses_client_created_at_desc(
+        self, mock_fetch
+    ):
+        """Sem pedidos: desempate por crm_clients.created_at descendente."""
+        from app.services.n8n_agent_tools import find_crm_client_row_by_phone
+
+        mock_fetch.return_value = None
+        mock_sb = MagicMock()
+        chain = MagicMock()
+        mock_sb.table.return_value = chain
+        for name in ("select", "eq", "order", "execute"):
+            getattr(chain, name).return_value = chain
+        exec_result = MagicMock()
+        exec_result.data = [
+            {
+                "id": "older",
+                "phones": ["5541888888888"],
+                "created_at": "2025-01-01T00:00:00+00:00",
+            },
+            {
+                "id": "newer",
+                "phones": ["5541888888888"],
+                "created_at": "2026-02-01T00:00:00+00:00",
+            },
+        ]
+        chain.execute.return_value = exec_result
+
+        row = find_crm_client_row_by_phone(
+            mock_sb, tenant_id=FAKE_TENANT, phone_digits="5541888888888"
+        )
+        self.assertEqual(row["id"], "newer")
+
+    @patch("app.services.n8n_agent_tools.fetch_last_order_for_client")
+    def test_find_crm_client_row_by_phone_matches_legacy_masked_phones(self, mock_fetch):
+        """AC6: telefones armazenados com máscara/pontuação casam com busca canônica."""
+        from app.services.n8n_agent_tools import find_crm_client_row_by_phone
+
+        mock_fetch.return_value = None
+        mock_sb = MagicMock()
+        chain = MagicMock()
+        mock_sb.table.return_value = chain
+        for name in ("select", "eq", "order", "execute"):
+            getattr(chain, name).return_value = chain
+        exec_result = MagicMock()
+        exec_result.data = [
+            {
+                "id": "client-masked",
+                "phones": ["+55 (41) 37984-966"],
+                "created_at": "2025-01-01T00:00:00+00:00",
+            },
+        ]
+        chain.execute.return_value = exec_result
+
+        row = find_crm_client_row_by_phone(
+            mock_sb, tenant_id=FAKE_TENANT, phone_digits="554137984966"
+        )
+        self.assertIsNotNone(row)
+        self.assertEqual(row["id"], "client-masked")
+
 
 class TestN8nToolsHttp(unittest.TestCase):
     def setUp(self):
@@ -95,8 +292,11 @@ class TestN8nToolsHttp(unittest.TestCase):
     def tearDown(self):
         app.dependency_overrides.clear()
 
-    @patch("app.routers.n8n_tools.resolve_tenant_id_for_n8n", return_value=None)
-    def test_client_by_phone_inbox_404(self, _mock_tid):
+    @patch(
+        "app.routers.n8n_tools.resolve_crm_client_for_n8n_phone",
+        return_value=(None, "", None),
+    )
+    def test_client_by_phone_inbox_404(self, _mock_resolve):
         r = self.client.get(
             "/api/n8n/tools/client-by-phone",
             params={"instance_token": "bad", "phone": "5541999999999@s.whatsapp.net"},
@@ -104,9 +304,11 @@ class TestN8nToolsHttp(unittest.TestCase):
         )
         self.assertEqual(r.status_code, 404)
 
-    @patch("app.routers.n8n_tools.resolve_tenant_id_for_n8n", return_value=FAKE_TENANT)
-    @patch("app.routers.n8n_tools.find_crm_client_row_by_phone", return_value=None)
-    def test_client_by_phone_not_found(self, _mock_find, _mock_tid):
+    @patch(
+        "app.routers.n8n_tools.resolve_crm_client_for_n8n_phone",
+        return_value=(FAKE_TENANT, "5541999999999", None),
+    )
+    def test_client_by_phone_not_found(self, _mock_resolve):
         r = self.client.get(
             "/api/n8n/tools/client-by-phone",
             params={"instance_token": "tok", "phone": "5541999999999@s.whatsapp.net"},
@@ -116,9 +318,11 @@ class TestN8nToolsHttp(unittest.TestCase):
         body = r.json()
         self.assertFalse(body["found"])
 
-    @patch("app.routers.n8n_tools.resolve_tenant_id_for_n8n", return_value=FAKE_TENANT)
-    @patch("app.routers.n8n_tools.find_crm_client_row_by_phone", return_value=CLIENT_ROW_PJ)
-    def test_client_by_phone_found_pj(self, _mock_find, _mock_tid):
+    @patch(
+        "app.routers.n8n_tools.resolve_crm_client_for_n8n_phone",
+        return_value=(FAKE_TENANT, "554137984741", CLIENT_ROW_PJ),
+    )
+    def test_client_by_phone_found_pj(self, _mock_resolve):
         r = self.client.get(
             "/api/n8n/tools/client-by-phone",
             params={"instance_token": "tok", "phone": "554137984741@s.whatsapp.net"},
@@ -130,9 +334,11 @@ class TestN8nToolsHttp(unittest.TestCase):
         self.assertEqual(body["display_name"], "WBT Solutions")
         self.assertEqual(body["cnpj_formatted"], "47.992.051/0001-00")
 
-    @patch("app.routers.n8n_tools.resolve_tenant_id_for_n8n", return_value=FAKE_TENANT)
-    @patch("app.routers.n8n_tools.find_crm_client_row_by_phone", return_value=None)
-    def test_last_order_client_missing(self, _mock_find, _mock_tid):
+    @patch(
+        "app.routers.n8n_tools.resolve_crm_client_for_n8n_phone",
+        return_value=(FAKE_TENANT, "5541999999999", None),
+    )
+    def test_last_order_client_missing(self, _mock_resolve):
         r = self.client.get(
             "/api/n8n/tools/last-order-by-phone",
             params={"instance_token": "tok", "phone": "5541999999999@s.whatsapp.net"},
@@ -144,10 +350,12 @@ class TestN8nToolsHttp(unittest.TestCase):
         self.assertIn("message_last", body)
         self.assertIn("cadastro", body["message_last"].lower())
 
-    @patch("app.routers.n8n_tools.resolve_tenant_id_for_n8n", return_value=FAKE_TENANT)
-    @patch("app.routers.n8n_tools.find_crm_client_row_by_phone", return_value=CLIENT_ROW_PJ)
+    @patch(
+        "app.routers.n8n_tools.resolve_crm_client_for_n8n_phone",
+        return_value=(FAKE_TENANT, "554137984741", CLIENT_ROW_PJ),
+    )
     @patch("app.routers.n8n_tools.fetch_last_order_for_client", return_value=ORDER_ROW)
-    def test_last_order_found(self, _mock_fetch, _mock_find, _mock_tid):
+    def test_last_order_found(self, _mock_fetch, _mock_resolve):
         r = self.client.get(
             "/api/n8n/tools/last-order-by-phone",
             params={"instance_token": "tok", "phone": "554137984741@s.whatsapp.net"},
@@ -178,6 +386,73 @@ class TestN8nToolsHttp(unittest.TestCase):
         self.assertIn("R$", ml)
         self.assertIn("36,00", ml)
         self.assertIn("Gostaria de repetir", ml)
+
+    @patch("app.services.n8n_agent_tools.resolve_tenant_id_for_n8n", return_value=FAKE_TENANT)
+    @patch(
+        "app.services.n8n_agent_tools.find_crm_client_row_by_phone",
+        return_value=CLIENT_ROW_PJ,
+    )
+    def test_client_by_phone_and_last_order_same_client_id_jid_vs_plain_digits(
+        self, _mock_find, _mock_tid
+    ):
+        """AC4: RemoteJid e dígitos puros resolvem o mesmo client_id nos dois endpoints."""
+        r_jid = self.client.get(
+            "/api/n8n/tools/client-by-phone",
+            params={"instance_token": "tok", "phone": "554137984741@s.whatsapp.net"},
+            headers={"X-CRM-API-Key": "ignored"},
+        )
+        self.assertEqual(r_jid.status_code, 200)
+        self.assertEqual(r_jid.json()["client_id"], FAKE_CLIENT_ID)
+
+        with patch(
+            "app.routers.n8n_tools.fetch_last_order_for_client", return_value=ORDER_ROW
+        ):
+            r_last_jid = self.client.get(
+                "/api/n8n/tools/last-order-by-phone",
+                params={
+                    "instance_token": "tok",
+                    "phone": "554137984741@s.whatsapp.net",
+                },
+                headers={"X-CRM-API-Key": "ignored"},
+            )
+            r_last_digits = self.client.get(
+                "/api/n8n/tools/last-order-by-phone",
+                params={"instance_token": "tok", "phone": "554137984741"},
+                headers={"X-CRM-API-Key": "ignored"},
+            )
+        self.assertEqual(r_last_jid.status_code, 200)
+        self.assertEqual(r_last_digits.status_code, 200)
+        self.assertEqual(r_last_jid.json()["client_id"], FAKE_CLIENT_ID)
+        self.assertEqual(r_last_digits.json()["client_id"], FAKE_CLIENT_ID)
+
+        r_digits = self.client.get(
+            "/api/n8n/tools/client-by-phone",
+            params={"instance_token": "tok", "phone": "554137984741"},
+            headers={"X-CRM-API-Key": "ignored"},
+        )
+        self.assertEqual(r_digits.status_code, 200)
+        self.assertEqual(r_digits.json()["client_id"], FAKE_CLIENT_ID)
+
+    @patch("app.services.n8n_agent_tools.resolve_tenant_id_for_n8n", return_value=FAKE_TENANT)
+    def test_client_by_phone_insufficient_digits_returns_400(self, _mock_tid):
+        """AC7: menos de 4 dígitos úteis → 400 (contrato atual)."""
+        r = self.client.get(
+            "/api/n8n/tools/client-by-phone",
+            params={"instance_token": "tok", "phone": "abc1"},
+            headers={"X-CRM-API-Key": "ignored"},
+        )
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("curto", r.json()["detail"].lower())
+
+    @patch("app.services.n8n_agent_tools.resolve_tenant_id_for_n8n", return_value=FAKE_TENANT)
+    def test_last_order_by_phone_insufficient_digits_returns_400(self, _mock_tid):
+        r = self.client.get(
+            "/api/n8n/tools/last-order-by-phone",
+            params={"instance_token": "tok", "phone": "xy12"},
+            headers={"X-CRM-API-Key": "ignored"},
+        )
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("curto", r.json()["detail"].lower())
 
     def test_last_order_message_last_no_order(self):
         from app.services.n8n_agent_tools import build_last_order_tool_payload
@@ -219,6 +494,37 @@ class TestN8nToolsHttp(unittest.TestCase):
         self.assertIsNotNone(out)
         self.assertEqual(out["id"], "order-1")
         chain.neq.assert_called_with("payment_status", "cancelado")
+
+    def test_fetch_last_order_for_client_fallback_via_lead_id(self):
+        """AC5: sem pedido direto por client_id, usa leads do cliente e pedido por lead_id."""
+        from app.services.n8n_agent_tools import fetch_last_order_for_client
+
+        order_via_lead = {
+            **ORDER_ROW,
+            "id": "order-via-lead",
+            "lead_id": "lead-for-client",
+            "client_id": None,
+        }
+        mock_sb = MagicMock()
+        chain = MagicMock()
+        mock_sb.table.return_value = chain
+        for name in ("select", "eq", "neq", "order", "limit", "in_"):
+            getattr(chain, name).return_value = chain
+
+        exec_empty = MagicMock()
+        exec_empty.data = []
+        exec_leads = MagicMock()
+        exec_leads.data = [{"id": "lead-for-client"}]
+        exec_order = MagicMock()
+        exec_order.data = [order_via_lead]
+        chain.execute.side_effect = [exec_empty, exec_leads, exec_order]
+
+        out = fetch_last_order_for_client(
+            mock_sb, tenant_id=FAKE_TENANT, client_id=FAKE_CLIENT_ID
+        )
+        self.assertIsNotNone(out)
+        self.assertEqual(out["id"], "order-via-lead")
+        self.assertEqual(out["lead_id"], "lead-for-client")
 
     def test_tools_require_api_key(self):
         app.dependency_overrides.pop(verify_n8n_api_key, None)

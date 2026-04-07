@@ -1,13 +1,18 @@
 """
 Ferramentas HTTP usadas pelo agente n8n (busca_cliente, busca_ultimo_pedido).
 Resolve tenant pelo instance_token da inbox Uazapi e consulta Supabase com service role.
+
+Saneamento de ``crm_clients.phones`` (JSONB) no Supabase — diagnóstico, preview e
+UPDATE idempotente (só dígitos, sem deduplicação): ver
+``_bmad-output/implementation-artifacts/sql-saneamento-crm_clients-phones-legado.sql``.
 """
 
 from __future__ import annotations
 
+import logging
 from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
@@ -15,6 +20,8 @@ from supabase import Client as SupabaseClient
 
 from app.services.phone_normalize import digits_only
 from app.services.webhook_lead_context import find_inbox_by_instance_token
+
+logger = logging.getLogger(__name__)
 
 # public.orders — mesma ordem que information_schema (validação no Supabase).
 _ORDERS_FULL_SELECT = (
@@ -53,11 +60,140 @@ def phone_from_whatsapp_jid_or_raw(value: str | None) -> str:
     return digits_only(s)
 
 
+# Lookup por telefone — canônico BR + match tolerante (strict > last11 > last10).
+MIN_PHONE_LOOKUP_DIGITS = 4
+PHONE_MATCH_RANK_NONE = 0
+PHONE_MATCH_RANK_LAST10 = 1
+PHONE_MATCH_RANK_LAST11 = 2
+PHONE_MATCH_RANK_STRICT = 3
+
+PhoneMatchTier = Literal["strict", "last11", "last10"]
+
+
+def crm_phone_entry_digits(value: Any) -> str:
+    """Dígitos de um item em ``crm_clients.phones`` (jsonb), via ``digits_only``."""
+    if value is None:
+        return ""
+    return digits_only(str(value))
+
+
+def to_canonical_br_phone_digits(raw_digits: str) -> str:
+    """
+    Forma canônica BR para comparação: DDI 55 + DDD (2) + 8 ou 9 dígitos locais.
+    Espera string já só com dígitos (ex.: saída de ``phone_from_whatsapp_jid_or_raw``).
+    Números nacionais com zero à esquerda (ex. 041...) têm o 0 removido antes do 55.
+    Demais formatos são devolvidos como ``digits_only`` sem inferência de DDI.
+    """
+    d = digits_only(raw_digits)
+    if not d:
+        return ""
+    if d.startswith("55") and len(d) >= 12:
+        return d
+    if not d.startswith("55"):
+        d = d.lstrip("0") or d
+        if not d:
+            return ""
+        if len(d) in (10, 11):
+            return "55" + d
+    return d
+
+
+def is_insufficient_phone_lookup_digits(
+    digits_or_jid_fragment: str,
+    *,
+    min_len: int = MIN_PHONE_LOOKUP_DIGITS,
+) -> bool:
+    """True se a entrada é curta demais para lookup (alinhado ao ``min_length`` da API)."""
+    return len(digits_only(digits_or_jid_fragment)) < min_len
+
+
+def phone_match_rank(query_digits: str, stored_phone_raw: Any) -> int:
+    """
+    Pontua match entre busca e um telefone armazenado: strict (3) > last11 (2) > last10 (1) > 0.
+
+    ``query_digits``: dígitos da busca (ex.: resultado de ``phone_from_whatsapp_jid_or_raw``).
+    Não valida comprimento mínimo global — o chamador deve rejeitar entrada curta antes.
+    """
+    q = digits_only(query_digits)
+    s = crm_phone_entry_digits(stored_phone_raw)
+    if not q or not s:
+        return PHONE_MATCH_RANK_NONE
+    qc = to_canonical_br_phone_digits(q)
+    sc = to_canonical_br_phone_digits(s)
+    if not qc or not sc:
+        return PHONE_MATCH_RANK_NONE
+    if qc == sc:
+        return PHONE_MATCH_RANK_STRICT
+    if len(qc) >= 11 and len(sc) >= 11 and qc[-11:] == sc[-11:]:
+        return PHONE_MATCH_RANK_LAST11
+    if len(qc) >= 10 and len(sc) >= 10 and qc[-10:] == sc[-10:]:
+        return PHONE_MATCH_RANK_LAST10
+    return PHONE_MATCH_RANK_NONE
+
+
+def phone_match_tier(query_digits: str, stored_phone_raw: Any) -> PhoneMatchTier | None:
+    """Nome do tier de match ou None se não houver match."""
+    r = phone_match_rank(query_digits, stored_phone_raw)
+    if r == PHONE_MATCH_RANK_STRICT:
+        return "strict"
+    if r == PHONE_MATCH_RANK_LAST11:
+        return "last11"
+    if r == PHONE_MATCH_RANK_LAST10:
+        return "last10"
+    return None
+
+
 def format_cnpj_display(digits_raw: str | None) -> str:
     d = digits_only(digits_raw or "")
     if len(d) != 14:
         return (digits_raw or "").strip()
     return f"{d[:2]}.{d[2:5]}.{d[5:8]}/{d[8:12]}-{d[12:]}"
+
+
+def _parse_datetime_sort(value: Any) -> Optional[datetime]:
+    """Parse created_at-like values from Supabase/JSON para comparação."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        dt = value
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+    s = str(value).strip().replace("Z", "+00:00")
+    try:
+        dt = datetime.fromisoformat(s)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+_DT_MIN = datetime.min.replace(tzinfo=timezone.utc)
+
+
+def best_phone_match_rank_for_client_row(
+    phone_digits: str,
+    row: dict[str, Any],
+) -> int:
+    """Melhor ``phone_match_rank`` entre os telefones do cliente."""
+    phones_raw = row.get("phones")
+    if not isinstance(phones_raw, list):
+        return PHONE_MATCH_RANK_NONE
+    best = PHONE_MATCH_RANK_NONE
+    for p in phones_raw:
+        best = max(best, phone_match_rank(phone_digits, p))
+    return best
+
+
+def _phone_tier_label(rank: int) -> str:
+    if rank == PHONE_MATCH_RANK_STRICT:
+        return "strict"
+    if rank == PHONE_MATCH_RANK_LAST11:
+        return "last11"
+    if rank == PHONE_MATCH_RANK_LAST10:
+        return "last10"
+    return "none"
 
 
 def find_crm_client_row_by_phone(
@@ -66,6 +202,11 @@ def find_crm_client_row_by_phone(
     tenant_id: str,
     phone_digits: str,
 ) -> Optional[dict[str, Any]]:
+    """
+    Resolve um ``crm_clients`` por telefone: maior score de match (strict > last11 > last10),
+    depois pedido não cancelado mais recente (``client_id`` + fallback ``lead_id``),
+    depois ``crm_clients.created_at`` descendente.
+    """
     if len(phone_digits) < 4:
         return None
     try:
@@ -76,16 +217,73 @@ def find_crm_client_row_by_phone(
             .order("created_at", desc=True)
             .execute()
         )
-        for r in res.data or []:
-            phones_raw = r.get("phones")
-            if not isinstance(phones_raw, list):
-                continue
-            for p in phones_raw:
-                if digits_only(str(p)) == phone_digits:
-                    return r
+        rows = res.data or []
     except Exception:
         return None
-    return None
+
+    scored: list[tuple[dict[str, Any], int]] = []
+    for r in rows:
+        rank = best_phone_match_rank_for_client_row(phone_digits, r)
+        if rank > PHONE_MATCH_RANK_NONE:
+            scored.append((r, rank))
+
+    if not scored:
+        return None
+
+    max_rank = max(sr for _, sr in scored)
+    candidates = [r for r, sr in scored if sr == max_rank]
+    if len(candidates) == 1:
+        chosen = candidates[0]
+        logger.debug(
+            "n8n client-by-phone: client_id=%s tenant_id=%s match_tier=%s (single candidate)",
+            chosen.get("id"),
+            tenant_id,
+            _phone_tier_label(max_rank),
+        )
+        return chosen
+
+    def tie_break_key(row: dict[str, Any]) -> tuple[datetime, datetime]:
+        order = fetch_last_order_for_client(
+            supabase, tenant_id=tenant_id, client_id=str(row["id"])
+        )
+        o_raw = order.get("created_at") if order else None
+        o_dt = _parse_datetime_sort(o_raw) or _DT_MIN
+        c_dt = _parse_datetime_sort(row.get("created_at")) or _DT_MIN
+        return (o_dt, c_dt)
+
+    keyed = [(r, tie_break_key(r)) for r in candidates]
+    chosen, (o_dt, c_dt) = max(keyed, key=lambda item: item[1])
+    logger.debug(
+        "n8n client-by-phone: client_id=%s tenant_id=%s match_tier=%s "
+        "tie_break=order_then_client order_ts=%s client_ts=%s candidates=%s",
+        chosen.get("id"),
+        tenant_id,
+        _phone_tier_label(max_rank),
+        o_dt.isoformat() if o_dt != _DT_MIN else None,
+        c_dt.isoformat() if c_dt != _DT_MIN else None,
+        len(candidates),
+    )
+    return chosen
+
+
+def resolve_crm_client_for_n8n_phone(
+    supabase: SupabaseClient,
+    *,
+    instance_token: str,
+    phone: str,
+) -> tuple[Optional[str], str, Optional[dict[str, Any]]]:
+    """
+    Caminho único para ``client-by-phone`` e ``last-order-by-phone``: tenant, dígitos
+    e linha ``crm_clients`` via ``find_crm_client_row_by_phone`` (mesmo score e desempate).
+    """
+    tid = resolve_tenant_id_for_n8n(supabase, instance_token.strip())
+    if not tid:
+        return None, "", None
+    digits = phone_from_whatsapp_jid_or_raw(phone)
+    if len(digits) < MIN_PHONE_LOOKUP_DIGITS:
+        return tid, digits, None
+    row = find_crm_client_row_by_phone(supabase, tenant_id=tid, phone_digits=digits)
+    return tid, digits, row
 
 
 def fetch_last_order_for_client(

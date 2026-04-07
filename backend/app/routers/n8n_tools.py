@@ -15,13 +15,13 @@ from supabase import Client as SupabaseClient
 
 from app.dependencies import get_supabase, verify_n8n_api_key
 from app.services.n8n_agent_tools import (
+    MIN_PHONE_LOOKUP_DIGITS,
     build_client_tool_payload,
     build_last_order_tool_payload,
     fetch_last_order_for_client,
-    find_crm_client_row_by_phone,
     find_lead_by_whatsapp_chat,
     normalize_whatsapp_chat_id,
-    phone_from_whatsapp_jid_or_raw,
+    resolve_crm_client_for_n8n_phone,
     resolve_inbox_row_for_n8n,
     resolve_tenant_id_for_n8n,
     route_hint_from_stage,
@@ -40,19 +40,19 @@ async def n8n_tool_client_by_phone(
     """
     Retorno para o LLM: found, dados do crm_clients (CNPJ formatado para confirmação verbal).
     """
-    tid = resolve_tenant_id_for_n8n(supabase, instance_token.strip())
+    tid, _digits, row = resolve_crm_client_for_n8n_phone(
+        supabase, instance_token=instance_token, phone=phone
+    )
     if not tid:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Inbox não encontrada para este instance_token.",
         )
-    digits = phone_from_whatsapp_jid_or_raw(phone)
-    if len(digits) < 4:
+    if len(_digits) < MIN_PHONE_LOOKUP_DIGITS:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Telefone inválido ou muito curto.",
         )
-    row = find_crm_client_row_by_phone(supabase, tenant_id=tid, phone_digits=digits)
     if not row:
         return {
             "found": False,
@@ -72,19 +72,19 @@ async def n8n_tool_last_order_by_phone(
     Último pedido do cliente identificado pelo telefone (mesmo critério de busca_cliente).
     Inclui `message_last`: texto pronto para enviar no WhatsApp (resumo + CTA).
     """
-    tid = resolve_tenant_id_for_n8n(supabase, instance_token.strip())
+    tid, _digits, row = resolve_crm_client_for_n8n_phone(
+        supabase, instance_token=instance_token, phone=phone
+    )
     if not tid:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Inbox não encontrada para este instance_token.",
         )
-    digits = phone_from_whatsapp_jid_or_raw(phone)
-    if len(digits) < 4:
+    if len(_digits) < MIN_PHONE_LOOKUP_DIGITS:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Telefone inválido ou muito curto.",
         )
-    row = find_crm_client_row_by_phone(supabase, tenant_id=tid, phone_digits=digits)
     if not row:
         return {
             "client_found": False,
