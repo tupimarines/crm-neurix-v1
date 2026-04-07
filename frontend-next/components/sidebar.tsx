@@ -18,7 +18,12 @@ const systemItems = [
     { href: "/configuracoes", icon: "settings", label: "Configurações" },
 ];
 
-export default function Sidebar() {
+type SidebarProps = {
+    mobileOpen?: boolean;
+    onMobileClose?: () => void;
+};
+
+export default function Sidebar({ mobileOpen = false, onMobileClose }: SidebarProps) {
     const pathname = usePathname();
     const router = useRouter();
     const [showProfile, setShowProfile] = useState(false);
@@ -62,6 +67,10 @@ export default function Sidebar() {
             .catch(() => setIsSuperadmin(false));
     }, []);
 
+    useEffect(() => {
+        onMobileClose?.();
+    }, [pathname, onMobileClose]);
+
     // Close popup when clicking outside
     useEffect(() => {
         function handleClickOutside(event: MouseEvent) {
@@ -74,26 +83,39 @@ export default function Sidebar() {
     }, []);
 
     const handleLogout = () => {
+        onMobileClose?.();
         localStorage.removeItem("token");
         router.push("/login");
     };
 
+    const panelTransform = mobileOpen ? "translate-x-0" : "max-md:-translate-x-full md:translate-x-0";
+
     return (
-        <aside className="w-[280px] bg-surface-light dark:bg-surface-dark border-r border-border-light dark:border-border-dark flex-shrink-0 hidden md:flex flex-col transition-colors duration-200">
+        <aside
+            id="dashboard-nav"
+            className={`flex w-[280px] max-w-[min(280px,92vw)] flex-shrink-0 flex-col border-r border-border-light dark:border-border-dark bg-surface-light dark:bg-surface-dark transition-[transform,colors] duration-200 ease-out md:static md:z-auto ${panelTransform} fixed inset-y-0 left-0 z-50 shadow-2xl md:shadow-none`}
+        >
             {/* Logo — clickable → /dashboard */}
-            <Link
-                href="/dashboard"
-                className="h-16 flex items-center px-6 border-b border-border-light dark:border-border-dark hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors"
-            >
-                <div className="flex items-center gap-2">
-                    <span className="material-symbols-outlined text-primary text-3xl">
-                        hexagon
-                    </span>
-                    <span className="font-display font-bold text-xl tracking-tight text-text-main-light dark:text-text-main-dark">
+            <div className="flex h-16 shrink-0 items-center justify-between border-b border-border-light px-6 dark:border-border-dark">
+                <Link
+                    href="/dashboard"
+                    onClick={() => onMobileClose?.()}
+                    className="flex min-w-0 items-center gap-2 transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/30 -mx-2 px-2 py-1 rounded-lg"
+                >
+                    <span className="material-symbols-outlined text-primary text-3xl shrink-0">hexagon</span>
+                    <span className="font-display font-bold text-xl tracking-tight text-text-main-light dark:text-text-main-dark truncate">
                         Neurix<span className="text-primary">CRM</span>
                     </span>
-                </div>
-            </Link>
+                </Link>
+                <button
+                    type="button"
+                    onClick={() => onMobileClose?.()}
+                    aria-label="Fechar menu"
+                    className="md:hidden -mr-2 rounded-lg p-2 text-text-main-light hover:bg-slate-100 dark:text-text-main-dark dark:hover:bg-slate-800"
+                >
+                    <span className="material-symbols-outlined">close</span>
+                </button>
+            </div>
 
             {/* Navigation */}
             <nav className="flex-1 overflow-y-auto py-6 px-3 space-y-1">
