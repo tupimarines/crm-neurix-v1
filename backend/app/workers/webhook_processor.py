@@ -12,6 +12,7 @@ import redis.asyncio as aioredis
 from app.config import get_settings
 from app.services.keyword_engine import keyword_engine
 from app.services.lead_finalized_spawn import maybe_spawn_inbound_whatsapp_lead_if_finalized
+from app.services.phone_normalize import digits_only, format_brazil_phone_display
 from app.services.webhook_lead_context import (
     find_inbox_by_instance_name,
     find_inbox_by_instance_token,
@@ -320,15 +321,11 @@ async def process_uazapi_event(event: dict, supabase_client, redis_client):
 
             formatted_phone = ""
             if sender_phone:
-                p = sender_phone.lstrip("+")
-                if len(p) == 12 and p.startswith("55") and p[4] in "6789":
+                p = digits_only(sender_phone)
+                # Legado: 55+DDD+8 dígitos sem o 9 inicial do celular
+                if len(p) == 12 and p.startswith("55") and len(p) > 4 and p[4] in "6789":
                     p = p[:4] + "9" + p[4:]
-                if len(p) >= 13 and p.startswith("55"):
-                    formatted_phone = f"{p[:2]} {p[2:4]} {p[4:9]}-{p[9:13]}"
-                elif len(p) >= 10:
-                    formatted_phone = f"55 {p[:2]} 9{p[2:6]}-{p[6:10]}"
-                else:
-                    formatted_phone = p
+                formatted_phone = format_brazil_phone_display(p) or p
 
             client_id = resolve_or_create_crm_client(
                 supabase_client,

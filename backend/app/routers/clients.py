@@ -20,6 +20,7 @@ from app.dependencies import get_current_user, get_supabase
 from app.models.client import CrmClientCreate, CrmClientResponse, CrmClientUpdate, crm_client_from_row
 from app.org_scope import admin_user_ids_for_organization
 from app.services.phone_normalize import digits_only
+from app.services.lead_phone_sync import sync_all_leads_phone_for_client
 
 router = APIRouter()
 
@@ -250,7 +251,12 @@ async def update_client(
     if not rows:
         row2 = _get_client_row(supabase, client_id)
         return crm_client_from_row(row2)
-    return crm_client_from_row(rows[0])
+    out = rows[0]
+    if "phones" in data:
+        sync_all_leads_phone_for_client(
+            supabase, tenant_id=str(out["tenant_id"]), client_id=client_id
+        )
+    return crm_client_from_row(out)
 
 
 @router.delete("/{client_id}", status_code=status.HTTP_204_NO_CONTENT)

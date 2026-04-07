@@ -25,6 +25,7 @@ from app.services.uazapi_service import get_uazapi_service
 from app.services.webhook_lead_context import get_uazapi_instance_token_for_tenant
 from app.services.promotion_engine import apply_promotion_discount, round_money, select_best_promotion
 from app.services.phone_normalize import digits_only as _digits_only
+from app.services.lead_phone_sync import fetch_display_phone_for_crm_client
 from app.services.lead_board import (
     apply_destination_mirror,
     build_pos_by_lead,
@@ -997,6 +998,14 @@ async def create_lead(
             if resolved_cid:
                 data["client_id"] = resolved_cid
 
+        cid_sync = data.get("client_id")
+        if cid_sync:
+            synced_phone = fetch_display_phone_for_crm_client(
+                supabase, tenant_id=data_tenant_id, client_id=str(cid_sync)
+            )
+            if synced_phone:
+                data["phone"] = synced_phone
+
         response = supabase.table("leads").insert(data).execute()
     except Exception:
         if rollback_needed and applied_delta:
@@ -1113,6 +1122,24 @@ async def update_lead(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead não encontrado.")
 
     lead_data = response.data[0]
+
+    # Com vínculo a crm_clients, o telefone exibido no card segue o cadastro (fonte de verdade).
+    if lead_data.get("client_id"):
+        want_phone = fetch_display_phone_for_crm_client(
+            supabase,
+            tenant_id=str(lead_data["tenant_id"]),
+            client_id=str(lead_data["client_id"]),
+        )
+        if want_phone and _digits_only(want_phone) != _digits_only(lead_data.get("phone") or ""):
+            r_phone = (
+                supabase.table("leads")
+                .update({"phone": want_phone})
+                .eq("id", lead_id)
+                .eq("tenant_id", str(lead_data["tenant_id"]))
+                .execute()
+            )
+            if r_phone.data:
+                lead_data = r_phone.data[0]
 
     # Sync with Uazapi if contact_name was updated and lead has whatsapp_chat_id
     if "contact_name" in update_data and lead_data.get("whatsapp_chat_id"):

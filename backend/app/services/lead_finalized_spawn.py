@@ -14,6 +14,7 @@ from supabase import Client as SupabaseClient
 
 from app.observability import get_logger
 from app.services.lead_board import upsert_pipeline_position
+from app.services.lead_phone_sync import fetch_display_phone_for_crm_client
 from app.services.webhook_lead_context import get_first_stage_slug_for_funnel
 
 logger = get_logger("lead_finalized_spawn")
@@ -175,6 +176,19 @@ def spawn_fresh_lead_after_finalized(
             extra={"original_lead_id": original_lead_id, "detail": _db_error_detail(exc)},
         )
         return
+
+    if cid:
+        want_phone = fetch_display_phone_for_crm_client(
+            supabase, tenant_id=tenant_id, client_id=str(cid)
+        )
+        if want_phone:
+            try:
+                supabase.table("leads").update({"phone": want_phone}).eq("id", new_id).eq("tenant_id", tenant_id).execute()
+            except Exception:
+                logger.exception(
+                    "spawn_fresh_lead_sync_phone_failed",
+                    extra={"new_lead_id": new_id, "client_id": str(cid)},
+                )
 
     try:
         upsert_pipeline_position(
