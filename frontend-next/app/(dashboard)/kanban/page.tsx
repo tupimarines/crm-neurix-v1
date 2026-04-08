@@ -1024,6 +1024,7 @@ function KanbanContent() {
                 // Helps the PATCH complete if the user refreshes quickly.
                 keepalive: true,
             });
+            void fetchKanban({ silent: true });
         } catch (err) {
             console.warn("Failed to sync stage move:", err);
             setCards((prev) => prev.map((c) => c.id === cardId ? { ...c, stageId: previousStageId } : c));
@@ -1182,6 +1183,7 @@ function KanbanContent() {
                 priorityColor: priorityColorMap[newCard.priority] || "blue", desc: "",
                 products_json: created.products_json || newCard.products_json,
             }]);
+            void fetchKanban({ silent: true });
         } catch (err) {
             console.error("Failed to create lead:", err);
             // Fallback: add locally anyway
@@ -1298,6 +1300,7 @@ function KanbanContent() {
                 setEditingCard(null);
                 setIsManualValueConfirmed(false);
                 setManualValueJustification("");
+                void fetchKanban({ silent: true });
                 return;
             } catch (err) {
                 console.warn("API update failed, could be mocked card:", err);

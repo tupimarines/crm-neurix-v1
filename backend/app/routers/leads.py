@@ -437,6 +437,24 @@ def _read_only_board_owner_ids_for_funnel(
     return [str(r["user_id"]) for r in (res.data or []) if r.get("user_id")]
 
 
+def _pipeline_board_owner_ids_for_scope(
+    eff: EffectiveRole,
+    acting_user_id: str,
+    supabase: SupabaseClient,
+    data_tenant_id: str,
+    resolved_funnel_id: str,
+) -> list[str]:
+    """Mesma regra do GET /kanban: donos das positions neste funil para merge e movimentação."""
+    if eff.is_read_only:
+        return [str(acting_user_id)]
+    if eff.is_org_admin and eff.org_member_organization_id:
+        mirror_owners = _read_only_board_owner_ids_for_funnel(
+            supabase, eff.org_member_organization_id, resolved_funnel_id
+        )
+        return mirror_owners if mirror_owners else [data_tenant_id]
+    return [data_tenant_id]
+
+
 def _fetch_leads_for_funnel(
     supabase: SupabaseClient,
     *,
@@ -650,17 +668,9 @@ async def get_kanban_board(
         return KanbanBoard(columns=[], funnel_id=resolved_funnel_id)
 
     lead_rows_primary = _fetch_leads_for_funnel(supabase, data_tenant_id=data_tenant_id, funnel_id=resolved_funnel_id)
-    # read_only: espelhos usam board_owner = próprio user_id. Admin no mesmo funil atribuído a read_only
-    # deve usar esses user_ids para ver as mesmas positions/cards que a automação gravou.
-    if eff.is_read_only:
-        pipeline_board_owner_ids = [str(user.id)]
-    elif eff.is_org_admin and eff.org_member_organization_id:
-        mirror_owners = _read_only_board_owner_ids_for_funnel(
-            supabase, eff.org_member_organization_id, resolved_funnel_id
-        )
-        pipeline_board_owner_ids = mirror_owners if mirror_owners else [data_tenant_id]
-    else:
-        pipeline_board_owner_ids = [data_tenant_id]
+    pipeline_board_owner_ids = _pipeline_board_owner_ids_for_scope(
+        eff, str(user.id), supabase, data_tenant_id, resolved_funnel_id
+    )
     lead_rows = merge_kanban_lead_rows(
         supabase=supabase,
         primary_rows=lead_rows_primary,
@@ -1126,7 +1136,7 @@ async def create_lead(
     lid = str(lead_row["id"])
     try:
         stages_f = _fetch_pipeline_stages_for_funnel(
-            supabase, data_tenant_id=str(user.id), funnel_id=str(lead_row.get("funnel_id") or resolved_fid)
+            supabase, data_tenant_id=data_tenant_id, funnel_id=str(lead_row.get("funnel_id") or resolved_fid)
         )
         st_match = next(
             (
@@ -1142,7 +1152,7 @@ async def create_lead(
                 lead_id=lid,
                 funnel_id=str(lead_row.get("funnel_id") or resolved_fid),
                 stage_id=str(st_match["id"]),
-                board_owner_user_id=str(user.id),
+                board_owner_user_id=data_tenant_id,
             )
             auto = fetch_stage_automation_for_source_stage(
                 supabase,
@@ -1246,6 +1256,27 @@ async def update_lead(
         uazapi = get_uazapi_service()
         # Run in background to not block the request
         background_tasks.add_task(uazapi.update_contact, number=phone_number, name=lead_data["contact_name"])
+
+    try:
+        fid = str(lead_data.get("funnel_id") or "").strip()
+        tid = str(lead_data.get("tenant_id") or "").strip()
+        if fid and tid:
+            stages_u = _fetch_pipeline_stages_for_funnel(supabase, data_tenant_id=tid, funnel_id=fid)
+            stage_name = str(lead_data.get("stage") or "").strip()
+            st_row = next(
+                (s for s in stages_u if str(s.get("name", "")).strip().lower() == stage_name.lower()),
+                None,
+            )
+            if st_row:
+                auto_u = fetch_stage_automation_for_source_stage(
+                    supabase,
+                    source_funnel_id=fid,
+                    source_stage_id=str(st_row["id"]),
+                )
+                if auto_u:
+                    apply_destination_mirror(supabase, lead_id=str(lead_data["id"]), automation=auto_u)
+    except Exception:
+        logger.exception("lead_update_automation_hook_failed", extra={"lead_id": lead_id})
 
     return LeadResponse(**lead_data)
 
@@ -1522,16 +1553,33 @@ async def move_lead_stage(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead não encontrado.")
     lead_row = lead_rows[0]
 
-    pos_existing = (
-        supabase.table("lead_pipeline_positions")
-        .select("id, stage_id")
-        .eq("lead_id", lead_id)
-        .eq("funnel_id", resolved_funnel_id)
-        .eq("board_owner_user_id", data_tenant_id)
-        .limit(1)
-        .execute()
+    board_owner_scope = _pipeline_board_owner_ids_for_scope(
+        eff, str(user.id), supabase, data_tenant_id, resolved_funnel_id
     )
-    has_pos = bool(pos_existing.data)
+    owners_for_query = [str(x).strip() for x in board_owner_scope if str(x).strip()]
+    if not owners_for_query:
+        pos_existing_rows: list[dict] = []
+    elif len(owners_for_query) == 1:
+        pos_existing = (
+            supabase.table("lead_pipeline_positions")
+            .select("id, stage_id, board_owner_user_id")
+            .eq("lead_id", lead_id)
+            .eq("funnel_id", resolved_funnel_id)
+            .eq("board_owner_user_id", owners_for_query[0])
+            .execute()
+        )
+        pos_existing_rows = pos_existing.data or []
+    else:
+        pos_existing = (
+            supabase.table("lead_pipeline_positions")
+            .select("id, stage_id, board_owner_user_id")
+            .eq("lead_id", lead_id)
+            .eq("funnel_id", resolved_funnel_id)
+            .in_("board_owner_user_id", owners_for_query)
+            .execute()
+        )
+        pos_existing_rows = pos_existing.data or []
+    has_pos = bool(pos_existing_rows)
     is_owner = str(lead_row.get("tenant_id")) == str(data_tenant_id)
     is_primary = is_owner and str(lead_row.get("funnel_id") or "") == str(resolved_funnel_id)
     if not is_owner and not has_pos:
@@ -1546,8 +1594,8 @@ async def move_lead_stage(
         )
         if prev_row:
             from_stage_id = str(prev_row["id"])
-    elif pos_existing.data:
-        from_stage_id = str(pos_existing.data[0].get("stage_id"))
+    elif pos_existing_rows:
+        from_stage_id = str(pos_existing_rows[0].get("stage_id"))
 
     if is_primary:
         upd = (
@@ -1567,13 +1615,20 @@ async def move_lead_stage(
             board_owner_user_id=data_tenant_id,
         )
     else:
-        upsert_pipeline_position(
-            supabase,
-            lead_id=lead_id,
-            funnel_id=resolved_funnel_id,
-            stage_id=to_stage_id,
-            board_owner_user_id=data_tenant_id,
-        )
+        if pos_existing_rows:
+            owners_to_touch = list(
+                dict.fromkeys(str(r["board_owner_user_id"]) for r in pos_existing_rows if r.get("board_owner_user_id"))
+            )
+        else:
+            owners_to_touch = owners_for_query[:1] if owners_for_query else [str(data_tenant_id)]
+        for pos_owner in owners_to_touch:
+            upsert_pipeline_position(
+                supabase,
+                lead_id=lead_id,
+                funnel_id=resolved_funnel_id,
+                stage_id=to_stage_id,
+                board_owner_user_id=str(pos_owner),
+            )
 
     insert_lead_activity(
         supabase,
@@ -1585,14 +1640,13 @@ async def move_lead_stage(
         metadata={"funnel_id": resolved_funnel_id, "primary": is_primary},
     )
 
-    if is_primary:
-        auto = fetch_stage_automation_for_source_stage(
-            supabase,
-            source_funnel_id=resolved_funnel_id,
-            source_stage_id=to_stage_id,
-        )
-        if auto:
-            apply_destination_mirror(supabase, lead_id=lead_id, automation=auto)
+    auto = fetch_stage_automation_for_source_stage(
+        supabase,
+        source_funnel_id=resolved_funnel_id,
+        source_stage_id=to_stage_id,
+    )
+    if auto:
+        apply_destination_mirror(supabase, lead_id=lead_id, automation=auto)
 
     if (
         is_primary
