@@ -85,12 +85,15 @@ function SortableCard({
     card,
     onOpenChat,
     onOpenMenu,
+    onViewCard,
     showInboxBadge,
     readOnly,
 }: {
     card: KanbanCard;
     onOpenChat: (id: string) => void;
     onOpenMenu: (id: string, anchor: DOMRect) => void;
+    /** read_only: abrir detalhes do pedido (itens, observações) sem editar */
+    onViewCard?: (id: string) => void;
     showInboxBadge?: boolean;
     readOnly?: boolean;
 }) {
@@ -134,11 +137,37 @@ function SortableCard({
             <div className="flex items-center justify-between mt-3 pt-2 border-t border-border-light/30 dark:border-border-dark">
                 <span className="text-sm font-bold text-green-600 dark:text-green-400">{card.value}</span>
                 <div className="flex items-center gap-1">
-                    <button onClick={(e) => { e.stopPropagation(); onOpenChat(card.id); }} className="text-text-secondary-light hover:text-green-500 transition-colors p-1 rounded" title="Abrir Chat">
+                    <button
+                        type="button"
+                        onPointerDown={(e) => e.stopPropagation()}
+                        onClick={(e) => { e.stopPropagation(); onOpenChat(card.id); }}
+                        className="text-text-secondary-light hover:text-green-500 transition-colors p-1 rounded"
+                        title="Abrir Chat"
+                    >
                         <span className="material-symbols-outlined text-lg">chat</span>
                     </button>
+                    {readOnly && onViewCard && (
+                        <button
+                            type="button"
+                            onPointerDown={(e) => e.stopPropagation()}
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                onViewCard(card.id);
+                            }}
+                            className="text-text-secondary-light hover:text-primary transition-colors p-1 rounded"
+                            title="Ver pedido"
+                        >
+                            <span className="material-symbols-outlined text-lg">visibility</span>
+                        </button>
+                    )}
                     {!readOnly && (
-                    <button onClick={(e) => { e.stopPropagation(); onOpenMenu(card.id, (e.currentTarget as HTMLButtonElement).getBoundingClientRect()); }} className="text-text-secondary-light hover:text-primary transition-colors p-1 rounded" title="Opções">
+                    <button
+                        type="button"
+                        onPointerDown={(e) => e.stopPropagation()}
+                        onClick={(e) => { e.stopPropagation(); onOpenMenu(card.id, (e.currentTarget as HTMLButtonElement).getBoundingClientRect()); }}
+                        className="text-text-secondary-light hover:text-primary transition-colors p-1 rounded"
+                        title="Opções"
+                    >
                         <span className="material-symbols-outlined text-lg">more_vert</span>
                     </button>
                     )}
@@ -1627,6 +1656,14 @@ function KanbanContent() {
                                                             readOnly={isReadOnlyUi}
                                                             showInboxBadge={showInboxBadge}
                                                             onOpenChat={(id) => openChat(id)}
+                                                            onViewCard={
+                                                                isReadOnlyUi
+                                                                    ? (id) => {
+                                                                          const c = cards.find((x) => x.id === id);
+                                                                          if (c) openEditCard(c);
+                                                                      }
+                                                                    : undefined
+                                                            }
                                                             onOpenMenu={(id, anchor) => {
                                                                 if (editCardMenu === id) {
                                                                     setEditCardMenu(null);
@@ -1777,7 +1814,14 @@ function KanbanContent() {
                                 {filteredCards.map((card) => {
                                     const stage = stages.find((s) => s.id === card.stageId);
                                     return (
-                                        <tr key={card.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors">
+                                        <tr
+                                            key={card.id}
+                                            className={`hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors${isReadOnlyUi ? " cursor-pointer" : ""}`}
+                                            onClick={isReadOnlyUi ? () => openEditCard(card) : undefined}
+                                            onKeyDown={isReadOnlyUi ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openEditCard(card); } } : undefined}
+                                            tabIndex={isReadOnlyUi ? 0 : undefined}
+                                            role={isReadOnlyUi ? "button" : undefined}
+                                        >
                                             <td className="px-6 py-3 font-medium">{card.name}</td>
                                             <td className="px-6 py-3 text-text-secondary-light">{card.contact}</td>
                                             <td className="px-6 py-3"><span className="bg-primary-light dark:bg-primary/20 text-primary text-xs font-medium px-2 py-0.5 rounded-full">{stage?.title}</span></td>
@@ -2007,39 +2051,57 @@ function KanbanContent() {
                 </div>
             )}
 
-            {/* Edit Card Modal */}
+            {/* Edit Card Modal (edição admin; read_only: somente leitura — logística vê itens do pedido) */}
             {editingCard && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
                     <div className="absolute inset-0 bg-slate-900/30 backdrop-blur-sm" onClick={() => { setEditingCard(null); setIsManualValueConfirmed(false); setManualValueJustification(""); }} />
                     <div className="relative bg-surface-light dark:bg-surface-dark rounded-xl shadow-2xl border border-border-light dark:border-border-dark w-full max-w-lg p-6 space-y-4 max-h-[90vh] overflow-y-auto">
-                        <h3 className="text-lg font-bold">Editar Negócio</h3>
+                        <h3 className="text-lg font-bold">{isReadOnlyUi ? "Detalhes do pedido" : "Editar Negócio"}</h3>
                         <div>
                             <label className="block text-xs font-semibold text-text-secondary-light uppercase tracking-wider mb-1">Empresa / Negócio</label>
-                            <input value={editingCard.name} onChange={(e) => setEditingCard({ ...editingCard, name: e.target.value })} className="w-full px-3 py-2 border border-border-light dark:border-border-dark rounded-lg text-sm bg-white dark:bg-slate-800 focus:ring-1 focus:ring-primary focus:border-transparent" />
+                            <input
+                                readOnly={isReadOnlyUi}
+                                value={editingCard.name}
+                                onChange={(e) => setEditingCard({ ...editingCard, name: e.target.value })}
+                                className={`w-full px-3 py-2 border border-border-light dark:border-border-dark rounded-lg text-sm bg-white dark:bg-slate-800 focus:ring-1 focus:ring-primary focus:border-transparent ${isReadOnlyUi ? "cursor-default bg-slate-50 dark:bg-slate-900/40" : ""}`}
+                            />
                         </div>
                         <div>
                             <label className="block text-xs font-semibold text-text-secondary-light uppercase tracking-wider mb-1">Contato do WhatsApp</label>
-                            <input value={editingCard.contact} onChange={(e) => setEditingCard({ ...editingCard, contact: e.target.value })} className="w-full px-3 py-2 border border-border-light dark:border-border-dark rounded-lg text-sm bg-white dark:bg-slate-800 focus:ring-1 focus:ring-primary focus:border-transparent" />
+                            <input
+                                readOnly={isReadOnlyUi}
+                                value={editingCard.contact}
+                                onChange={(e) => setEditingCard({ ...editingCard, contact: e.target.value })}
+                                className={`w-full px-3 py-2 border border-border-light dark:border-border-dark rounded-lg text-sm bg-white dark:bg-slate-800 focus:ring-1 focus:ring-primary focus:border-transparent ${isReadOnlyUi ? "cursor-default bg-slate-50 dark:bg-slate-900/40" : ""}`}
+                            />
                         </div>
                         <div>
                             <label className="block text-xs font-semibold text-text-secondary-light uppercase tracking-wider mb-1">Telefone</label>
-                            <input value={editingCard.phone || ""} onChange={(e) => setEditingCard({ ...editingCard, phone: formatPhone(e.target.value) })} placeholder="55 41 99999-9999" maxLength={16} className="w-full px-3 py-2 border border-border-light dark:border-border-dark rounded-lg text-sm bg-white dark:bg-slate-800 focus:ring-1 focus:ring-primary focus:border-transparent" />
+                            <input
+                                readOnly={isReadOnlyUi}
+                                value={editingCard.phone || ""}
+                                onChange={(e) => setEditingCard({ ...editingCard, phone: formatPhone(e.target.value) })}
+                                placeholder="55 41 99999-9999"
+                                maxLength={16}
+                                className={`w-full px-3 py-2 border border-border-light dark:border-border-dark rounded-lg text-sm bg-white dark:bg-slate-800 focus:ring-1 focus:ring-primary focus:border-transparent ${isReadOnlyUi ? "cursor-default bg-slate-50 dark:bg-slate-900/40" : ""}`}
+                            />
                         </div>
                         <div className="flex gap-4">
                             <div className="flex-1">
                                 <label className="block text-xs font-semibold text-text-secondary-light uppercase tracking-wider mb-1">Valor</label>
                                 <input
+                                    readOnly={isReadOnlyUi}
                                     value={editingCard.value}
                                     onChange={(e) => {
                                         setEditingCard({ ...editingCard, value: e.target.value });
                                         setIsManualValueConfirmed(false);
                                     }}
-                                    className="w-full px-3 py-2 border border-border-light dark:border-border-dark rounded-lg text-sm bg-white dark:bg-slate-800 focus:ring-1 focus:ring-primary focus:border-transparent"
+                                    className={`w-full px-3 py-2 border border-border-light dark:border-border-dark rounded-lg text-sm bg-white dark:bg-slate-800 focus:ring-1 focus:ring-primary focus:border-transparent ${isReadOnlyUi ? "cursor-default bg-slate-50 dark:bg-slate-900/40" : ""}`}
                                 />
                                 <p className="mt-1 text-[11px] text-text-secondary-light dark:text-text-secondary-dark">
                                     Valor com desconto automático: <span className="font-semibold">{editSuggestedValue}</span>
                                 </p>
-                                {Math.abs(parseCurrency(editingCard.value) - parseCurrency(editSuggestedValue)) > 0.009 && (
+                                {!isReadOnlyUi && Math.abs(parseCurrency(editingCard.value) - parseCurrency(editSuggestedValue)) > 0.009 && (
                                     <div className="mt-2 space-y-2">
                                         <textarea
                                             value={manualValueJustification}
@@ -2066,7 +2128,12 @@ function KanbanContent() {
                             </div>
                             <div className="flex-1">
                                 <label className="block text-xs font-semibold text-text-secondary-light uppercase tracking-wider mb-1">Prioridade</label>
-                                <select value={editingCard.priority || "Média"} onChange={(e) => setEditingCard({ ...editingCard, priority: e.target.value })} className="w-full px-3 py-2 border border-border-light dark:border-border-dark rounded-lg text-sm bg-white dark:bg-slate-800 focus:ring-1 focus:ring-primary focus:border-transparent">
+                                <select
+                                    disabled={isReadOnlyUi}
+                                    value={editingCard.priority || "Média"}
+                                    onChange={(e) => setEditingCard({ ...editingCard, priority: e.target.value })}
+                                    className={`w-full px-3 py-2 border border-border-light dark:border-border-dark rounded-lg text-sm bg-white dark:bg-slate-800 focus:ring-1 focus:ring-primary focus:border-transparent ${isReadOnlyUi ? "cursor-default opacity-90" : ""}`}
+                                >
                                     <option>Alta</option><option>Média</option><option>Baixa</option>
                                 </select>
                             </div>
@@ -2076,6 +2143,7 @@ function KanbanContent() {
                             {productFetchError ? (
                                 <div className="text-red-500 text-xs mb-2 p-2 bg-red-50 dark:bg-red-900/10 rounded">{productFetchError}</div>
                             ) : null}
+                            {!isReadOnlyUi && (
                             <div className="flex gap-2 mb-2">
                                 <select value={editSelectedProductId} onChange={e => setEditSelectedProductId(e.target.value)} className="flex-1 px-3 py-2 border border-border-light dark:border-border-dark rounded-lg text-sm bg-white dark:bg-slate-800 focus:ring-1 focus:ring-primary">
                                     <option value="">Selecione um produto</option>
@@ -2103,6 +2171,7 @@ function KanbanContent() {
                                     setEditSelectedQuantity(1);
                                 }} className="bg-primary text-white px-3 border border-transparent rounded-lg text-sm font-medium hover:bg-primary-hover">Add</button>
                             </div>
+                            )}
                             {(editingCard.products_json || []).length > 0 && (
                                 <div className="space-y-1 mb-3">
                                     {(editingCard.products_json || []).map((op, idx) => (
@@ -2113,20 +2182,30 @@ function KanbanContent() {
                                                     {op.applied_promotion_name ? op.applied_promotion_name : "Sem promoção"}
                                                 </span>
                                                 <span>{new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(Number(op.line_total ?? ((Number(op.quantity ?? op.qty ?? 0)) * Number(op.price || 0))))}</span>
+                                                {!isReadOnlyUi && (
                                                 <button type="button" onClick={() => {
                                                     const filtered = editingCard.products_json!.filter((_, i) => i !== idx);
                                                     setEditingCard({ ...editingCard, products_json: filtered });
                                                     setIsManualValueConfirmed(false);
                                                 }} className="text-red-500 material-symbols-outlined text-[16px]">close</button>
+                                                )}
                                             </div>
                                         </div>
                                     ))}
                                 </div>
                             )}
+                            {isReadOnlyUi && (!editingCard.products_json || editingCard.products_json.length === 0) && (
+                                <p className="text-xs text-text-secondary-light dark:text-text-secondary-dark">Nenhum produto vinculado a este pedido.</p>
+                            )}
                         </div>
                         <div>
                             <label className="block text-xs font-semibold text-text-secondary-light uppercase tracking-wider mb-1">Observações</label>
-                            <textarea value={editingCard.desc || ""} onChange={(e) => setEditingCard({ ...editingCard, desc: e.target.value })} className="w-full px-3 py-2 border border-border-light dark:border-border-dark rounded-lg text-sm bg-white dark:bg-slate-800 focus:ring-1 focus:ring-primary focus:border-transparent min-h-[80px]" />
+                            <textarea
+                                readOnly={isReadOnlyUi}
+                                value={editingCard.desc || ""}
+                                onChange={(e) => setEditingCard({ ...editingCard, desc: e.target.value })}
+                                className={`w-full px-3 py-2 border border-border-light dark:border-border-dark rounded-lg text-sm bg-white dark:bg-slate-800 focus:ring-1 focus:ring-primary focus:border-transparent min-h-[80px] ${isReadOnlyUi ? "cursor-default bg-slate-50 dark:bg-slate-900/40 resize-none" : ""}`}
+                            />
                         </div>
                         <div>
                             <label className="block text-xs font-semibold text-text-secondary-light uppercase tracking-wider mb-1">Histórico (movimentações)</label>
@@ -2150,12 +2229,24 @@ function KanbanContent() {
                             )}
                         </div>
                         <div className="flex gap-2 pt-2">
-                            <button onClick={handleSaveEditCard} disabled={isSaving} className="flex-1 py-2 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
-                                {isSaving ? "Salvando..." : "Salvar Alterações"}
-                            </button>
-                            <button onClick={() => { setEditingCard(null); setIsManualValueConfirmed(false); setManualValueJustification(""); }} disabled={isSaving} className="flex-1 py-2 border border-border-light dark:border-border-dark rounded-lg text-sm font-medium hover:bg-slate-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
-                                Cancelar
-                            </button>
+                            {isReadOnlyUi ? (
+                                <button
+                                    type="button"
+                                    onClick={() => { setEditingCard(null); setIsManualValueConfirmed(false); setManualValueJustification(""); }}
+                                    className="w-full py-2 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-hover transition-colors"
+                                >
+                                    Fechar
+                                </button>
+                            ) : (
+                                <>
+                                    <button type="button" onClick={handleSaveEditCard} disabled={isSaving} className="flex-1 py-2 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                                        {isSaving ? "Salvando..." : "Salvar Alterações"}
+                                    </button>
+                                    <button type="button" onClick={() => { setEditingCard(null); setIsManualValueConfirmed(false); setManualValueJustification(""); }} disabled={isSaving} className="flex-1 py-2 border border-border-light dark:border-border-dark rounded-lg text-sm font-medium hover:bg-slate-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                                        Cancelar
+                                    </button>
+                                </>
+                            )}
                         </div>
                     </div>
                 </div>
