@@ -1286,6 +1286,20 @@ async def upsert_stage_automation(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
 
+    mem = (
+        supabase.table("organization_members")
+        .select("user_id, role, assigned_funnel_id")
+        .eq("organization_id", payload.organization_id)
+        .eq("user_id", payload.target_user_id)
+        .limit(1)
+        .execute()
+    ).data or []
+    if not mem:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Usuário alvo não pertence à organização.")
+    target_member = mem[0]
+    target_role = str(target_member.get("role") or "")
+    assigned_funnel_id = target_member.get("assigned_funnel_id")
+
     tf = (
         supabase.table("funnels")
         .select("id, tenant_id")
@@ -1293,8 +1307,22 @@ async def upsert_stage_automation(
         .limit(1)
         .execute()
     ).data or []
-    if not tf or str(tf[0]["tenant_id"]) != str(payload.target_user_id):
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Funil de destino não pertence ao usuário alvo.")
+    if not tf:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Funil de destino não encontrado.")
+
+    if target_role == "read_only":
+        # Funis da org são criados no tenant do admin; read_only não é tenant_id do funil.
+        if assigned_funnel_id and str(assigned_funnel_id) != str(payload.target_funnel_id):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Funil de destino deve ser o funil atribuído ao usuário read_only.",
+            )
+    else:
+        if str(tf[0]["tenant_id"]) != str(payload.target_user_id):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Funil de destino não pertence ao usuário alvo.",
+            )
 
     ts = (
         supabase.table("pipeline_stages")
@@ -1305,17 +1333,6 @@ async def upsert_stage_automation(
     ).data or []
     if not ts or str(ts[0]["funnel_id"]) != str(payload.target_funnel_id):
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Etapa de destino inválida para o funil.")
-
-    mem = (
-        supabase.table("organization_members")
-        .select("user_id")
-        .eq("organization_id", payload.organization_id)
-        .eq("user_id", payload.target_user_id)
-        .limit(1)
-        .execute()
-    ).data or []
-    if not mem:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Usuário alvo não pertence à organização.")
 
     row_in = {
         "organization_id": payload.organization_id,
