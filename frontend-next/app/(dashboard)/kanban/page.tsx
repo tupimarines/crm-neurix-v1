@@ -530,13 +530,18 @@ function KanbanContent() {
             setLeadActivity([]);
             return;
         }
+        if (authSession.loaded && authSession.isReadOnly) {
+            setLeadActivity([]);
+            setLeadActivityLoading(false);
+            return;
+        }
         const token = localStorage.getItem("access_token") || undefined;
         setLeadActivityLoading(true);
         getLeadActivity(editingCard.id, token)
             .then(setLeadActivity)
             .catch(() => setLeadActivity([]))
             .finally(() => setLeadActivityLoading(false));
-    }, [editingCard?.id]);
+    }, [editingCard?.id, authSession.loaded, authSession.isReadOnly]);
     const [isManualValueConfirmed, setIsManualValueConfirmed] = useState(false);
     const [manualValueJustification, setManualValueJustification] = useState("");
     const [isSaving, setIsSaving] = useState(false);
@@ -2207,6 +2212,7 @@ function KanbanContent() {
                                 className={`w-full px-3 py-2 border border-border-light dark:border-border-dark rounded-lg text-sm bg-white dark:bg-slate-800 focus:ring-1 focus:ring-primary focus:border-transparent min-h-[80px] ${isReadOnlyUi ? "cursor-default bg-slate-50 dark:bg-slate-900/40 resize-none" : ""}`}
                             />
                         </div>
+                        {!isReadOnlyUi && (
                         <div>
                             <label className="block text-xs font-semibold text-text-secondary-light uppercase tracking-wider mb-1">Histórico (movimentações)</label>
                             {leadActivityLoading ? (
@@ -2228,6 +2234,7 @@ function KanbanContent() {
                                 </ul>
                             )}
                         </div>
+                        )}
                         <div className="flex gap-2 pt-2">
                             {isReadOnlyUi ? (
                                 <button
