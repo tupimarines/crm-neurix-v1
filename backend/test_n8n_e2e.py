@@ -10,6 +10,7 @@ Tests are organized by sprint task:
 """
 
 import unittest
+from collections import deque
 from datetime import datetime, timezone, timedelta
 from unittest.mock import MagicMock, patch
 
@@ -23,10 +24,15 @@ from app.models.n8n_webhook import (
     N8nWebhookResponse,
     OrderItem,
     NoteTimelineEntry,
+    ORPHAN_CATALOG_BLOCK_END,
+    ORPHAN_CATALOG_BLOCK_START,
     build_products_json,
     generate_client_name,
     generate_product_summary,
+    merge_notes_with_orphan_catalog_block,
     parse_brl_to_float,
+    partition_products_by_match,
+    strip_orphan_catalog_block,
 )
 
 FAKE_API_KEY = "test-api-key-abc123"
@@ -165,6 +171,111 @@ class TestBuildProductsJson(unittest.TestCase):
     def test_empty_items(self):
         result, warnings = build_products_json([], [PRODUCT_DB_ROW], FAKE_TENANT_ID)
         self.assertEqual(len(result), 0)
+        self.assertEqual(len(warnings), 0)
+
+    def test_matched_accent_spacing_and_punctuation(self):
+        row = {
+            "id": FAKE_PRODUCT_ID,
+            "name": "Geleia de amora 0% açúcar",
+            "price": 22.0,
+            "category_id": None,
+            "tenant_id": FAKE_TENANT_ID,
+            "is_active": True,
+        }
+        items = [
+            OrderItem(
+                product="  GELEIA   DE AMORA 0% acucar  ",
+                quantity=1,
+                total="R$ 22,00",
+            )
+        ]
+        result, warnings = build_products_json(items, [row], FAKE_TENANT_ID)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["id"], FAKE_PRODUCT_ID)
+        self.assertFalse(result[0].get("unmatched"))
+        self.assertEqual(len(warnings), 0)
+
+    def test_matched_inactive_product_by_name(self):
+        row = {**PRODUCT_DB_ROW, "is_active": False}
+        items = [OrderItem(product="Geleia de Amora", quantity=1, total="R$ 18,00")]
+        result, warnings = build_products_json(items, [row], FAKE_TENANT_ID)
+        self.assertEqual(result[0]["id"], FAKE_PRODUCT_ID)
+        self.assertFalse(result[0].get("unmatched"))
+        self.assertEqual(len(warnings), 0)
+
+    def test_fuzzy_unique_match_adds_warning(self):
+        row = {
+            "id": "prod-geleia-caseira",
+            "name": "Geleia Caseira Especial Tradicional",
+            "price": 10.0,
+            "category_id": None,
+            "tenant_id": FAKE_TENANT_ID,
+            "is_active": True,
+        }
+        items = [
+            OrderItem(
+                product="Geleia Caseira Espeial Tradicional",
+                quantity=1,
+                total="R$ 10,00",
+            )
+        ]
+        result, warnings = build_products_json(items, [row], FAKE_TENANT_ID)
+        self.assertEqual(result[0]["id"], "prod-geleia-caseira")
+        self.assertFalse(result[0].get("unmatched"))
+        self.assertTrue(any("Match aproximado" in w for w in warnings))
+
+    def test_fuzzy_ambiguous_no_match(self):
+        a = {
+            "id": "p-a",
+            "name": "Geleia Premium Alpha Lote",
+            "price": 1.0,
+            "category_id": None,
+            "tenant_id": FAKE_TENANT_ID,
+            "is_active": True,
+        }
+        b = {
+            "id": "p-b",
+            "name": "Geleia Premium Alph Lote",
+            "price": 1.0,
+            "category_id": None,
+            "tenant_id": FAKE_TENANT_ID,
+            "is_active": True,
+        }
+        items = [OrderItem(product="Geleia Premium Alp Lote", quantity=1, total="R$ 1,00")]
+        result, warnings = build_products_json(items, [a, b], FAKE_TENANT_ID)
+        self.assertTrue(result[0].get("unmatched"))
+        self.assertFalse(any("Match aproximado" in w for w in warnings))
+
+    def test_matched_agent_accent_catalog_ascii_equivalent(self):
+        """Catálogo só ASCII; agente envia acentos — mesma chave normalizada."""
+        row = {
+            "id": "prod-cafe",
+            "name": "Cafe premium especial",
+            "price": 5.0,
+            "category_id": None,
+            "tenant_id": FAKE_TENANT_ID,
+            "is_active": True,
+        }
+        items = [OrderItem(product="Café prémiùm espécial", quantity=1, total="R$ 5,00")]
+        result, warnings = build_products_json(items, [row], FAKE_TENANT_ID)
+        self.assertEqual(result[0]["id"], "prod-cafe")
+        self.assertFalse(result[0].get("unmatched"))
+        self.assertEqual(len(warnings), 0)
+
+    def test_matched_double_spaces_only_in_agent_string(self):
+        row = {
+            "id": "p-jam",
+            "name": "Geleia Morango",
+            "price": 12.0,
+            "category_id": None,
+            "tenant_id": FAKE_TENANT_ID,
+            "is_active": True,
+        }
+        items = [OrderItem(product="Geleia    Morango", quantity=2, total="R$ 24,00")]
+        result, warnings = build_products_json(items, [row], FAKE_TENANT_ID)
+        self.assertEqual(result[0]["id"], "p-jam")
+        self.assertEqual(result[0]["quantity"], 2)
+        self.assertFalse(result[0].get("unmatched"))
         self.assertEqual(len(warnings), 0)
 
 
@@ -702,6 +813,309 @@ class TestN8nResponseModel(unittest.TestCase):
         self.assertEqual(d["stage"], "B2C")
         self.assertIsNone(d["order_id"])
         self.assertEqual(len(d["warnings"]), 1)
+
+
+# ═══════════════════════════════════════════════════════════════
+# Tech-spec Task 5 — testes: match, estoque no webhook, regressão
+# ═══════════════════════════════════════════════════════════════
+
+
+def _make_supabase_for_update_products_json(responses: deque, capture_updates: list | None = None):
+    """Encadeia `.execute()` na ordem usada por `_update_products_json` (sem apply_stock_delta real)."""
+
+    def next_execute(*_a, **_kw):
+        if not responses:
+            return _FakeExec(data=[])
+        return responses.popleft()
+
+    def table(table_name):
+        t = MagicMock()
+
+        def select_side_effect(*_a, **_kw):
+            q = MagicMock()
+            q.eq.return_value = q
+            q.in_.return_value = q
+            q.single.return_value = q
+            q.execute.side_effect = next_execute
+            return q
+
+        def update_side_effect(data, *_a, **_kw):
+            if capture_updates is not None and table_name == "leads":
+                capture_updates.append(dict(data))
+            q = MagicMock()
+            q.eq.return_value = q
+            q.execute.side_effect = next_execute
+            return q
+
+        t.select.side_effect = select_side_effect
+        t.update.side_effect = update_side_effect
+        return t
+
+    sb = MagicMock()
+    sb.table.side_effect = table
+    return sb
+
+
+class TestUpdateProductsJsonStock(unittest.TestCase):
+    """`_update_products_json` deve acionar a mesma reserva de estoque que o PATCH do lead."""
+
+    @patch("app.routers.n8n_webhook.apply_stock_delta")
+    def test_cart_update_applies_positive_delta_when_no_prior_reservation(self, mock_apply):
+        from app.routers.n8n_webhook import _update_products_json
+
+        catalog = [{**PRODUCT_DB_ROW, "stock_quantity": 100}]
+        lead_snap = {
+            "id": FAKE_LEAD_ID,
+            "tenant_id": FAKE_TENANT_ID,
+            "products_json": [],
+            "stock_reserved_json": [],
+            "notes": "",
+        }
+        responses = deque(
+            [
+                _FakeExec(data=catalog),
+                MagicMock(data=lead_snap),
+                _FakeExec(data=[{"id": FAKE_LEAD_ID, "tenant_id": FAKE_TENANT_ID}]),
+            ]
+        )
+        sb = _make_supabase_for_update_products_json(responses)
+
+        payload = N8nWebhookPayload(
+            instance_token="t",
+            whatsapp_chat_id=FAKE_CHAT_ID,
+            intent="cart_update",
+            order_summary=[
+                OrderItem(product="Geleia de Amora", quantity=4, total="R$ 72,00"),
+            ],
+            total_value="R$ 72,00",
+        )
+        lead_row = {**LEAD_ROW, "id": FAKE_LEAD_ID, "tenant_id": FAKE_TENANT_ID}
+        products_json, _warnings = _update_products_json(
+            sb, lead_row=lead_row, payload=payload, tenant_id=FAKE_TENANT_ID,
+        )
+
+        mock_apply.assert_called_once()
+        _call_kw = mock_apply.call_args.kwargs
+        self.assertEqual(_call_kw["tenant_id"], FAKE_TENANT_ID)
+        self.assertEqual(_call_kw["delta"], {FAKE_PRODUCT_ID: 4})
+        self.assertEqual(len(products_json), 1)
+        self.assertEqual(products_json[0]["quantity"], 4)
+        self.assertFalse(responses, "todas as respostas Supabase devem ter sido consumidas")
+
+    @patch("app.routers.n8n_webhook.apply_stock_delta")
+    def test_cart_update_delta_is_increment_over_existing_reservation(self, mock_apply):
+        from app.routers.n8n_webhook import _update_products_json
+
+        catalog = [{**PRODUCT_DB_ROW, "stock_quantity": 100}]
+        lead_snap = {
+            "id": FAKE_LEAD_ID,
+            "tenant_id": FAKE_TENANT_ID,
+            "products_json": [
+                {
+                    "id": FAKE_PRODUCT_ID,
+                    "product_id": FAKE_PRODUCT_ID,
+                    "quantity": 1,
+                    "qty": 1,
+                    "name": "Geleia de Amora",
+                    "price": 18.0,
+                    "line_total": 18.0,
+                }
+            ],
+            "stock_reserved_json": [{"product_id": FAKE_PRODUCT_ID, "quantity": 1}],
+            "notes": "",
+        }
+        responses = deque(
+            [
+                _FakeExec(data=catalog),
+                MagicMock(data=lead_snap),
+                _FakeExec(data=[{"id": FAKE_LEAD_ID, "tenant_id": FAKE_TENANT_ID}]),
+            ]
+        )
+        sb = _make_supabase_for_update_products_json(responses)
+
+        payload = N8nWebhookPayload(
+            instance_token="t",
+            whatsapp_chat_id=FAKE_CHAT_ID,
+            intent="cart_update",
+            order_summary=[
+                OrderItem(product="Geleia de Amora", quantity=5, total="R$ 90,00"),
+            ],
+            total_value="R$ 90,00",
+        )
+        lead_row = {**LEAD_ROW, "id": FAKE_LEAD_ID, "tenant_id": FAKE_TENANT_ID}
+        _update_products_json(sb, lead_row=lead_row, payload=payload, tenant_id=FAKE_TENANT_ID)
+
+        self.assertEqual(mock_apply.call_args.kwargs["delta"], {FAKE_PRODUCT_ID: 4})
+
+    @patch("app.routers.n8n_webhook.apply_stock_delta")
+    def test_insufficient_stock_aborts_before_lead_update(self, mock_apply):
+        from app.routers.n8n_webhook import _update_products_json
+
+        mock_apply.side_effect = HTTPException(status_code=400, detail="Estoque insuficiente")
+        catalog = [{**PRODUCT_DB_ROW, "stock_quantity": 0}]
+        lead_snap = {
+            "id": FAKE_LEAD_ID,
+            "tenant_id": FAKE_TENANT_ID,
+            "products_json": [],
+            "stock_reserved_json": [],
+            "notes": "",
+        }
+        responses = deque(
+            [
+                _FakeExec(data=catalog),
+                MagicMock(data=lead_snap),
+                _FakeExec(data=[{"id": FAKE_LEAD_ID}]),
+            ]
+        )
+        sb = _make_supabase_for_update_products_json(responses)
+
+        payload = N8nWebhookPayload(
+            instance_token="t",
+            whatsapp_chat_id=FAKE_CHAT_ID,
+            intent="cart_update",
+            order_summary=[
+                OrderItem(product="Geleia de Amora", quantity=1, total="R$ 18,00"),
+            ],
+            total_value="R$ 18,00",
+        )
+        lead_row = {**LEAD_ROW, "id": FAKE_LEAD_ID, "tenant_id": FAKE_TENANT_ID}
+        with self.assertRaises(HTTPException) as ctx:
+            _update_products_json(sb, lead_row=lead_row, payload=payload, tenant_id=FAKE_TENANT_ID)
+        self.assertEqual(ctx.exception.status_code, 400)
+        self.assertTrue(responses, "update do lead não deve ter sido solicitado")
+        self.assertEqual(len(responses), 1)
+
+    @patch("app.routers.n8n_webhook.apply_stock_delta")
+    def test_cart_update_ac6_matched_only_in_json_orphans_in_notes(self, mock_apply):
+        """AC6: só matched em products_json; órfãos no bloco delimitado em notes; estoque só do matched."""
+        from app.routers.n8n_webhook import _update_products_json
+
+        catalog = [{**PRODUCT_DB_ROW, "stock_quantity": 100}]
+        lead_snap = {
+            "id": FAKE_LEAD_ID,
+            "tenant_id": FAKE_TENANT_ID,
+            "products_json": [],
+            "stock_reserved_json": [],
+            "notes": "Linha fixa do operador",
+        }
+        captured: list[dict] = []
+        responses = deque(
+            [
+                _FakeExec(data=catalog),
+                MagicMock(data=lead_snap),
+                _FakeExec(data=[{"id": FAKE_LEAD_ID, "tenant_id": FAKE_TENANT_ID}]),
+            ]
+        )
+        sb = _make_supabase_for_update_products_json(responses, capture_updates=captured)
+
+        payload = N8nWebhookPayload(
+            instance_token="t",
+            whatsapp_chat_id=FAKE_CHAT_ID,
+            intent="cart_update",
+            order_summary=[
+                OrderItem(product="Geleia de Amora", quantity=2, total="R$ 36,00"),
+                OrderItem(product="Produto Fantasma XYZ", quantity=1, total="R$ 25,00"),
+            ],
+            total_value="R$ 61,00",
+        )
+        lead_row = {**LEAD_ROW, "id": FAKE_LEAD_ID, "tenant_id": FAKE_TENANT_ID}
+        products_json, _warnings = _update_products_json(
+            sb, lead_row=lead_row, payload=payload, tenant_id=FAKE_TENANT_ID,
+        )
+
+        self.assertEqual(len(products_json), 1)
+        self.assertEqual(products_json[0]["id"], FAKE_PRODUCT_ID)
+        self.assertEqual(mock_apply.call_args.kwargs["delta"], {FAKE_PRODUCT_ID: 2})
+        self.assertEqual(len(captured), 1)
+        upd = captured[0]
+        self.assertEqual(upd["value"], 36.0)
+        self.assertNotIn("unmatched", upd["products_json"][0])
+        notes = upd.get("notes", "")
+        self.assertIn(ORPHAN_CATALOG_BLOCK_START, notes)
+        self.assertIn(ORPHAN_CATALOG_BLOCK_END, notes)
+        self.assertIn("Produto Fantasma XYZ", notes)
+        self.assertIn("Linha fixa do operador", notes)
+        self.assertFalse(responses, "todas as respostas Supabase devem ter sido consumidas")
+
+    @patch("app.routers.n8n_webhook.apply_stock_delta")
+    def test_cart_update_all_unmatched_clears_products_and_sets_notes(self, mock_apply):
+        from app.routers.n8n_webhook import _update_products_json
+
+        catalog = [PRODUCT_DB_ROW]
+        lead_snap = {
+            "id": FAKE_LEAD_ID,
+            "tenant_id": FAKE_TENANT_ID,
+            "products_json": [],
+            "stock_reserved_json": [],
+            "notes": "",
+        }
+        captured: list[dict] = []
+        responses = deque(
+            [
+                _FakeExec(data=catalog),
+                MagicMock(data=lead_snap),
+                _FakeExec(data=[{"id": FAKE_LEAD_ID, "tenant_id": FAKE_TENANT_ID}]),
+            ]
+        )
+        sb = _make_supabase_for_update_products_json(responses, capture_updates=captured)
+
+        payload = N8nWebhookPayload(
+            instance_token="t",
+            whatsapp_chat_id=FAKE_CHAT_ID,
+            intent="cart_update",
+            order_summary=[
+                OrderItem(product="Só Órfão", quantity=3, total="R$ 30,00"),
+            ],
+            total_value="R$ 30,00",
+        )
+        lead_row = {**LEAD_ROW, "id": FAKE_LEAD_ID, "tenant_id": FAKE_TENANT_ID}
+        products_json, _warnings = _update_products_json(
+            sb, lead_row=lead_row, payload=payload, tenant_id=FAKE_TENANT_ID,
+        )
+
+        self.assertEqual(products_json, [])
+        self.assertEqual(mock_apply.call_args.kwargs["delta"], {})
+        self.assertEqual(captured[0]["value"], 0.0)
+        self.assertIn("- 3x Só Órfão", captured[0]["notes"])
+
+
+class TestOrphanCatalogNotesHelpers(unittest.TestCase):
+    """Task 3b — helpers puros de partição e bloco em notes."""
+
+    def test_partition_splits_unmatched(self):
+        raw, _w = build_products_json(
+            [
+                OrderItem(product="Geleia de Amora", quantity=1, total="R$ 18,00"),
+                OrderItem(product="Órfão", quantity=2, total="R$ 10,00"),
+            ],
+            [PRODUCT_DB_ROW],
+            FAKE_TENANT_ID,
+        )
+        matched, unmatched = partition_products_by_match(raw)
+        self.assertEqual(len(matched), 1)
+        self.assertEqual(matched[0]["id"], FAKE_PRODUCT_ID)
+        self.assertEqual(len(unmatched), 1)
+        self.assertTrue(unmatched[0].get("unmatched"))
+        self.assertEqual(unmatched[0]["name"], "Órfão")
+
+    def test_strip_orphan_block(self):
+        base = "Nota A"
+        block = f"{ORPHAN_CATALOG_BLOCK_START}\n- 1x X\n{ORPHAN_CATALOG_BLOCK_END}"
+        merged = f"{base}\n\n{block}"
+        self.assertEqual(strip_orphan_catalog_block(merged), base)
+
+    def test_merge_replaces_previous_block(self):
+        first = merge_notes_with_orphan_catalog_block(
+            "Intro",
+            [{"name": "Velho", "quantity": 1, "unmatched": True}],
+        )[0]
+        second, _trunc = merge_notes_with_orphan_catalog_block(
+            first,
+            [{"name": "Novo", "quantity": 2, "unmatched": True}],
+        )
+        self.assertIn("Novo", second)
+        self.assertNotIn("Velho", second)
+        self.assertEqual(second.count(ORPHAN_CATALOG_BLOCK_START), 1)
 
 
 if __name__ == "__main__":

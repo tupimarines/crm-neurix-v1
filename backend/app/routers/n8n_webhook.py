@@ -16,9 +16,12 @@ from app.models.n8n_webhook import (
     build_products_json,
     generate_client_name,
     generate_product_summary,
+    merge_notes_with_orphan_catalog_block,
     parse_brl_to_float,
+    partition_products_by_match,
 )
 from app.observability import get_logger
+from app.services.lead_stock import apply_stock_delta, compute_stock_delta, invert_delta
 from app.services.lead_board import (
     fetch_stage_automation_for_source_stage,
     apply_destination_mirror,
@@ -182,12 +185,16 @@ def _move_lead_to_stage(
 
 
 def _fetch_tenant_products(supabase: SupabaseClient, tenant_id: str) -> list[dict]:
+    """Lista produtos do tenant para match no webhook (inclui inativos por nome).
+
+    Pedidos retroativos do agente podem referenciar SKUs desativados; o match
+    por nome ainda resolve para o registro correto sem expor listagem pública.
+    """
     try:
         res = (
             supabase.table("products")
             .select("id, name, price, category_id, tenant_id, is_active")
             .eq("tenant_id", tenant_id)
-            .eq("is_active", True)
             .execute()
         )
         return res.data or []
@@ -202,25 +209,108 @@ def _update_products_json(
     payload: N8nWebhookPayload,
     tenant_id: str,
 ) -> tuple[list[dict], list[str]]:
-    """Process order_summary → update leads.products_json.
-    Returns (products_json, warnings). No-op if order_summary is empty/None."""
+    """Process order_summary → update leads.products_json, value e stock_reserved_json.
+    Aplica a mesma reserva de estoque que PATCH /leads/{id}. No-op se order_summary vazio."""
     if not payload.order_summary:
         return lead_row.get("products_json") or [], []
 
     products_db = _fetch_tenant_products(supabase, tenant_id)
-    products_json, warnings = build_products_json(payload.order_summary, products_db, tenant_id)
+    raw_lines, warnings = build_products_json(payload.order_summary, products_db, tenant_id)
+    matched_lines, unmatched_lines = partition_products_by_match(raw_lines)
+    products_json = matched_lines
 
-    total_value = parse_brl_to_float(payload.total_value)
-    if total_value <= 0 and products_json:
-        total_value = round(
-            sum(float(line.get("line_total") or 0) for line in products_json),
-            2,
+    total_value = round(
+        sum(float(line.get("line_total") or 0) for line in products_json),
+        2,
+    )
+
+    lead_id = str(lead_row["id"])
+    current_lead = (
+        supabase.table("leads")
+        .select("id, tenant_id, products_json, stock_reserved_json, notes")
+        .eq("id", lead_id)
+        .single()
+        .execute()
+    )
+    if not current_lead.data:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Lead não encontrado.",
         )
-    update_data: dict = {"products_json": products_json}
-    if total_value > 0:
-        update_data["value"] = total_value
+    row = current_lead.data
+    lead_tenant_id = str(row["tenant_id"])
+    if lead_tenant_id != str(tenant_id):
+        logger.warning(
+            "n8n_update_products_tenant_mismatch",
+            extra={"lead_id": lead_id, "inbox_tenant": tenant_id, "lead_tenant": lead_tenant_id},
+        )
 
-    supabase.table("leads").update(update_data).eq("id", lead_row["id"]).execute()
+    previous_reserved = row.get("stock_reserved_json") or row.get("products_json") or []
+    next_reserved, applied_delta = compute_stock_delta(previous_reserved, products_json)
+    rollback_needed = bool(applied_delta)
+
+    apply_stock_delta(supabase=supabase, tenant_id=lead_tenant_id, delta=applied_delta)
+
+    existing_notes = str(row.get("notes") or "")
+    new_notes, notes_truncated = merge_notes_with_orphan_catalog_block(
+        existing_notes,
+        unmatched_lines,
+    )
+    if notes_truncated:
+        logger.warning(
+            "n8n_orphan_catalog_notes_truncated",
+            extra={"lead_id": lead_id, "notes_len": len(new_notes)},
+        )
+
+    update_data: dict = {
+        "products_json": products_json,
+        "stock_reserved_json": next_reserved,
+        "value": total_value,
+    }
+    if (new_notes or "").strip() != existing_notes.strip():
+        update_data["notes"] = new_notes
+
+    try:
+        response = (
+            supabase.table("leads")
+            .update(update_data)
+            .eq("id", lead_id)
+            .eq("tenant_id", lead_tenant_id)
+            .execute()
+        )
+    except Exception:
+        if rollback_needed and applied_delta:
+            try:
+                apply_stock_delta(
+                    supabase=supabase,
+                    tenant_id=lead_tenant_id,
+                    delta=invert_delta(applied_delta),
+                )
+            except Exception:
+                logger.exception(
+                    "n8n_webhook_stock_rollback_failed",
+                    extra={"tenant_id": lead_tenant_id, "lead_id": lead_id},
+                )
+        raise
+
+    if not response.data:
+        if rollback_needed and applied_delta:
+            try:
+                apply_stock_delta(
+                    supabase=supabase,
+                    tenant_id=lead_tenant_id,
+                    delta=invert_delta(applied_delta),
+                )
+            except Exception:
+                logger.exception(
+                    "n8n_webhook_stock_rollback_failed",
+                    extra={"tenant_id": lead_tenant_id, "lead_id": lead_id},
+                )
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Lead não encontrado ao atualizar produtos.",
+        )
+
     return products_json, warnings
 
 
@@ -379,12 +469,12 @@ async def n8n_webhook(
 
         client_name = generate_client_name(lead_row, payload, client_row)
         product_summary = generate_product_summary(payload.order_summary or [])
-        total = parse_brl_to_float(payload.total_value)
-        if total <= 0 and products_json:
-            total = round(
-                sum(float(line.get("line_total") or 0) for line in products_json),
-                2,
-            )
+        total = round(
+            sum(float(line.get("line_total") or 0) for line in products_json),
+            2,
+        )
+        if total <= 0:
+            total = parse_brl_to_float(payload.total_value)
 
         # Idempotency: check for recent pending order on same lead
         order_id: str | None = None

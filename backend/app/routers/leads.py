@@ -8,7 +8,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, status, Query, BackgroundTasks
 from supabase import Client as SupabaseClient
 from typing import Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 from time import perf_counter
 from datetime import datetime, timezone
 
@@ -16,8 +16,13 @@ from app.dependencies import get_supabase, get_current_user
 from app.authz import EffectiveRole, get_effective_role, require_org_admin
 from app.org_scope import funnel_ids_for_organization, list_funnels_for_organization
 from app.models.lead import (
-    LeadCreate, LeadUpdate, LeadMoveStage, LeadResponse,
-    KanbanBoard, KanbanColumn,
+    LeadCreate,
+    LeadUpdate,
+    LeadMoveStage,
+    LeadResponse,
+    KanbanBoard,
+    KanbanColumn,
+    LeadPriority,
 )
 from app.models.chat_message import SendMessagePayload
 from app.observability import get_logger, metrics
@@ -25,6 +30,12 @@ from app.services.uazapi_service import get_uazapi_service
 from app.services.webhook_lead_context import get_uazapi_instance_token_for_tenant
 from app.services.promotion_engine import apply_promotion_discount, round_money, select_best_promotion
 from app.services.phone_normalize import digits_only as _digits_only
+from app.services.lead_stock import (
+    apply_stock_delta,
+    compute_stock_delta,
+    invert_delta,
+    normalize_product_items,
+)
 from app.services.lead_phone_sync import fetch_display_phone_for_crm_client
 from app.services.lead_board import (
     apply_destination_mirror,
@@ -60,111 +71,13 @@ def _is_missing_column_error(detail: str, column_name: str) -> bool:
     return "column" in lowered and column_name.lower() in lowered and ("does not exist" in lowered or "não existe" in lowered)
 
 
-def _to_positive_int(value, default: int = 0) -> int:
-    try:
-        parsed = int(value)
-        return parsed if parsed > 0 else default
-    except Exception:
-        return default
-
-
-def _normalize_reserved_items(items: list[dict] | None) -> list[dict]:
-    normalized: list[dict] = []
-    for item in (items or []):
-        product_id = str(item.get("product_id") or item.get("id") or "").strip()
-        if not product_id:
-            continue
-        quantity = _to_positive_int(item.get("quantity") or item.get("qty") or 0, default=0)
-        if quantity <= 0:
-            continue
-        normalized.append({"product_id": product_id, "quantity": quantity})
-    return normalized
-
-
-def _aggregate_reserved(items: list[dict] | None) -> dict[str, int]:
-    aggregated: dict[str, int] = {}
-    for item in _normalize_reserved_items(items):
-        aggregated[item["product_id"]] = aggregated.get(item["product_id"], 0) + int(item["quantity"])
-    return aggregated
-
-
-def _compute_stock_delta(previous_reserved: list[dict] | None, next_products: list[dict] | None) -> tuple[list[dict], dict[str, int]]:
-    previous = _aggregate_reserved(previous_reserved)
-    next_reserved = _normalize_reserved_items(next_products)
-    nxt = _aggregate_reserved(next_reserved)
-    product_ids = set(previous.keys()) | set(nxt.keys())
-    delta: dict[str, int] = {}
-    for product_id in product_ids:
-        # Positive delta => reserve more (decrease stock)
-        # Negative delta => release reservation (increase stock)
-        diff = nxt.get(product_id, 0) - previous.get(product_id, 0)
-        if diff != 0:
-            delta[product_id] = diff
-    return next_reserved, delta
-
-
-def _invert_delta(delta: dict[str, int]) -> dict[str, int]:
-    return {product_id: -qty for product_id, qty in delta.items()}
-
-
-def _apply_stock_delta(
-    *,
-    supabase: SupabaseClient,
-    tenant_id: str,
-    delta: dict[str, int],
-) -> None:
-    if not delta:
-        return
-    product_ids = list(delta.keys())
-    products = (
-        supabase.table("products")
-        .select("id, name, stock_quantity, is_active")
-        .eq("tenant_id", tenant_id)
-        .in_("id", product_ids)
-        .execute()
-    ).data or []
-    by_id = {str(row["id"]): row for row in products}
-    missing = [pid for pid in product_ids if pid not in by_id]
-    if missing:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Produto(s) não encontrado(s): {', '.join(missing)}")
-
-    for product_id, diff in delta.items():
-        row = by_id[product_id]
-        current_stock = int(row.get("stock_quantity") or 0)
-        new_stock = current_stock - diff
-        if new_stock < 0:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Estoque insuficiente para '{row.get('name') or product_id}'. Disponível: {current_stock}, solicitado adicional: {diff}.",
-            )
-
-    for product_id, diff in delta.items():
-        row = by_id[product_id]
-        current_stock = int(row.get("stock_quantity") or 0)
-        new_stock = current_stock - diff
-        supabase.table("products").update({"stock_quantity": new_stock}).eq("id", product_id).eq("tenant_id", tenant_id).execute()
-
-
-def _normalize_product_items(items: list[dict] | None) -> list[dict]:
-    normalized: list[dict] = []
-    for item in items or []:
-        product_id = str(item.get("id") or item.get("product_id") or "").strip()
-        if not product_id:
-            continue
-        quantity = _to_positive_int(item.get("quantity") or item.get("qty") or 0, default=0)
-        if quantity <= 0:
-            continue
-        normalized.append({"product_id": product_id, "quantity": quantity})
-    return normalized
-
-
 def _price_lead_products_with_promotions(
     *,
     supabase: SupabaseClient,
     tenant_id: str,
     products_json: list[dict] | None,
 ) -> tuple[float, list[dict]]:
-    normalized_items = _normalize_product_items(products_json)
+    normalized_items = normalize_product_items(products_json)
     if not normalized_items:
         return 0.0, []
 
@@ -541,6 +454,161 @@ def _fetch_leads_for_funnel(
         raise
 
 
+def _sanitize_optional_json_list_dicts(value) -> list[dict] | None:
+    """Garante `list[dict]` para campos JSON do lead; evita 500 no Kanban com dados legados."""
+    if value is None:
+        return None
+    if not isinstance(value, list):
+        return []
+    return [x for x in value if isinstance(x, dict)]
+
+
+def _sanitize_priority_for_response(raw) -> LeadPriority | None:
+    if raw is None or raw == "":
+        return None
+    s = str(raw).strip().lower()
+    if s in ("alta", "media", "baixa"):
+        return LeadPriority(s)
+    return None
+
+
+def _sanitize_non_negative_float(raw, default: float = 0.0) -> float:
+    try:
+        v = float(raw)
+        return v if v >= 0 else 0.0
+    except Exception:
+        return default
+
+
+def _non_empty_field_str(raw, *, fallback: str) -> str:
+    s = str(raw).strip() if raw is not None else ""
+    return s if len(s) >= 1 else fallback
+
+
+def _sanitize_notes_field(raw) -> str | None:
+    if raw is None:
+        return None
+    s = str(raw)
+    return s[:1000] if len(s) > 1000 else s
+
+
+def _coerce_datetime_required(raw, *, fallback: datetime) -> datetime:
+    if isinstance(raw, datetime):
+        return raw
+    if isinstance(raw, str) and raw.strip():
+        try:
+            s = raw.strip().replace("Z", "+00:00")
+            return datetime.fromisoformat(s)
+        except Exception:
+            return fallback
+    return fallback
+
+
+def _coerce_datetime_optional(raw) -> datetime | None:
+    if raw is None or raw == "":
+        return None
+    if isinstance(raw, datetime):
+        return raw
+    if isinstance(raw, str) and raw.strip():
+        try:
+            s = raw.strip().replace("Z", "+00:00")
+            return datetime.fromisoformat(s)
+        except Exception:
+            return None
+    return None
+
+
+def _sanitize_lead_row_for_kanban(row: dict) -> dict:
+    """Normaliza linha do Supabase antes de `LeadResponse` (prioridade, JSON, textos obrigatórios)."""
+    now = datetime.now(timezone.utc)
+    out = dict(row)
+    out["id"] = str(out["id"]) if out.get("id") is not None else "unknown"
+    out["tenant_id"] = str(out.get("tenant_id") or "")
+    out["created_at"] = _coerce_datetime_required(out.get("created_at"), fallback=now)
+    out["updated_at"] = _coerce_datetime_required(out.get("updated_at"), fallback=now)
+    out["chat_cycle_closed_at"] = _coerce_datetime_optional(out.get("chat_cycle_closed_at"))
+    for _fk in ("funnel_id", "inbox_id", "client_id"):
+        if out.get(_fk) is not None:
+            out[_fk] = str(out[_fk])
+    out["company_name"] = _non_empty_field_str(out.get("company_name"), fallback="(sem empresa)")
+    out["contact_name"] = _non_empty_field_str(out.get("contact_name"), fallback="(sem contato)")
+    out["stage"] = str(out.get("stage") or "")
+    out["priority"] = _sanitize_priority_for_response(out.get("priority"))
+    out["value"] = _sanitize_non_negative_float(out.get("value"), 0.0)
+    out["notes"] = _sanitize_notes_field(out.get("notes"))
+    if "phone" in out and out["phone"] is not None:
+        ps = str(out["phone"])
+        out["phone"] = ps[:50] if len(ps) > 50 else ps
+    if out.get("whatsapp_chat_id") is not None:
+        out["whatsapp_chat_id"] = str(out["whatsapp_chat_id"])
+    out["products_json"] = _sanitize_optional_json_list_dicts(out.get("products_json"))
+    out["stock_reserved_json"] = _sanitize_optional_json_list_dicts(out.get("stock_reserved_json"))
+    out["purchase_history_json"] = _sanitize_optional_json_list_dicts(out.get("purchase_history_json"))
+    return out
+
+
+def _fallback_lead_response_from_row(row: dict) -> LeadResponse:
+    """Último recurso: card mínimo válido para não derrubar o board."""
+    now = datetime.now(timezone.utc)
+    lid = row.get("id")
+    tid = row.get("tenant_id")
+    wcid = row.get("whatsapp_chat_id")
+    return LeadResponse(
+        id=str(lid) if lid is not None else "unknown",
+        tenant_id=str(tid) if tid is not None else "",
+        created_at=_coerce_datetime_required(row.get("created_at"), fallback=now),
+        updated_at=_coerce_datetime_required(row.get("updated_at"), fallback=now),
+        funnel_id=str(row["funnel_id"]) if row.get("funnel_id") else None,
+        inbox_id=str(row["inbox_id"]) if row.get("inbox_id") else None,
+        client_id=str(row["client_id"]) if row.get("client_id") else None,
+        chat_cycle_closed_at=_coerce_datetime_optional(row.get("chat_cycle_closed_at")),
+        company_name="(dados inválidos — card sanitizado)",
+        contact_name="(dados inválidos — card sanitizado)",
+        phone=None,
+        stage=str(row.get("stage") or ""),
+        priority=None,
+        value=0.0,
+        notes=_sanitize_notes_field(row.get("notes")),
+        whatsapp_chat_id=str(wcid) if wcid is not None else None,
+        products_json=None,
+        stock_reserved_json=None,
+        purchase_history_json=None,
+    )
+
+
+def lead_row_to_response_safe(row: dict) -> LeadResponse:
+    """
+    Monta `LeadResponse` para o Kanban sem propagar ValidationError (dados legados / webhook).
+    Prefere sanitizar e retornar o card; em falha residual, fallback mínimo + log.
+    """
+    lead_id = row.get("id")
+    try:
+        sanitized = _sanitize_lead_row_for_kanban(row)
+        return LeadResponse(**sanitized)
+    except ValidationError as exc:
+        logger.warning(
+            "kanban_lead_response_validation_failed",
+            extra={"lead_id": str(lead_id) if lead_id is not None else None, "errors": exc.errors()},
+        )
+        try:
+            return _fallback_lead_response_from_row(row)
+        except ValidationError:
+            logger.exception(
+                "kanban_lead_response_fallback_failed",
+                extra={"lead_id": str(lead_id) if lead_id is not None else None},
+            )
+            return LeadResponse(
+                id=str(lead_id) if lead_id is not None else "unknown",
+                tenant_id=str(row.get("tenant_id") or ""),
+                created_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc),
+                company_name="(erro ao carregar card)",
+                contact_name="(erro ao carregar card)",
+                stage="",
+                value=0.0,
+            )
+
+
 @router.get("/kanban", response_model=KanbanBoard)
 async def get_kanban_board(
     funnel_id: Optional[str] = Query(
@@ -588,9 +656,9 @@ async def get_kanban_board(
         if col_name not in leads_by_stage and stages_data:
             col_name = stages_data[0]["name"]
         if col_name in leads_by_stage:
-            leads_by_stage[col_name].append(LeadResponse(**row))
+            leads_by_stage[col_name].append(lead_row_to_response_safe(row))
         elif stages_data:
-            leads_by_stage[stages_data[0]["name"]].append(LeadResponse(**row))
+            leads_by_stage[stages_data[0]["name"]].append(lead_row_to_response_safe(row))
 
     columns = []
     for stage_info in stages_data:
@@ -970,8 +1038,8 @@ async def create_lead(
     try:
         data_tenant_id, resolved_fid = _resolve_kanban_scope(supabase, user.id, eff, funnel_id_opt)
         data["tenant_id"] = data_tenant_id
-        next_reserved, applied_delta = _compute_stock_delta(previous_reserved, data.get("products_json") or [])
-        _apply_stock_delta(supabase=supabase, tenant_id=data_tenant_id, delta=applied_delta)
+        next_reserved, applied_delta = compute_stock_delta(previous_reserved, data.get("products_json") or [])
+        apply_stock_delta(supabase=supabase, tenant_id=data_tenant_id, delta=applied_delta)
         rollback_needed = True
         data["stock_reserved_json"] = next_reserved
         if "purchase_history_json" not in data or data["purchase_history_json"] is None:
@@ -1010,7 +1078,7 @@ async def create_lead(
     except Exception:
         if rollback_needed and applied_delta:
             try:
-                _apply_stock_delta(supabase=supabase, tenant_id=data_tenant_id, delta=_invert_delta(applied_delta))
+                apply_stock_delta(supabase=supabase, tenant_id=data_tenant_id, delta=invert_delta(applied_delta))
             except Exception:
                 logger.exception("lead_create_stock_rollback_failed", extra={"tenant_id": data_tenant_id})
         raise
@@ -1018,7 +1086,7 @@ async def create_lead(
     if not response.data:
         if applied_delta:
             try:
-                _apply_stock_delta(supabase=supabase, tenant_id=user.id, delta=_invert_delta(applied_delta))
+                apply_stock_delta(supabase=supabase, tenant_id=user.id, delta=invert_delta(applied_delta))
             except Exception:
                 logger.exception("lead_create_stock_rollback_failed", extra={"tenant_id": str(user.id)})
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Erro ao criar lead.")
@@ -1087,8 +1155,8 @@ async def update_lead(
         if not current_lead.data:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead não encontrado.")
         previous_reserved = current_lead.data.get("stock_reserved_json") or current_lead.data.get("products_json") or []
-        next_reserved, applied_delta = _compute_stock_delta(previous_reserved, update_data.get("products_json") or [])
-        _apply_stock_delta(supabase=supabase, tenant_id=user.id, delta=applied_delta)
+        next_reserved, applied_delta = compute_stock_delta(previous_reserved, update_data.get("products_json") or [])
+        apply_stock_delta(supabase=supabase, tenant_id=user.id, delta=applied_delta)
         rollback_needed = True
         update_data["stock_reserved_json"] = next_reserved
         priced_value, resolved_lines = _price_lead_products_with_promotions(
@@ -1108,7 +1176,7 @@ async def update_lead(
     except Exception:
         if rollback_needed and applied_delta:
             try:
-                _apply_stock_delta(supabase=supabase, tenant_id=user.id, delta=_invert_delta(applied_delta))
+                apply_stock_delta(supabase=supabase, tenant_id=user.id, delta=invert_delta(applied_delta))
             except Exception:
                 logger.exception("lead_update_stock_rollback_failed", extra={"tenant_id": str(user.id), "lead_id": lead_id})
         raise
@@ -1116,7 +1184,7 @@ async def update_lead(
     if not response.data:
         if rollback_needed and applied_delta:
             try:
-                _apply_stock_delta(supabase=supabase, tenant_id=user.id, delta=_invert_delta(applied_delta))
+                apply_stock_delta(supabase=supabase, tenant_id=user.id, delta=invert_delta(applied_delta))
             except Exception:
                 logger.exception("lead_update_stock_rollback_failed", extra={"tenant_id": str(user.id), "lead_id": lead_id})
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead não encontrado.")
@@ -1524,9 +1592,9 @@ async def delete_lead(
         return
 
     previous_reserved = current.data.get("stock_reserved_json") or current.data.get("products_json") or []
-    _, release_delta = _compute_stock_delta(previous_reserved, [])
+    _, release_delta = compute_stock_delta(previous_reserved, [])
     if release_delta:
-        _apply_stock_delta(supabase=supabase, tenant_id=user.id, delta=release_delta)
+        apply_stock_delta(supabase=supabase, tenant_id=user.id, delta=release_delta)
     supabase.table("leads").delete().eq("id", lead_id).eq("tenant_id", user.id).execute()
 
 
