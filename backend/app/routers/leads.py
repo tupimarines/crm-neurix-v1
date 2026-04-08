@@ -633,13 +633,18 @@ async def get_kanban_board(
         return KanbanBoard(columns=[], funnel_id=resolved_funnel_id)
 
     lead_rows_primary = _fetch_leads_for_funnel(supabase, data_tenant_id=data_tenant_id, funnel_id=resolved_funnel_id)
+    # read_only: espelhos usam board_owner = próprio user_id; dados do funil seguem tenant do admin.
+    pipeline_board_owner = str(user.id) if eff.is_read_only else data_tenant_id
     lead_rows = merge_kanban_lead_rows(
         supabase=supabase,
         primary_rows=lead_rows_primary,
         data_tenant_id=data_tenant_id,
         funnel_id=resolved_funnel_id,
+        pipeline_board_owner_user_id=pipeline_board_owner,
     )
-    pos_by_lead = build_pos_by_lead(supabase, funnel_id=resolved_funnel_id, data_tenant_id=data_tenant_id)
+    pos_by_lead = build_pos_by_lead(
+        supabase, funnel_id=resolved_funnel_id, pipeline_board_owner_user_id=pipeline_board_owner
+    )
 
     leads_by_stage: dict[str, list] = {s["name"]: [] for s in stages_data}
 

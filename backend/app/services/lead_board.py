@@ -25,17 +25,22 @@ def merge_kanban_lead_rows(
     primary_rows: list[dict],
     data_tenant_id: str,
     funnel_id: str,
+    pipeline_board_owner_user_id: str,
 ) -> list[dict]:
     """
     Junta leads primários do funil com leads espelhados via lead_pipeline_positions
     (mesmo lead_id no board de outro dono).
+
+    `pipeline_board_owner_user_id` é quem “possui” as posições neste funil: no board do
+    admin costuma ser o tenant dono dos dados (`data_tenant_id`); no board read_only é o
+    `user_id` do próprio read_only (espelho gravado por automação).
     """
     primary_by_id = {str(r["id"]): r for r in primary_rows}
     pos_res = (
         supabase.table("lead_pipeline_positions")
         .select("lead_id, stage_id")
         .eq("funnel_id", funnel_id)
-        .eq("board_owner_user_id", data_tenant_id)
+        .eq("board_owner_user_id", pipeline_board_owner_user_id)
         .execute()
     )
     pos_rows = pos_res.data or []
@@ -99,13 +104,13 @@ def build_pos_by_lead(
     supabase: SupabaseClient,
     *,
     funnel_id: str,
-    data_tenant_id: str,
+    pipeline_board_owner_user_id: str,
 ) -> dict[str, dict]:
     pos_res = (
         supabase.table("lead_pipeline_positions")
         .select("lead_id, stage_id")
         .eq("funnel_id", funnel_id)
-        .eq("board_owner_user_id", data_tenant_id)
+        .eq("board_owner_user_id", pipeline_board_owner_user_id)
         .execute()
     )
     pos_rows = pos_res.data or []
