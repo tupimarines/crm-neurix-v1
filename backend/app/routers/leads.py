@@ -420,6 +420,23 @@ def _resolve_kanban_scope(
         raise
 
 
+def _read_only_board_owner_ids_for_funnel(
+    supabase: SupabaseClient,
+    organization_id: str,
+    funnel_id: str,
+) -> list[str]:
+    """Membros read_only com este funil atribuído (espelhos da automação usam esse board_owner)."""
+    res = (
+        supabase.table("organization_members")
+        .select("user_id")
+        .eq("organization_id", str(organization_id))
+        .eq("role", "read_only")
+        .eq("assigned_funnel_id", str(funnel_id))
+        .execute()
+    )
+    return [str(r["user_id"]) for r in (res.data or []) if r.get("user_id")]
+
+
 def _fetch_leads_for_funnel(
     supabase: SupabaseClient,
     *,
@@ -633,17 +650,26 @@ async def get_kanban_board(
         return KanbanBoard(columns=[], funnel_id=resolved_funnel_id)
 
     lead_rows_primary = _fetch_leads_for_funnel(supabase, data_tenant_id=data_tenant_id, funnel_id=resolved_funnel_id)
-    # read_only: espelhos usam board_owner = próprio user_id; dados do funil seguem tenant do admin.
-    pipeline_board_owner = str(user.id) if eff.is_read_only else data_tenant_id
+    # read_only: espelhos usam board_owner = próprio user_id. Admin no mesmo funil atribuído a read_only
+    # deve usar esses user_ids para ver as mesmas positions/cards que a automação gravou.
+    if eff.is_read_only:
+        pipeline_board_owner_ids = [str(user.id)]
+    elif eff.is_org_admin and eff.org_member_organization_id:
+        mirror_owners = _read_only_board_owner_ids_for_funnel(
+            supabase, eff.org_member_organization_id, resolved_funnel_id
+        )
+        pipeline_board_owner_ids = mirror_owners if mirror_owners else [data_tenant_id]
+    else:
+        pipeline_board_owner_ids = [data_tenant_id]
     lead_rows = merge_kanban_lead_rows(
         supabase=supabase,
         primary_rows=lead_rows_primary,
         data_tenant_id=data_tenant_id,
         funnel_id=resolved_funnel_id,
-        pipeline_board_owner_user_id=pipeline_board_owner,
+        pipeline_board_owner_user_ids=pipeline_board_owner_ids,
     )
     pos_by_lead = build_pos_by_lead(
-        supabase, funnel_id=resolved_funnel_id, pipeline_board_owner_user_id=pipeline_board_owner
+        supabase, funnel_id=resolved_funnel_id, pipeline_board_owner_user_ids=pipeline_board_owner_ids
     )
 
     leads_by_stage: dict[str, list] = {s["name"]: [] for s in stages_data}

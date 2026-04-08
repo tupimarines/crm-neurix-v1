@@ -9,7 +9,8 @@ from fastapi.testclient import TestClient
 from app.authz import compute_effective_role, get_effective_role
 from app.dependencies import get_current_user, get_supabase
 from app.main import app
-from app.routers.leads import _resolve_kanban_scope, lead_row_to_response_safe
+from app.routers.leads import _read_only_board_owner_ids_for_funnel, _resolve_kanban_scope, lead_row_to_response_safe
+from app.services.lead_board import merge_kanban_lead_rows
 
 
 class FakeUser:
@@ -106,6 +107,44 @@ class TestLeadRowToResponseSafe(unittest.TestCase):
         self.assertTrue(lr.company_name.startswith("("))
         self.assertTrue(lr.contact_name.startswith("("))
         self.assertEqual(lr.value, 0.0)
+
+
+class TestReadOnlyBoardOwnerIds(unittest.TestCase):
+    def test_lists_user_ids_for_assigned_funnel(self):
+        sb = MagicMock()
+        q = MagicMock()
+        q.eq.return_value = q
+        q.execute.return_value = _FakeExec(
+            [{"user_id": "ro-1"}, {"user_id": "ro-2"}],
+        )
+        sb.table.return_value.select.return_value = q
+        ids = _read_only_board_owner_ids_for_funnel(sb, "org-x", "funnel-log")
+        self.assertEqual(ids, ["ro-1", "ro-2"])
+        sb.table.assert_called_with("organization_members")
+
+
+class TestMergeKanbanLeadRowsMultiOwner(unittest.TestCase):
+    def test_in_query_when_multiple_owners(self):
+        pos_chain = MagicMock()
+        pos_chain.select.return_value = pos_chain
+        pos_chain.eq.return_value = pos_chain
+        pos_chain.in_.return_value.execute.return_value = _FakeExec([])
+        sb = MagicMock()
+
+        def tbl(name):
+            if name == "lead_pipeline_positions":
+                return pos_chain
+            return MagicMock()
+
+        sb.table.side_effect = tbl
+        merge_kanban_lead_rows(
+            supabase=sb,
+            primary_rows=[{"id": "p1", "tenant_id": "t1", "funnel_id": "f1"}],
+            data_tenant_id="t1",
+            funnel_id="f1",
+            pipeline_board_owner_user_ids=["u1", "u2"],
+        )
+        pos_chain.in_.assert_called_once_with("board_owner_user_id", ["u1", "u2"])
 
 
 class TestKanbanBoardHttpResilience(unittest.TestCase):

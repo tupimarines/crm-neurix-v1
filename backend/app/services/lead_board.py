@@ -25,25 +25,39 @@ def merge_kanban_lead_rows(
     primary_rows: list[dict],
     data_tenant_id: str,
     funnel_id: str,
-    pipeline_board_owner_user_id: str,
+    pipeline_board_owner_user_ids: list[str],
 ) -> list[dict]:
     """
     Junta leads primários do funil com leads espelhados via lead_pipeline_positions
     (mesmo lead_id no board de outro dono).
 
-    `pipeline_board_owner_user_id` é quem “possui” as posições neste funil: no board do
-    admin costuma ser o tenant dono dos dados (`data_tenant_id`); no board read_only é o
-    `user_id` do próprio read_only (espelho gravado por automação).
+    `pipeline_board_owner_user_ids` identifica de quem são as positions neste funil:
+    no board read_only é o próprio usuário; no funil principal do tenant costuma ser
+    `[data_tenant_id]`; quando um admin da org abre um funil atribuído a read_only,
+    deve ser os user_ids desses membros para espelhar a mesma visão da automação.
     """
     primary_by_id = {str(r["id"]): r for r in primary_rows}
-    pos_res = (
-        supabase.table("lead_pipeline_positions")
-        .select("lead_id, stage_id")
-        .eq("funnel_id", funnel_id)
-        .eq("board_owner_user_id", pipeline_board_owner_user_id)
-        .execute()
-    )
-    pos_rows = pos_res.data or []
+    owners = [str(x).strip() for x in pipeline_board_owner_user_ids if str(x).strip()]
+    if not owners:
+        pos_rows = []
+    elif len(owners) == 1:
+        pos_res = (
+            supabase.table("lead_pipeline_positions")
+            .select("lead_id, stage_id")
+            .eq("funnel_id", funnel_id)
+            .eq("board_owner_user_id", owners[0])
+            .execute()
+        )
+        pos_rows = pos_res.data or []
+    else:
+        pos_res = (
+            supabase.table("lead_pipeline_positions")
+            .select("lead_id, stage_id")
+            .eq("funnel_id", funnel_id)
+            .in_("board_owner_user_id", owners)
+            .execute()
+        )
+        pos_rows = pos_res.data or []
     pos_by_lead = {str(p["lead_id"]): p for p in pos_rows}
 
     extra_ids: list[str] = []
@@ -104,17 +118,36 @@ def build_pos_by_lead(
     supabase: SupabaseClient,
     *,
     funnel_id: str,
-    pipeline_board_owner_user_id: str,
+    pipeline_board_owner_user_ids: list[str],
 ) -> dict[str, dict]:
-    pos_res = (
-        supabase.table("lead_pipeline_positions")
-        .select("lead_id, stage_id")
-        .eq("funnel_id", funnel_id)
-        .eq("board_owner_user_id", pipeline_board_owner_user_id)
-        .execute()
-    )
-    pos_rows = pos_res.data or []
-    return {str(p["lead_id"]): p for p in pos_rows}
+    owners = [str(x).strip() for x in pipeline_board_owner_user_ids if str(x).strip()]
+    if not owners:
+        pos_rows = []
+    elif len(owners) == 1:
+        pos_res = (
+            supabase.table("lead_pipeline_positions")
+            .select("lead_id, stage_id")
+            .eq("funnel_id", funnel_id)
+            .eq("board_owner_user_id", owners[0])
+            .execute()
+        )
+        pos_rows = pos_res.data or []
+    else:
+        pos_res = (
+            supabase.table("lead_pipeline_positions")
+            .select("lead_id, stage_id")
+            .eq("funnel_id", funnel_id)
+            .in_("board_owner_user_id", owners)
+            .execute()
+        )
+        pos_rows = pos_res.data or []
+    # Mesmo lead em mais de um dono: mantém a primeira linha (ordem estável do banco).
+    out: dict[str, dict] = {}
+    for p in pos_rows:
+        lid = str(p["lead_id"])
+        if lid not in out:
+            out[lid] = p
+    return out
 
 
 def upsert_pipeline_position(
