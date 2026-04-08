@@ -203,6 +203,39 @@ const PRIORITY_MAP: Record<string, { label: string; color: string }> = {
     baixa: { label: "Baixa", color: "yellow" },
 };
 
+/** Funis exibíveis no modal de automação conforme o membro destino (admin vs read_only). */
+function funnelsForAutomationTarget(
+    member: OrganizationMemberDTO | undefined,
+    allFunnels: OrganizationFunnelItem[],
+    /** Ao reabrir automação salva: inclui o funil persistido nas opções se ainda existir na lista da org. */
+    persistedTargetFunnelId?: string | null,
+): OrganizationFunnelItem[] {
+    let list: OrganizationFunnelItem[];
+    if (!member || !member.user_id?.trim()) {
+        list = [];
+    } else if (member.role === "read_only") {
+        if (member.assigned_funnel_id) {
+            list = allFunnels.filter((f) => f.id === member.assigned_funnel_id);
+        } else {
+            console.warn(
+                "[kanban] Automação: membro read_only sem assigned_funnel_id; nenhum funil listado.",
+            );
+            list = [];
+        }
+    } else {
+        list = allFunnels.filter((f) => f.tenant_id === member.user_id);
+    }
+
+    const pid = persistedTargetFunnelId?.trim();
+    if (pid && !list.some((f) => f.id === pid)) {
+        const extra = allFunnels.find((f) => f.id === pid);
+        if (extra) {
+            return [...list, extra];
+        }
+    }
+    return list;
+}
+
 function KanbanContent() {
     const searchParams = useSearchParams();
     const router = useRouter();
@@ -819,7 +852,8 @@ function KanbanContent() {
         setAutomationTargetStages([]);
         if (!uid || !automationOrgId) return;
         const token = localStorage.getItem("access_token") || undefined;
-        const funnelsForUser = automationOrgFunnels.filter((f) => f.tenant_id === uid);
+        const member = automationMembers.find((m) => m.user_id === uid);
+        const funnelsForUser = funnelsForAutomationTarget(member, automationOrgFunnels);
         if (funnelsForUser.length === 1) {
             const fid = funnelsForUser[0].id;
             setAutomationTargetFunnelId(fid);
@@ -1831,7 +1865,11 @@ function KanbanContent() {
                                         disabled={!automationTargetUserId}
                                     >
                                         <option value="">Selecione…</option>
-                                        {automationOrgFunnels.filter((f) => f.tenant_id === automationTargetUserId).map((f) => (
+                                        {funnelsForAutomationTarget(
+                                            automationMembers.find((m) => m.user_id === automationTargetUserId),
+                                            automationOrgFunnels,
+                                            automationTargetFunnelId,
+                                        ).map((f) => (
                                             <option key={f.id} value={f.id}>
                                                 {f.name}
                                             </option>
