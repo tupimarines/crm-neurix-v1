@@ -38,10 +38,14 @@ from app.services.lead_stock import (
 )
 from app.services.lead_phone_sync import fetch_display_phone_for_crm_client
 from app.services.lead_board import (
+    DESPACHADO_CANONICAL_CASEFOLD,
+    DESPACHADO_TRUNCATED_PREFIX_MIN_LEN,
     apply_destination_mirror,
     build_pos_by_lead,
     fetch_stage_automation_for_source_stage,
+    find_stage_row_by_casefold_name,
     insert_lead_activity,
+    is_despachado_destination_name,
     merge_kanban_lead_rows,
     resolve_stage_name_for_board,
     upsert_pipeline_position,
@@ -338,6 +342,93 @@ def _default_funnel_for_organization(supabase: SupabaseClient, org_id: str) -> t
     rows.sort(key=lambda r: str(r.get("created_at") or ""))
     chosen = rows[0]
     return str(chosen["tenant_id"]), str(chosen["id"])
+
+
+def _despachado_finalizado_sync_plan(
+    supabase: SupabaseClient,
+    *,
+    data_tenant_id: str,
+) -> tuple[str, list[dict], dict]:
+    """
+    Funil principal = mesmo critério do Kanban default (`_default_funnel_id_for_tenant`:
+    preferência nome \"Default\", senão o funil mais antigo).
+    """
+    main_funnel_id = _default_funnel_id_for_tenant(supabase, data_tenant_id)
+    main_stages = _fetch_pipeline_stages_for_funnel(
+        supabase, data_tenant_id=data_tenant_id, funnel_id=main_funnel_id
+    )
+    fin = find_stage_row_by_casefold_name(main_stages, "finalizado")
+    if not fin:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                'O funil principal não possui uma etapa nomeada "Finalizado". '
+                "Crie uma etapa com esse nome no funil principal (comparação sem diferenciar "
+                "maiúsculas e ignorando espaços nas pontas) antes de mover cards para Despachado."
+            ),
+        )
+    return main_funnel_id, main_stages, fin
+
+
+def _pipeline_stage_id_for_lead_stage_text(stages: list[dict], stage_text: str) -> str | None:
+    key = str(stage_text or "").strip().lower()
+    if not key:
+        return None
+    for s in stages:
+        if str(s.get("name", "")).strip().lower() == key:
+            return str(s["id"])
+    return None
+
+
+def _sync_primary_lead_to_finalizado_after_despachado(
+    supabase: SupabaseClient,
+    *,
+    lead_id: str,
+    lead_row: dict,
+    data_tenant_id: str,
+    acting_user_id: str,
+    main_funnel_id: str,
+    main_stages: list[dict],
+    finalized_row: dict,
+) -> None:
+    """Atualiza o lead primário no funil principal para a etapa Finalizado (Kanban admin)."""
+    if str(lead_row.get("tenant_id") or "") != str(data_tenant_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Sincronização Despachado→Finalizado não aplicável a este lead.",
+        )
+    canonical_final = str(finalized_row["name"])
+    final_id = str(finalized_row["id"])
+    from_sid = _pipeline_stage_id_for_lead_stage_text(main_stages, str(lead_row.get("stage") or ""))
+
+    upd = (
+        supabase.table("leads")
+        .update({"stage": canonical_final})
+        .eq("id", lead_id)
+        .eq("tenant_id", data_tenant_id)
+        .execute()
+    )
+    if not upd.data:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead não encontrado.")
+    upsert_pipeline_position(
+        supabase,
+        lead_id=lead_id,
+        funnel_id=main_funnel_id,
+        stage_id=final_id,
+        board_owner_user_id=data_tenant_id,
+    )
+    insert_lead_activity(
+        supabase,
+        lead_id=lead_id,
+        event_type="stage_move",
+        actor_user_id=acting_user_id,
+        from_stage_id=from_sid,
+        to_stage_id=final_id,
+        metadata={
+            "funnel_id": main_funnel_id,
+            "despachado_sync_to_finalizado": True,
+        },
+    )
 
 
 def _resolve_kanban_scope(
@@ -1542,10 +1633,29 @@ async def move_lead_stage(
             None,
         )
         if not to_stage_row:
+            # UI pode truncar o rótulo; ainda assim deve casar com a etapa "Despachado" no funil.
+            pt = payload.stage.strip().casefold()
+            full_cf = DESPACHADO_CANONICAL_CASEFOLD
+            if (
+                len(pt) >= DESPACHADO_TRUNCATED_PREFIX_MIN_LEN
+                and len(pt) < len(full_cf)
+                and full_cf.startswith(pt)
+            ):
+                to_stage_row = next(
+                    (s for s in stages if str(s.get("name", "")).strip().casefold() == full_cf),
+                    None,
+                )
+        if not to_stage_row:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Etapa inválida para este funil.")
         canonical_stage = str(to_stage_row["name"])
 
     to_stage_id = str(to_stage_row["id"])
+
+    despachado_finalizado_plan: tuple[str, list[dict], dict] | None = None
+    if is_despachado_destination_name(canonical_stage):
+        despachado_finalizado_plan = _despachado_finalizado_sync_plan(
+            supabase, data_tenant_id=data_tenant_id
+        )
 
     lead_res = supabase.table("leads").select("*").eq("id", lead_id).limit(1).execute()
     lead_rows = lead_res.data or []
@@ -1647,6 +1757,28 @@ async def move_lead_stage(
     )
     if auto:
         apply_destination_mirror(supabase, lead_id=lead_id, automation=auto)
+
+    if despachado_finalizado_plan:
+        main_funnel_id, main_stages, finalized_row = despachado_finalizado_plan
+        _sync_primary_lead_to_finalizado_after_despachado(
+            supabase,
+            lead_id=lead_id,
+            lead_row=lead_row,
+            data_tenant_id=data_tenant_id,
+            acting_user_id=str(user.id),
+            main_funnel_id=main_funnel_id,
+            main_stages=main_stages,
+            finalized_row=finalized_row,
+        )
+        if lead_row.get("whatsapp_chat_id"):
+            _spawn_fresh_lead_after_finalized(
+                supabase=supabase,
+                original_lead_id=lead_id,
+                lead_snapshot=lead_row,
+                data_tenant_id=data_tenant_id,
+                resolved_funnel_id=main_funnel_id,
+                stages=main_stages,
+            )
 
     if (
         is_primary

@@ -9,6 +9,40 @@ from typing import Any, Optional
 from supabase import Client as SupabaseClient
 
 
+DESPACHADO_CANONICAL_CASEFOLD = "despachado"
+# Prefixo mínimo para aceitar título truncado na UI (ex.: "Despacha…").
+DESPACHADO_TRUNCATED_PREFIX_MIN_LEN = 8
+
+
+def is_despachado_destination_name(stage_name: str) -> bool:
+    """
+    True se a etapa de destino é "Despachado" (trim + case-insensitive) ou um
+    prefixo truncado de "Despachado" (mesmo nome canônico no banco, UI cortada).
+    """
+    s = str(stage_name or "").strip().casefold()
+    if not s:
+        return False
+    full = DESPACHADO_CANONICAL_CASEFOLD
+    if s == full:
+        return True
+    return (
+        len(s) >= DESPACHADO_TRUNCATED_PREFIX_MIN_LEN
+        and len(s) < len(full)
+        and full.startswith(s)
+    )
+
+
+def find_stage_row_by_casefold_name(stages_data: list[dict], casefold_name: str) -> dict | None:
+    """Primeira etapa cujo nome, após trim+casefold, coincide com casefold_name."""
+    want = str(casefold_name or "").strip().casefold()
+    if not want:
+        return None
+    for s in stages_data:
+        if str(s.get("name", "")).strip().casefold() == want:
+            return s
+    return None
+
+
 def match_stage_column_name(stage_val: str, stages_data: list[dict]) -> str | None:
     if not stages_data:
         return None
