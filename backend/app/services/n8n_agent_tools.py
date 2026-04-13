@@ -196,14 +196,57 @@ def _phone_tier_label(rank: int) -> str:
     return "none"
 
 
+def _normalize_client_person_type(value: Any) -> str | None:
+    normalized = str(value or "").strip().upper()
+    return normalized if normalized in {"PF", "PJ"} else None
+
+
+def _person_type_from_lead_stage(stage_name: Any) -> str | None:
+    normalized = str(stage_name or "").strip().lower()
+    if normalized == "b2b":
+        return "PJ"
+    if normalized == "b2c":
+        return "PF"
+    return None
+
+
+def _prefer_phone_match_candidate_from_context(
+    candidates: list[dict[str, Any]],
+    *,
+    lead_row: dict[str, Any] | None,
+) -> tuple[dict[str, Any], str] | None:
+    if not candidates or not lead_row:
+        return None
+
+    stage_person_type = _person_type_from_lead_stage(lead_row.get("stage"))
+    if stage_person_type:
+        stage_matches = [
+            row
+            for row in candidates
+            if _normalize_client_person_type(row.get("person_type")) == stage_person_type
+        ]
+        if len(stage_matches) == 1:
+            return stage_matches[0], f"lead_stage:{stage_person_type}"
+
+    linked_client_id = str(lead_row.get("client_id") or "").strip()
+    if not linked_client_id:
+        return None
+    for row in candidates:
+        if str(row.get("id") or "").strip() == linked_client_id:
+            return row, "lead_client_id"
+    return None
+
+
 def find_crm_client_row_by_phone(
     supabase: SupabaseClient,
     *,
     tenant_id: str,
     phone_digits: str,
+    lead_row: dict[str, Any] | None = None,
 ) -> Optional[dict[str, Any]]:
     """
     Resolve um ``crm_clients`` por telefone: maior score de match (strict > last11 > last10),
+    depois contexto do lead atual (estágio B2B/B2C ou ``lead.client_id``),
     depois pedido não cancelado mais recente (``client_id`` + fallback ``lead_id``),
     depois ``crm_clients.created_at`` descendente.
     """
@@ -242,6 +285,24 @@ def find_crm_client_row_by_phone(
         )
         return chosen
 
+    contextual_choice = _prefer_phone_match_candidate_from_context(
+        candidates, lead_row=lead_row
+    )
+    if contextual_choice is not None:
+        chosen, reason = contextual_choice
+        logger.debug(
+            "n8n client-by-phone: client_id=%s tenant_id=%s match_tier=%s "
+            "tie_break=%s lead_stage=%s lead_client_id=%s candidates=%s",
+            chosen.get("id"),
+            tenant_id,
+            _phone_tier_label(max_rank),
+            reason,
+            lead_row.get("stage") if lead_row else None,
+            lead_row.get("client_id") if lead_row else None,
+            len(candidates),
+        )
+        return chosen
+
     def tie_break_key(row: dict[str, Any]) -> tuple[datetime, datetime]:
         order = fetch_last_order_for_client(
             supabase, tenant_id=tenant_id, client_id=str(row["id"])
@@ -276,13 +337,27 @@ def resolve_crm_client_for_n8n_phone(
     Caminho único para ``client-by-phone`` e ``last-order-by-phone``: tenant, dígitos
     e linha ``crm_clients`` via ``find_crm_client_row_by_phone`` (mesmo score e desempate).
     """
-    tid = resolve_tenant_id_for_n8n(supabase, instance_token.strip())
+    inbox = resolve_inbox_row_for_n8n(supabase, instance_token.strip())
+    if not inbox:
+        return None, "", None
+    tid = str(inbox.get("tenant_id") or "").strip()
     if not tid:
         return None, "", None
     digits = phone_from_whatsapp_jid_or_raw(phone)
     if len(digits) < MIN_PHONE_LOOKUP_DIGITS:
         return tid, digits, None
-    row = find_crm_client_row_by_phone(supabase, tenant_id=tid, phone_digits=digits)
+    lead_row = find_lead_by_whatsapp_chat(
+        supabase,
+        inbox_id=str(inbox.get("id") or "").strip(),
+        tenant_id=tid,
+        whatsapp_chat_id=normalize_whatsapp_chat_id(phone),
+    )
+    row = find_crm_client_row_by_phone(
+        supabase,
+        tenant_id=tid,
+        phone_digits=digits,
+        lead_row=lead_row,
+    )
     return tid, digits, row
 
 
