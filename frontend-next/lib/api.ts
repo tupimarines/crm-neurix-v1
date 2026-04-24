@@ -282,6 +282,20 @@ export type OrderDTO = {
 export const listOrders = (limit = 20, token?: string) =>
     apiGet<OrderDTO[]>(`/api/orders/?limit=${limit}`, token);
 
+export type DashboardKpisDTO = {
+    conversion_rate: number;
+    conversion_change: number;
+    monthly_revenue: number;
+    revenue_change: number;
+    new_contacts: number;
+    new_contacts_change?: number;
+    message_volume: number;
+    message_change: number;
+};
+
+export const getDashboardKpis = (token?: string) =>
+    apiGet<DashboardKpisDTO>("/api/dashboard/kpis", token);
+
 export const getOrder = (orderId: string, token?: string) =>
     apiGet<OrderDTO>(`/api/orders/${encodeURIComponent(orderId)}`, token);
 

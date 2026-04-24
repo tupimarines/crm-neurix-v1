@@ -12,6 +12,8 @@ import {
     getOrder,
     getProduct,
     getAuthMe,
+    getDashboardKpis,
+    type DashboardKpisDTO,
 } from "@/lib/api";
 import { tenantNeedsOrganization } from "@/lib/org-context";
 import NewOrderModal from "@/components/NewOrderModal";
@@ -300,10 +302,13 @@ export default function DashboardPage() {
     const [recentOrders, setRecentOrders] = useState<OrderDetail[]>([]);
     const [ordersLoading, setOrdersLoading] = useState(true);
     const [showOrgHint, setShowOrgHint] = useState(false);
+    const [kpis, setKpis] = useState<DashboardKpisDTO | null>(null);
+    const [kpisLoading, setKpisLoading] = useState(true);
 
     useEffect(() => {
         setSupabaseSession();
         loadRecentOrders();
+        loadKpis();
     }, []);
 
     useEffect(() => {
@@ -325,6 +330,21 @@ export default function DashboardPage() {
             console.error("Error loading orders:", err);
         } finally {
             setOrdersLoading(false);
+        }
+    }
+
+    async function loadKpis() {
+        setKpisLoading(true);
+        try {
+            const token = localStorage.getItem("access_token") || undefined;
+            if (!token) return;
+            const data = await getDashboardKpis(token);
+            setKpis(data);
+        } catch (err) {
+            console.error("Error loading KPIs:", err);
+            setKpis(null);
+        } finally {
+            setKpisLoading(false);
         }
     }
 
@@ -468,10 +488,46 @@ export default function DashboardPage() {
     const orderResults = searchResults.filter(r => r.type === "order");
     const productResults = searchResults.filter(r => r.type === "product");
 
+    const fmtPctChange = (v: number) => {
+        if (v > 0) return { text: `+${v.toFixed(1)}%`, up: true as const };
+        if (v < 0) return { text: `${v.toFixed(1)}%`, up: false as const };
+        return { text: "0.0%", up: false as const };
+    };
+
+    const fmt = (v: number) => new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(v);
+
+    const nc = kpis?.new_contacts ?? kpis?.message_volume ?? 0;
+    const conv = kpis?.conversion_rate ?? 0;
+    const rev = kpis?.monthly_revenue ?? 0;
+    const convCh = fmtPctChange(kpis?.conversion_change ?? 0);
+    const revCh = fmtPctChange(kpis?.revenue_change ?? 0);
+    const ncCh = fmtPctChange(kpis?.new_contacts_change ?? kpis?.message_change ?? 0);
+
     const stats = [
-        { icon: "insights", label: "Taxa de Conversão", value: "24.8%", change: "+12.5%", up: true, bar: "24.8%" },
-        { icon: "attach_money", label: "Faturamento Mensal", value: "R$ 48.250", change: "+8.2%", up: true, bar: "75%" },
-        { icon: "group_add", label: "Novos Contatos", value: "1,204", change: "0.0%", up: false, bar: "45%" },
+        {
+            icon: "insights",
+            label: "Taxa de Conversão",
+            value: kpisLoading ? "…" : `${conv.toFixed(1)}%`,
+            change: convCh.text,
+            up: convCh.up,
+            bar: `${Math.min(100, conv)}%`,
+        },
+        {
+            icon: "attach_money",
+            label: "Faturamento Mensal",
+            value: kpisLoading ? "…" : fmt(rev),
+            change: revCh.text,
+            up: revCh.up,
+            bar: `${Math.min(100, rev > 0 ? (rev / 100000) * 100 : 0)}%`,
+        },
+        {
+            icon: "group_add",
+            label: "Novos Contatos",
+            value: kpisLoading ? "…" : nc.toLocaleString("pt-BR"),
+            change: ncCh.text,
+            up: ncCh.up,
+            bar: `${Math.min(100, nc > 0 ? (nc / 100) * 100 : 0)}%`,
+        },
     ];
 
     // Helpers for rendering orders
@@ -495,8 +551,6 @@ export default function DashboardPage() {
         ];
         return { initials, ...colors[hash % colors.length] };
     };
-
-    const fmt = (v: number) => new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(v);
 
     return (
         <div className="p-6 lg:p-10 max-w-7xl mx-auto space-y-8">

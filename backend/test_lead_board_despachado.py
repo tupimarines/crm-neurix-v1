@@ -122,7 +122,6 @@ class TestMoveLeadStageDespachadoSync(unittest.TestCase):
             [],
         )
 
-    @patch("app.routers.leads._spawn_fresh_lead_after_finalized")
     @patch("app.routers.leads.apply_destination_mirror")
     @patch("app.routers.leads.fetch_stage_automation_for_source_stage", return_value=None)
     @patch("app.routers.leads.insert_lead_activity")
@@ -142,7 +141,6 @@ class TestMoveLeadStageDespachadoSync(unittest.TestCase):
         mock_act,
         mock_auto,
         mock_mirror,
-        mock_spawn,
     ):
         lead_row = {
             "id": "lead-1",
@@ -186,7 +184,6 @@ class TestMoveLeadStageDespachadoSync(unittest.TestCase):
         )
         self.assertEqual(r.status_code, 200, r.text)
         self.assertEqual(r.json()["stage"], "FINALIZADO")
-        mock_spawn.assert_not_called()
         funnel_ids = [c.kwargs.get("funnel_id") for c in mock_upsert.call_args_list]
         self.assertIn("funnel-log", funnel_ids)
         self.assertIn("funnel-main", funnel_ids)

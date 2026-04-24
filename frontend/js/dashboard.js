@@ -20,7 +20,9 @@ const Dashboard = {
 
             this._updateKPI('kpi-conversion', `${data.conversion_rate}%`, data.conversion_change);
             this._updateKPI('kpi-revenue', App.formatCurrency(data.monthly_revenue), data.revenue_change);
-            this._updateKPI('kpi-messages', data.message_volume.toLocaleString('pt-BR'), data.message_change);
+            const contacts = typeof data.new_contacts === 'number' ? data.new_contacts : data.message_volume;
+            const contactsCh = typeof data.new_contacts_change === 'number' ? data.new_contacts_change : data.message_change;
+            this._updateKPI('kpi-messages', contacts.toLocaleString('pt-BR'), contactsCh);
         } catch (err) {
             console.error('KPI load error:', err);
         }

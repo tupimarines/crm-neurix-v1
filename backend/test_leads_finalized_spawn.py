@@ -1,8 +1,7 @@
 """
-Sprint S4 — fluxo FINALIZADO: spawn de lead novo + garantias AC3/AC4/AC6.
+Spawn após FINALIZADO (inbound WhatsApp) + PATCH /api/leads/{id}/stage sem spawn automático.
 
-Testa `_spawn_fresh_lead_after_finalized` com mocks e PATCH /api/leads/{id}/stage
-com fila de respostas Supabase (sem DB real).
+Testa `_spawn_fresh_lead_after_finalized` com mocks e PATCH com fila Supabase fake.
 """
 
 from __future__ import annotations
@@ -279,7 +278,7 @@ class _FakeUser:
 
 
 class TestMoveLeadStageFinalizedHttp(unittest.TestCase):
-    """PATCH stage com overrides; AC4 (não chama spawn) e AC6 (200 após falha no insert)."""
+    """PATCH stage: mirror não chama spawn; primário em finalizado não clona lead no board."""
 
     def tearDown(self):
         app.dependency_overrides.clear()
@@ -291,33 +290,27 @@ class TestMoveLeadStageFinalizedHttp(unittest.TestCase):
             [],
         )
 
-    @patch("app.services.lead_finalized_spawn.upsert_pipeline_position")
     @patch("app.routers.leads.upsert_pipeline_position")
     @patch("app.routers.leads.apply_destination_mirror")
     @patch("app.routers.leads.fetch_stage_automation_for_source_stage", return_value=None)
     @patch("app.routers.leads.insert_lead_activity")
     @patch("app.routers.leads._fetch_pipeline_stages_for_funnel", return_value=_STAGES)
     @patch("app.routers.leads._resolve_kanban_scope", return_value=("tenant-1", "funnel-1"))
-    @patch("app.services.lead_finalized_spawn.get_first_stage_slug_for_funnel", return_value="Novo")
-    def test_patch_finalizado_primary_spawns_ac3(
+    def test_patch_finalizado_primary_keeps_whatsapp_no_spawn(
         self,
-        _gf,
         _resolve,
         _fetch_st,
         _act,
         _auto,
         _mirror,
         _upsert_move,
-        _spawn_upsert,
     ):
         lead_row = _lead_row_base()
-        refreshed = {**lead_row, "stage": "FINALIZADO", "whatsapp_chat_id": None}
+        refreshed = {**lead_row, "stage": "FINALIZADO"}
         queue = [
             _FakeExec([lead_row]),
             _FakeExec([]),
             _FakeExec([{**lead_row, "stage": "FINALIZADO"}]),
-            _FakeExec([refreshed]),
-            _FakeExec([{"id": "lead-new", **{k: refreshed[k] for k in ("tenant_id", "funnel_id")}}]),
             _FakeExec([refreshed]),
         ]
         sb = _make_queue_supabase(queue)
@@ -335,11 +328,9 @@ class TestMoveLeadStageFinalizedHttp(unittest.TestCase):
         body = r.json()
         self.assertEqual(body["id"], "lead-old")
         self.assertEqual(body["stage"], "FINALIZADO")
-        self.assertIsNone(body.get("whatsapp_chat_id"))
+        self.assertEqual(body.get("whatsapp_chat_id"), lead_row["whatsapp_chat_id"])
         self.assertEqual(_upsert_move.call_count, 1)
-        _spawn_upsert.assert_called_once()
 
-    @patch("app.routers.leads._spawn_fresh_lead_after_finalized")
     @patch("app.routers.leads.upsert_pipeline_position")
     @patch("app.routers.leads.apply_destination_mirror")
     @patch("app.routers.leads.fetch_stage_automation_for_source_stage", return_value=None)
@@ -354,7 +345,6 @@ class TestMoveLeadStageFinalizedHttp(unittest.TestCase):
         _auto,
         _mirror,
         _upsert_move,
-        mock_spawn,
     ):
         lead_row = _lead_row_base()
         lead_row["funnel_id"] = "outro-funil"
@@ -378,7 +368,6 @@ class TestMoveLeadStageFinalizedHttp(unittest.TestCase):
             json={"stage": "finalizado"},
         )
         self.assertEqual(r.status_code, 200, r.text)
-        mock_spawn.assert_not_called()
 
     @patch("app.routers.leads.upsert_pipeline_position")
     @patch("app.routers.leads.apply_destination_mirror")
@@ -386,10 +375,8 @@ class TestMoveLeadStageFinalizedHttp(unittest.TestCase):
     @patch("app.routers.leads.insert_lead_activity")
     @patch("app.routers.leads._fetch_pipeline_stages_for_funnel", return_value=_STAGES)
     @patch("app.routers.leads._resolve_kanban_scope", return_value=("tenant-1", "funnel-1"))
-    @patch("app.services.lead_finalized_spawn.get_first_stage_slug_for_funnel", return_value="Novo")
-    def test_patch_finalizado_insert_fails_still_200_ac6(
+    def test_patch_finalizado_primary_returns_refreshed(
         self,
-        _gf,
         _resolve,
         _fetch_st,
         _act,
@@ -398,13 +385,11 @@ class TestMoveLeadStageFinalizedHttp(unittest.TestCase):
         _upsert_move,
     ):
         lead_row = _lead_row_base()
-        refreshed = {**lead_row, "stage": "FINALIZADO", "whatsapp_chat_id": None}
+        refreshed = {**lead_row, "stage": "FINALIZADO"}
         queue = [
             _FakeExec([lead_row]),
             _FakeExec([]),
             _FakeExec([{**lead_row, "stage": "FINALIZADO"}]),
-            _FakeExec([refreshed]),
-            Exception("unique_violation"),
             _FakeExec([refreshed]),
         ]
         sb = _make_queue_supabase(queue)
@@ -419,7 +404,7 @@ class TestMoveLeadStageFinalizedHttp(unittest.TestCase):
             json={"stage": "finalizado"},
         )
         self.assertEqual(r.status_code, 200, r.text)
-        self.assertIsNone(r.json().get("whatsapp_chat_id"))
+        self.assertEqual(r.json().get("whatsapp_chat_id"), lead_row["whatsapp_chat_id"])
 
 
 if __name__ == "__main__":

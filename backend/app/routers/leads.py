@@ -53,7 +53,6 @@ from app.services.lead_board import (
 from app.services.lead_finalized_spawn import (
     fetch_pipeline_stages_for_funnel as _fetch_pipeline_stages_for_funnel,
     is_chat_mirror_closed_for_lead,
-    spawn_fresh_lead_after_finalized as _spawn_fresh_lead_after_finalized,
 )
 from app.org_scope import assert_funnel_assignable_to_org
 
@@ -1769,29 +1768,6 @@ async def move_lead_stage(
             main_funnel_id=main_funnel_id,
             main_stages=main_stages,
             finalized_row=finalized_row,
-        )
-        if lead_row.get("whatsapp_chat_id"):
-            _spawn_fresh_lead_after_finalized(
-                supabase=supabase,
-                original_lead_id=lead_id,
-                lead_snapshot=lead_row,
-                data_tenant_id=data_tenant_id,
-                resolved_funnel_id=main_funnel_id,
-                stages=main_stages,
-            )
-
-    if (
-        is_primary
-        and canonical_stage.strip().lower() == "finalizado"
-        and lead_row.get("whatsapp_chat_id")
-    ):
-        _spawn_fresh_lead_after_finalized(
-            supabase=supabase,
-            original_lead_id=lead_id,
-            lead_snapshot=lead_row,
-            data_tenant_id=data_tenant_id,
-            resolved_funnel_id=resolved_funnel_id,
-            stages=stages,
         )
 
     refreshed = (

@@ -1,9 +1,14 @@
 """
 Dashboard Router — KPIs and Aggregated Metrics.
-Maps to the Dashboard page (Taxa de Conversão, Faturamento, Volume de Mensagens).
+KPIs usam o funil "Funil-1" (nome normalizado funil-1) quando existir; senão o funil padrão do tenant.
 """
 
-from fastapi import APIRouter, Depends, Query, HTTPException
+from __future__ import annotations
+
+from calendar import monthrange
+from datetime import datetime, timezone
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from supabase import Client as SupabaseClient
 
@@ -19,6 +24,8 @@ class KPIResponse(BaseModel):
     conversion_change: float
     monthly_revenue: float
     revenue_change: float
+    new_contacts: int
+    new_contacts_change: float = 0.0
     message_volume: int
     message_change: float
 
@@ -28,60 +35,136 @@ class DashboardResponse(BaseModel):
     recent_orders: list[dict]
 
 
+def _normalize_funnel_name_key(name: str) -> str:
+    return str(name or "").strip().casefold()
+
+
+def _resolve_kpi_funnel_id(
+    supabase: SupabaseClient,
+    *,
+    data_tenant_id: str,
+    eff: EffectiveRole,
+    scope_funnel_id: str,
+) -> str:
+    """read_only: sempre o funil atribuído. Demais: preferir funil nomeado funil-1 no tenant dos dados."""
+    if eff.is_read_only:
+        return str(scope_funnel_id)
+    rows = (
+        supabase.table("funnels")
+        .select("id, name")
+        .eq("tenant_id", data_tenant_id)
+        .execute()
+    ).data or []
+    for r in rows:
+        if _normalize_funnel_name_key(str(r.get("name") or "")) in ("funil-1", "funil 1"):
+            return str(r["id"])
+    return str(scope_funnel_id)
+
+
+def _month_bounds_utc(now: datetime | None = None) -> tuple[datetime, datetime]:
+    n = now or datetime.now(timezone.utc)
+    if n.tzinfo is None:
+        n = n.replace(tzinfo=timezone.utc)
+    start = n.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    last = monthrange(n.year, n.month)[1]
+    end = n.replace(day=last, hour=23, minute=59, second=59, microsecond=999999)
+    return start, end
+
+
+def _fetch_kpi_lead_stages(
+    supabase: SupabaseClient,
+    *,
+    data_tenant_id: str,
+    funnel_id: str,
+) -> list[str]:
+    try:
+        res = (
+            supabase.table("leads")
+            .select("stage")
+            .eq("tenant_id", data_tenant_id)
+            .eq("funnel_id", funnel_id)
+            .eq("archived", False)
+            .eq("deleted", False)
+            .execute()
+        )
+    except Exception:
+        res = (
+            supabase.table("leads")
+            .select("stage")
+            .eq("tenant_id", data_tenant_id)
+            .eq("funnel_id", funnel_id)
+            .execute()
+        )
+    out: list[str] = []
+    for row in res.data or []:
+        out.append(str(row.get("stage") or ""))
+    return out
+
+
 @router.get("/kpis", response_model=KPIResponse)
 async def get_kpis(
     user=Depends(get_current_user),
     supabase: SupabaseClient = Depends(get_supabase),
+    eff: EffectiveRole = Depends(get_effective_role),
 ):
-    """Get dashboard KPI metrics."""
-    # Count leads and calculate conversion
-    leads_response = supabase.table("leads").select("id, stage", count="exact").eq("tenant_id", user.id).execute()
-    total_leads = leads_response.count or 0
-    converted_stage_names: set[str] = set()
-    try:
-        stage_rows = (
-            supabase.table("pipeline_stages")
-            .select("name, is_conversion")
-            .eq("tenant_id", user.id)
-            .execute()
-        ).data or []
-        converted_stage_names = {
-            str(row.get("name", "")).strip().lower()
-            for row in stage_rows
-            if bool(row.get("is_conversion"))
-        }
-    except Exception:
-        # Migration may not be applied yet: in this case conversion remains opt-in (0%).
-        converted_stage_names = set()
-
-    converted = sum(
-        1
-        for l in (leads_response.data or [])
-        if str(l.get("stage", "")).strip().lower() in converted_stage_names
+    """
+    Taxa de conversão: cards na etapa finalizado / cards na etapa inicial (%).
+    Faturamento mensal: soma de `total` de pedidos pagos, etapa finalizada (nome), mês corrente UTC.
+    Novos contatos: cards na etapa inicial (mesmo funil KPI).
+    """
+    data_tenant_id, scope_funnel_id = _resolve_kanban_scope(supabase, str(user.id), eff, None)
+    kpi_funnel_id = _resolve_kpi_funnel_id(
+        supabase, data_tenant_id=data_tenant_id, eff=eff, scope_funnel_id=scope_funnel_id
     )
-    conversion_rate = (converted / total_leads * 100) if total_leads > 0 else 0
 
-    # Calculate monthly revenue from paid orders
-    orders_response = supabase.table("orders") \
-        .select("total, payment_status") \
-        .eq("tenant_id", user.id) \
-        .eq("payment_status", "pago") \
-        .execute()
-    monthly_revenue = sum(o.get("total", 0) for o in (orders_response.data or []))
+    inicial_cf = "inicial"
+    fin_cf = "finalizado"
 
-    # Message volume (from chat_messages table, if exists)
+    lead_stages = _fetch_kpi_lead_stages(
+        supabase, data_tenant_id=data_tenant_id, funnel_id=kpi_funnel_id
+    )
+
+    def _cf(s: str) -> str:
+        return str(s or "").strip().casefold()
+
+    inicial_count = sum(1 for s in lead_stages if _cf(s) == inicial_cf)
+    finalizado_count = sum(1 for s in lead_stages if _cf(s) == fin_cf)
+    conversion_rate = (finalizado_count / inicial_count * 100.0) if inicial_count > 0 else 0.0
+
+    start, end = _month_bounds_utc()
+    start_iso = start.isoformat()
+    end_iso = end.isoformat()
     try:
-        messages_response = supabase.table("chat_messages").select("id", count="exact").eq("tenant_id", user.id).execute()
-        message_volume = messages_response.count or 0
+        ores = (
+            supabase.table("orders")
+            .select("total, stage, payment_status, created_at")
+            .eq("tenant_id", data_tenant_id)
+            .eq("payment_status", "pago")
+            .gte("created_at", start_iso)
+            .lte("created_at", end_iso)
+            .execute()
+        )
     except Exception:
-        message_volume = 0
+        ores = type("R", (), {"data": []})()
+
+    monthly_revenue = 0.0
+    for o in ores.data or []:
+        if _cf(str(o.get("stage") or "")) == fin_cf:
+            try:
+                monthly_revenue += float(o.get("total") or 0)
+            except (TypeError, ValueError):
+                pass
+
+    new_contacts = inicial_count
 
     return KPIResponse(
         conversion_rate=round(conversion_rate, 1),
-        conversion_change=0.0,  # TODO: compare with previous period
-        monthly_revenue=monthly_revenue,
+        conversion_change=0.0,
+        monthly_revenue=round(monthly_revenue, 2),
         revenue_change=0.0,
-        message_volume=message_volume,
+        new_contacts=int(new_contacts),
+        new_contacts_change=0.0,
+        message_volume=int(new_contacts),
         message_change=0.0,
     )
 
@@ -92,12 +175,14 @@ async def get_recent_orders(
     supabase: SupabaseClient = Depends(get_supabase),
 ):
     """Get the most recent orders for the dashboard table."""
-    response = supabase.table("orders") \
-        .select("*") \
-        .eq("tenant_id", user.id) \
-        .order("created_at", desc=True) \
-        .limit(10) \
+    response = (
+        supabase.table("orders")
+        .select("*")
+        .eq("tenant_id", user.id)
+        .order("created_at", desc=True)
+        .limit(10)
         .execute()
+    )
 
     return response.data or []
 

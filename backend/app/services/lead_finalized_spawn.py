@@ -1,9 +1,9 @@
 """
-Spawn de lead novo quando um ciclo vai para FINALIZADO — usado pelo PATCH /stage e pelo webhook WhatsApp.
+Spawn de lead novo quando o contato WhatsApp escreve estando no card FINALIZADO (inbound).
 
-Quando o card finalizado ainda retém whatsapp_chat_id (spawn no PATCH falhou ou não ocorreu),
-mensagens inbound continuariam a anexar ao card antigo; o processor chama
-spawn_fresh_lead_after_finalized antes de gravar a mensagem.
+O Kanban (PATCH /stage) não dispara mais clone automático; o processor chama
+spawn_fresh_lead_after_finalized antes de gravar a mensagem se o JID ainda
+estiver no card finalizado.
 """
 
 from __future__ import annotations
