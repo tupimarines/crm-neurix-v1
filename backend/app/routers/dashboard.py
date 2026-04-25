@@ -7,7 +7,6 @@ from __future__ import annotations
 
 from calendar import monthrange
 from datetime import datetime, timezone
-from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -16,6 +15,7 @@ from supabase import Client as SupabaseClient
 from app.authz import EffectiveRole, get_effective_role
 from app.dependencies import get_supabase, get_current_user
 from app.routers.leads import _resolve_kanban_scope
+from app.services.conversion_cohort import cf_stage, compute_inicial_cohort_snapshot
 
 router = APIRouter()
 
@@ -72,95 +72,6 @@ def _month_bounds_utc(now: datetime | None = None) -> tuple[datetime, datetime]:
     return start, end
 
 
-def _cf_stage(s: str) -> str:
-    return str(s or "").strip().casefold()
-
-
-def _pipeline_stage_id_by_name(
-    supabase: SupabaseClient,
-    *,
-    data_tenant_id: str,
-    funnel_id: str,
-    name_casefold: str,
-) -> Optional[str]:
-    rows = (
-        supabase.table("pipeline_stages")
-        .select("id, name")
-        .eq("tenant_id", data_tenant_id)
-        .eq("funnel_id", funnel_id)
-        .execute()
-    ).data or []
-    for r in rows:
-        if _cf_stage(str(r.get("name") or "")) == name_casefold:
-            return str(r["id"])
-    return None
-
-
-def _fetch_kpi_leads_id_stage(
-    supabase: SupabaseClient,
-    *,
-    data_tenant_id: str,
-    funnel_id: str,
-) -> list[tuple[str, str]]:
-    """Lista (id, stage) dos leads do funil KPI."""
-    try:
-        res = (
-            supabase.table("leads")
-            .select("id, stage")
-            .eq("tenant_id", data_tenant_id)
-            .eq("funnel_id", funnel_id)
-            .eq("archived", False)
-            .eq("deleted", False)
-            .execute()
-        )
-    except Exception:
-        res = (
-            supabase.table("leads")
-            .select("id, stage")
-            .eq("tenant_id", data_tenant_id)
-            .eq("funnel_id", funnel_id)
-            .execute()
-        )
-    out: list[tuple[str, str]] = []
-    for row in res.data or []:
-        lid = row.get("id")
-        if lid is None:
-            continue
-        out.append((str(lid), str(row.get("stage") or "")))
-    return out
-
-
-def _lead_ids_that_left_stage(
-    supabase: SupabaseClient,
-    *,
-    from_stage_id: str,
-    lead_ids: list[str],
-    chunk_size: int = 150,
-) -> set[str]:
-    """lead_activity.from_stage_id indica que o card já esteve na etapa de origem."""
-    found: set[str] = set()
-    if not lead_ids:
-        return found
-    for i in range(0, len(lead_ids), chunk_size):
-        batch = lead_ids[i : i + chunk_size]
-        try:
-            ar = (
-                supabase.table("lead_activity")
-                .select("lead_id")
-                .eq("from_stage_id", from_stage_id)
-                .eq("event_type", "stage_move")
-                .in_("lead_id", batch)
-                .execute()
-            )
-        except Exception:
-            continue
-        for r in ar.data or []:
-            lid = r.get("lead_id")
-            if lid:
-                found.add(str(lid))
-    return found
-
-
 @router.get("/kpis", response_model=KPIResponse)
 async def get_kpis(
     user=Depends(get_current_user),
@@ -169,48 +80,25 @@ async def get_kpis(
 ):
     """
     Taxa de conversão: cards hoje em finalizado / coorte que já esteve na etapa inicial (%).
-    A coorte inicial = ainda em inicial OU já saiu de inicial (lead_activity.from_stage_id = etapa inicial).
+    Novos contatos: mesmo total da coorte inicial (acumulado; não cai ao mover cards).
     Faturamento mensal: soma de `total` de pedidos pagos, etapa finalizada (nome), mês corrente UTC.
-    Novos contatos: cards atualmente na etapa inicial (mesmo funil KPI).
     """
     data_tenant_id, scope_funnel_id = _resolve_kanban_scope(supabase, str(user.id), eff, None)
     kpi_funnel_id = _resolve_kpi_funnel_id(
         supabase, data_tenant_id=data_tenant_id, eff=eff, scope_funnel_id=scope_funnel_id
     )
 
-    inicial_cf = "inicial"
-    fin_cf = "finalizado"
-
-    lead_rows = _fetch_kpi_leads_id_stage(
+    snap = compute_inicial_cohort_snapshot(
         supabase, data_tenant_id=data_tenant_id, funnel_id=kpi_funnel_id
     )
-    lead_stages = [s for _, s in lead_rows]
+    inicial_cohort_count = snap.inicial_cohort_count
+    finalizado_count = snap.finalizado_count
 
-    inicial_stage_id = _pipeline_stage_id_by_name(
-        supabase,
-        data_tenant_id=data_tenant_id,
-        funnel_id=kpi_funnel_id,
-        name_casefold=inicial_cf,
-    )
-
-    current_inicial_ids = {lid for lid, st in lead_rows if _cf_stage(st) == inicial_cf}
-    all_lead_ids = [lid for lid, _ in lead_rows]
-
-    if inicial_stage_id and all_lead_ids:
-        left_inicial_ids = _lead_ids_that_left_stage(
-            supabase, from_stage_id=inicial_stage_id, lead_ids=all_lead_ids
-        )
-        inicial_cohort_count = len(current_inicial_ids | (set(all_lead_ids) & left_inicial_ids))
-    else:
-        # Sem id de etapa (migração antiga) ou sem leads: volta ao comportamento só por nome atual
-        inicial_cohort_count = sum(1 for s in lead_stages if _cf_stage(s) == inicial_cf)
-
-    inicial_count = sum(1 for s in lead_stages if _cf_stage(s) == inicial_cf)
-    finalizado_count = sum(1 for s in lead_stages if _cf_stage(s) == fin_cf)
     conversion_rate = (
         (finalizado_count / inicial_cohort_count * 100.0) if inicial_cohort_count > 0 else 0.0
     )
 
+    fin_cf = "finalizado"
     start, end = _month_bounds_utc()
     start_iso = start.isoformat()
     end_iso = end.isoformat()
@@ -229,13 +117,13 @@ async def get_kpis(
 
     monthly_revenue = 0.0
     for o in ores.data or []:
-        if _cf_stage(str(o.get("stage") or "")) == fin_cf:
+        if cf_stage(str(o.get("stage") or "")) == fin_cf:
             try:
                 monthly_revenue += float(o.get("total") or 0)
             except (TypeError, ValueError):
                 pass
 
-    new_contacts = inicial_count
+    new_contacts = inicial_cohort_count
 
     return KPIResponse(
         conversion_rate=round(conversion_rate, 1),

@@ -88,3 +88,11 @@ class KanbanColumn(BaseModel):
 class KanbanBoard(BaseModel):
     columns: list[KanbanColumn]
     funnel_id: Optional[str] = Field(None, description="Funil efetivamente carregado (read_only: sempre o atribuído).")
+    initial_stage_cohort_badge_count: Optional[int] = Field(
+        None,
+        description="Número global da etapa inicial (coorte); o badge da coluna não cai ao mover cards.",
+    )
+    initial_stage_id: Optional[str] = Field(
+        None,
+        description="UUID da etapa «inicial» neste funil; o front usa para saber em qual coluna exibir o badge acima.",
+    )

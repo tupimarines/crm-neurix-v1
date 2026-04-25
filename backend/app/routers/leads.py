@@ -50,6 +50,7 @@ from app.services.lead_board import (
     resolve_stage_name_for_board,
     upsert_pipeline_position,
 )
+from app.services.conversion_cohort import compute_inicial_cohort_snapshot
 from app.services.lead_finalized_spawn import (
     fetch_pipeline_stages_for_funnel as _fetch_pipeline_stages_for_funnel,
     is_chat_mirror_closed_for_lead,
@@ -755,7 +756,12 @@ async def get_kanban_board(
     if not stages_data:
         elapsed_ms = (perf_counter() - started) * 1000.0
         metrics.observe("kanban_board", elapsed_ms, ok=True)
-        return KanbanBoard(columns=[], funnel_id=resolved_funnel_id)
+        return KanbanBoard(
+            columns=[],
+            funnel_id=resolved_funnel_id,
+            initial_stage_cohort_badge_count=None,
+            initial_stage_id=None,
+        )
 
     lead_rows_primary = _fetch_leads_for_funnel(supabase, data_tenant_id=data_tenant_id, funnel_id=resolved_funnel_id)
     pipeline_board_owner_ids = _pipeline_board_owner_ids_for_scope(
@@ -808,9 +814,18 @@ async def get_kanban_board(
             )
         )
 
+    cohort_snap = compute_inicial_cohort_snapshot(
+        supabase, data_tenant_id=data_tenant_id, funnel_id=resolved_funnel_id
+    )
+
     elapsed_ms = (perf_counter() - started) * 1000.0
     metrics.observe("kanban_board", elapsed_ms, ok=True)
-    return KanbanBoard(columns=columns, funnel_id=resolved_funnel_id)
+    return KanbanBoard(
+        columns=columns,
+        funnel_id=resolved_funnel_id,
+        initial_stage_cohort_badge_count=cohort_snap.inicial_cohort_count,
+        initial_stage_id=cohort_snap.inicial_stage_id,
+    )
 
 
 @router.post("/stages/reorder", status_code=status.HTTP_200_OK)

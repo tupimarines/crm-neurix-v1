@@ -278,6 +278,9 @@ function KanbanContent() {
     const [stages, setStages] = useState<KanbanStage[]>([]);
     const [cards, setCards] = useState<KanbanCard[]>([]);
     const [resolvedFunnelId, setResolvedFunnelId] = useState<string | null>(null);
+    /** Badge da coluna «inicial»: total da coorte (API); o restante usa cards no board. */
+    const [initialStageCohortBadge, setInitialStageCohortBadge] = useState<number | null>(null);
+    const [initialStageIdForCohortBadge, setInitialStageIdForCohortBadge] = useState<string | null>(null);
 
     const [authSession, setAuthSession] = useState<{
         loaded: boolean;
@@ -322,6 +325,8 @@ function KanbanContent() {
                     : "/api/leads/kanban";
             const data = await api<{
                 funnel_id?: string | null;
+                initial_stage_cohort_badge_count?: number | null;
+                initial_stage_id?: string | null;
                 columns: Array<{
                     stage: string;
                     stage_id?: string;
@@ -378,6 +383,16 @@ function KanbanContent() {
             }
             setCards(allCards);
             setResolvedFunnelId(data.funnel_id ?? (funnelIdFromUrl && funnelIdFromUrl.trim() ? funnelIdFromUrl.trim() : null));
+            setInitialStageCohortBadge(
+                typeof data.initial_stage_cohort_badge_count === "number"
+                    ? data.initial_stage_cohort_badge_count
+                    : null,
+            );
+            setInitialStageIdForCohortBadge(
+                typeof data.initial_stage_id === "string" && data.initial_stage_id.trim()
+                    ? data.initial_stage_id.trim()
+                    : null,
+            );
             setKanbanError(null);
         } catch (err) {
             console.error("Failed to fetch kanban data:", err);
@@ -1582,6 +1597,14 @@ function KanbanContent() {
                         <div className="flex h-full gap-5 min-w-max pb-4">
                             {stages.map((stage) => {
                                 const stageCards = filteredCards.filter((c) => c.stageId === stage.id);
+                                const isInitialStageColumn =
+                                    (initialStageIdForCohortBadge != null &&
+                                        stage.id === initialStageIdForCohortBadge) ||
+                                    stage.title.trim().toLowerCase() === "inicial";
+                                const headerBadgeCount =
+                                    isInitialStageColumn && initialStageCohortBadge != null
+                                        ? initialStageCohortBadge
+                                        : stageCards.length;
                                 return (
                                     <SortableStageShell key={stage.id} stageId={stage.id} disabled={isReadOnlyUi}>
                                     {({ attributes, listeners }) => (
@@ -1632,8 +1655,15 @@ function KanbanContent() {
                                                 )}
                                             </div>
                                             <div className="flex items-center gap-2 text-xs text-text-secondary-light shrink-0 ml-2">
-                                                <span className="bg-primary-light dark:bg-primary/20 text-primary font-medium px-2 py-0.5 rounded-full">
-                                                    {stageCards.length}
+                                                <span
+                                                    className="bg-primary-light dark:bg-primary/20 text-primary font-medium px-2 py-0.5 rounded-full"
+                                                    title={
+                                                        isInitialStageColumn && initialStageCohortBadge != null
+                                                            ? "Total acumulado na etapa inicial (inclui negócios que já saíram desta coluna)."
+                                                            : undefined
+                                                    }
+                                                >
+                                                    {headerBadgeCount}
                                                 </span>
                                                 {isSavingStageOrder && <span className="mr-1 text-[10px]">Salvando</span>}
                                                 {isSavingCardMove && <span className="mr-1 text-[10px]">Movendo</span>}
