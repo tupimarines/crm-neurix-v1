@@ -294,6 +294,8 @@ function KanbanContent() {
     const [createFunnelName, setCreateFunnelName] = useState("");
     const [createFunnelBusy, setCreateFunnelBusy] = useState(false);
     const [inboxNameById, setInboxNameById] = useState<Record<string, string>>({});
+    /** Mantém nomes entre polls de kanban (fetchKanban não deve zerar inboxName após silent refresh). */
+    const inboxNameByIdRef = useRef<Record<string, string>>({});
     const [inboxesForBoard, setInboxesForBoard] = useState<{ id: string; name: string }[]>([]);
     const [filterInboxId, setFilterInboxId] = useState("");
 
@@ -377,7 +379,7 @@ function KanbanContent() {
                         desc: lead.notes || "",
                         products_json: lead.products_json || [],
                         inboxId: iid,
-                        inboxName: null,
+                        inboxName: iid ? (inboxNameByIdRef.current[iid] ?? null) : null,
                     });
                 }
             }
@@ -473,7 +475,7 @@ function KanbanContent() {
         loadFunnels.then(setMyFunnels).catch(() => setMyFunnels([]));
     }, [authSession.loaded, authSession.isReadOnly, authSession.isOrgAdmin, authSession.organizationId]);
 
-    // Inboxes do tenant — badge quando >1 caixa no mesmo funil
+    // Inboxes do tenant — badge da caixa nos cards e filtro quando há caixa(s) neste funil
     useEffect(() => {
         if (!resolvedFunnelId) return;
         const token = localStorage.getItem("access_token");
@@ -486,6 +488,7 @@ function KanbanContent() {
                 for (const r of rows) {
                     m[r.id] = r.name;
                 }
+                inboxNameByIdRef.current = m;
                 setInboxNameById(m);
             })
             .catch(() => {
@@ -494,13 +497,12 @@ function KanbanContent() {
     }, [resolvedFunnelId]);
 
     useEffect(() => {
-        if (inboxesForBoard.length <= 1) return;
         setCards((prev) =>
             prev.map((c) =>
                 c.inboxId ? { ...c, inboxName: inboxNameById[c.inboxId] ?? c.inboxName } : c
             )
         );
-    }, [inboxNameById, inboxesForBoard.length]);
+    }, [inboxNameById]);
 
     useEffect(() => {
         setFilterInboxId("");
@@ -822,7 +824,7 @@ function KanbanContent() {
     const isReadOnlyUi = authSession.loaded && authSession.isReadOnly;
     const showFunnelSelector =
         authSession.loaded && !authSession.isReadOnly && authSession.isOrgAdmin && myFunnels.length > 0;
-    const showInboxBadge = inboxesForBoard.length > 1;
+    const showInboxBadge = inboxesForBoard.length > 0;
     const showBlockingLoading = !authSession.loaded || isLoading;
 
     const parseCurrency = (val: string) => {
